@@ -1,0 +1,15 @@
+{
+  "short_name": "Gabriel Rossi",
+  "name": "Gabriel Rossi's CV",
+  "icons": [
+    {
+      "src": "logo98.png",
+      "sizes": "98x98",
+      "type": "image/png"
+    }
+  ],
+  "start_url": ".",
+  "display": "standalone",
+  "theme_color": "#000000",
+  "background_color": "#ffffff"
+}
