@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { MainContainer, MainContent } from "./style";
-import Markdown from "markdown-to-jsx";
+import Markdown from 'components/Markdown';
 import MainPage from "page.md";
 
 const Main = () => {
