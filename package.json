@@ -23,8 +23,8 @@
     "build": "react-scripts build",
     "test": "react-scripts test",
     "eject": "react-scripts eject",
-    "deploy": "aws s3 sync build/ s3://grossi.life --acl public-read",
-    "redeploy": "yarn build && yarn deploy"
+    "push-s3": "aws s3 sync build/ s3://grossi.life --acl public-read",
+    "deploy": "yarn build && yarn push-s3"
   },
   "eslintConfig": {
     "extends": [
