@@ -8,7 +8,7 @@ const sideBarInfo = {
       linkedin: "https://www.linkedin.com/in/gabriel-r-rossi/",
       github: "https://github.com/grossi",
       twitter: "https://twitter.com/RossisFox",
-      email: "rossi@grossi.tech"
+      email: "mailto:rossi@grossi.tech"
     }
   }
 }

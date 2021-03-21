@@ -7,16 +7,16 @@ I'm currently working as a Frontend Developer, using primarily ReactJs. I'm hopi
 
 ## Projects
 
-### **isuZu Portfolio**
+### **◆ isuZu Portfolio**
 
-A portfolio to showcase the amazing work from the artist isuZu.
+A simple website to showcase the amazing work from the artist isuZu.
 
 - **[isuZu.work](https://isuzu.work/)**
 - **Repository:** [github.com/grossi/isuzu-artist-portifolio](https://github.com/grossi/isuzu-artist-portifolio)
   - **Stack**: Typescript, ReactJs, Material-ui
   - Hosted in AWS S3 and distributed with Cloudfront
 
-### **Simple-chat**
+### **◆ Simple-chat**
 
 A chat app with authentication and user registration.
 
@@ -32,15 +32,11 @@ A chat app with authentication and user registration.
 
 - **ACCENTURE** — Senior Application Development Analyst
   - November 2020 - Present
-
 - **RUSHDOWN REVOLT** — Full Stack Developer Freelancer
  - June 2020 - Present
-
 - **TVMANAGER** — Chief Technology Officer
  - January 2019 - November 2020
-
 - **VTEX** — Back end Developer
  - January 2015 - November 2015
-
 - **TEC GRAF** — Desktop Developer
  - November 2012 - November 2013

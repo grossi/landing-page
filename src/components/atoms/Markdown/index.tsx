@@ -1,10 +1,10 @@
 import * as React from "react";
 import ReactMarkdown from "markdown-to-jsx";
-import { Box, Link, Text, Center, Container } from "@chakra-ui/react";
+import { Box, Link, Text } from "@chakra-ui/react";
 
 function MarkdownListItem(props: any) {
   return (
-    <Box pl={8} py={1}>
+    <Box pl={16} py={1}>
       <li>
         <Text component="span" {...props} />
       </li>
@@ -17,20 +17,20 @@ const options = {
     h1: {
       component: Text,
       props: {
-        fontSize: "4xl",
+        fontSize: "6xl",
         my: 4,
       },
     },
     h2: {
       component: Text,
       props: {
-        fontSize: "2xl",
+        fontSize: "4xl",
         my: 2,
       },
     },
     h3: {
       component: Text,
-      props: { fontSize: "lg" },
+      props: { fontSize: "lg", ml: 6, my: 2 },
     },
     h4: {
       component: Text,
@@ -42,7 +42,7 @@ const options = {
       component: Text,
       props: { 
         fontSize: "md",
-        m: 2
+        ml: 10
       },
     },
     a: { component: Link, props: { isExternal: true } },
