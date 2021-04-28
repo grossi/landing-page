@@ -42,7 +42,8 @@ const options = {
       component: Text,
       props: { 
         fontSize: "md",
-        ml: 10
+        ml: 10,
+        mb: 4
       },
     },
     a: { component: Link, props: { isExternal: true } },
