@@ -1,14 +1,32 @@
-import React from "react";
-import { Box, Flex, Text, Center, Container } from "@chakra-ui/react";
+import React from 'react';
+import {
+  Box,
+  Button,
+  Flex,
+  Text,
+  Center,
+  Spacer,
+  Container,
+  useColorMode,
+  useColorModeValue,
+} from '@chakra-ui/react';
+import { MoonIcon, SunIcon } from '@chakra-ui/icons';
 
 const Header = () => {
+  const { colorMode, toggleColorMode } = useColorMode();
+  const bg = useColorModeValue('gray.100', 'gray.700');
+
   return (
-    <Box bg="gray.100" p={3}>
-      <Container maxW="container.lg">
+    <Box bg={bg} p={3}>
+      <Container maxW="container.xl">
         <Flex>
           <Center>
             <Text fontSize="2xl">Gabriel Rossi</Text>
           </Center>
+          <Spacer />
+          <Button onClick={toggleColorMode}>
+            {colorMode === 'light' ? <MoonIcon /> : <SunIcon />}
+          </Button>
         </Flex>
       </Container>
     </Box>

@@ -15,12 +15,12 @@ const Post = (props: PostProps) => {
   return (
     <React.Fragment>
       <Header />
-      <Container maxW="container.lg">
+      <Container maxW="container.xl">
         <SimpleGrid columns={[4, null, 8, 12]} spacing={[4, null, 6, 12]}>
-          <GridItem colSpan={[4, null, 6, 8]} mx={[2, 4, 6]} my={4}>
+          <GridItem colSpan={[4, null, 6, 9]} mx={[2, 4, 6]} my={4}>
             <Markdown children={text} />
           </GridItem>
-          <GridItem colSpan={[4, null, 2, 4]} mx={[2, null, null, 4, 6]} my={4}>
+          <GridItem colSpan={[4, null, 2, 3]} mx={[2, null, null, 4, 6]} my={4}>
             <Sidebar socialInfo={props.sidebarInfo.socialInfo} />
           </GridItem>
         </SimpleGrid>

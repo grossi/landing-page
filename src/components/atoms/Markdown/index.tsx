@@ -1,6 +1,8 @@
-import * as React from "react";
-import ReactMarkdown from "markdown-to-jsx";
-import { Box, Link, Text } from "@chakra-ui/react";
+import * as React from 'react';
+import ReactMarkdown from 'markdown-to-jsx';
+import SyntaxHighlighter from 'react-syntax-highlighter';
+import { atomOneDarkReasonable } from 'react-syntax-highlighter/dist/esm/styles/hljs';
+import { Box, Link, Text } from '@chakra-ui/react';
 
 function MarkdownListItem(props: any) {
   return (
@@ -12,43 +14,60 @@ function MarkdownListItem(props: any) {
   );
 }
 
+function MarkdownCode(props: any) {
+  return (
+    <Box mx={[null, 2, 4, 6]} mb={4}>
+      <SyntaxHighlighter
+        language="typescript"
+        style={atomOneDarkReasonable}
+        customStyle={{ borderRadius: 6 }}
+      >
+        {props.children.props.children}
+      </SyntaxHighlighter>
+    </Box>
+  );
+}
+
 const options = {
   overrides: {
     h1: {
       component: Text,
       props: {
-        fontSize: "6xl",
+        fontSize: '6xl',
         my: 4,
       },
     },
     h2: {
       component: Text,
       props: {
-        fontSize: "4xl",
+        fontSize: '4xl',
         my: 2,
       },
     },
     h3: {
       component: Text,
-      props: { fontSize: "lg", ml: 6, my: 2 },
+      props: { fontSize: '2xl', ml: 2, my: 2 },
     },
     h4: {
       component: Text,
       props: {
-        fontSize: "lg",
+        fontSize: 'lg',
       },
     },
     p: {
       component: Text,
-      props: { 
-        fontSize: "md",
-        ml: 10,
-        mb: 4
+      props: {
+        fontSize: 'md',
+        mx: [0, 0, 2, 4],
+        mb: 4,
       },
     },
     a: { component: Link, props: { isExternal: true } },
     li: {
       component: MarkdownListItem,
+    },
+    pre: {
+      component: MarkdownCode,
     },
   },
 };
