@@ -1,5 +1,4 @@
 import * as React from 'react';
-import MainPage from 'page.md';
 import Post from 'templates/Post';
 
 const sideBarInfo = {
@@ -13,17 +12,12 @@ const sideBarInfo = {
   },
 };
 
-const Main = () => {
-  const [page, setPage] = React.useState('');
-  React.useEffect(() => {
-    fetch(MainPage)
-      .then((data) => data.text())
-      .then((text) => {
-        setPage(text);
-      });
-  }, []);
+interface MainPageProps {
+  post: string;
+}
 
-  return <Post text={page} sidebarInfo={sideBarInfo} />;
+const MainPage = ({ post }: MainPageProps) => {
+  return <Post text={post} sidebarInfo={sideBarInfo} />;
 };
 
-export default Main;
+export default MainPage;

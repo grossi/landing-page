@@ -1,11 +1,11 @@
 import * as React from 'react';
-import BlogPost from 'component.md';
+import AboutPost from 'page.md';
 import Main from 'pages/Main';
 
-const Blog = () => {
+const AboutPage = () => {
   const [page, setPage] = React.useState('');
   React.useEffect(() => {
-    fetch(BlogPost)
+    fetch(AboutPost)
       .then((data) => data.text())
       .then((text) => {
         setPage(text);
@@ -15,4 +15,4 @@ const Blog = () => {
   return <Main post={page} />;
 };
 
-export default Blog;
+export default AboutPage;
