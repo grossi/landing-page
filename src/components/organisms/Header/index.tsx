@@ -3,6 +3,7 @@ import {
   Box,
   Button,
   Flex,
+  Link,
   Text,
   Center,
   Spacer,
@@ -20,9 +21,11 @@ const Header = () => {
     <Box bg={bg} p={3}>
       <Container maxW="container.xl">
         <Flex>
-          <Center>
-            <Text fontSize="2xl">Gabriel Rossi</Text>
-          </Center>
+          <Link href="\">
+            <Center>
+              <Text fontSize="2xl">Gabriel Rossi</Text>
+            </Center>
+          </Link>
           <Spacer />
           <Button onClick={toggleColorMode}>
             {colorMode === 'light' ? <MoonIcon /> : <SunIcon />}

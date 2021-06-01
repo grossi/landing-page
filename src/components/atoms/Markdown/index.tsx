@@ -54,6 +54,13 @@ const options = {
         fontSize: 'lg',
       },
     },
+    h5: {
+      component: Text,
+      props: {
+        fontSize: 'xs',
+        mx: [null, 2, 4, 6],
+      },
+    },
     p: {
       component: Text,
       props: {

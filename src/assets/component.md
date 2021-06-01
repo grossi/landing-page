@@ -6,7 +6,7 @@ While they are in charge of developing the front end, we will want to have contr
 
 We decided to create a shared library that would serve as the base for the design of the new website. The idea is to create a theme that can be imported, making any changes in style easier. 
 
-After evaluating some of the style solutions I decided to go with the Material-ui style, since it's flexible enough to represent the style sheet I received from the UX team, which is a bit unusual compared to the standard themes found in many UI libraries.
+After evaluating some of the style solutions we decided to go with the Material-UI style, since it's flexible enough to represent the stylesheet I received to represent on the library, which was a bit unusual compared to the standard themes found in many UI libraries.
 
 It contains 5 variations for each palette; "Darkest", "Dark", "Main", "Light" and "Lightest", and some specific spacings for each use case, like "Spacing Inline" for spacing content in the same line and "Spacing Inset", for padding used inside containers.
 

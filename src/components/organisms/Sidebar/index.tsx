@@ -1,5 +1,5 @@
 import React from 'react';
-import { Box, Flex, Text, Center } from '@chakra-ui/react';
+import { Box, Flex, Text, Center, Link } from '@chakra-ui/react';
 import SocialLinks, { SocialLinksProps } from 'components/molecules/SocialLinks';
 
 export interface SidebarProps {
@@ -14,6 +14,11 @@ const Sidebar = (props: SidebarProps) => {
             <Text fontSize="2xl">Hello!</Text>
           </Center>
           <SocialLinks links={props.socialInfo.links} />
+          <Link href="/about">
+            <Text fontSize="2xl">
+              About me
+            </Text>
+          </Link>
         </Flex>
     </Box>
   );

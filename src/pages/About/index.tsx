@@ -1,5 +1,5 @@
 import * as React from 'react';
-import AboutPost from 'page.md';
+import AboutPost from 'assets/page.md';
 import Main from 'pages/Main';
 
 const AboutPage = () => {

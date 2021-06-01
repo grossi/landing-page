@@ -1,5 +1,5 @@
 import * as React from 'react';
-import BlogPost from 'component.md';
+import BlogPost from 'assets/npm-library.md';
 import Main from 'pages/Main';
 
 const Blog = () => {
