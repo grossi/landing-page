@@ -11,7 +11,7 @@ I'm currently working as a Frontend Developer, using primarily ReactJs. I'm hopi
 
 A simple website to showcase the amazing work from the artist isuZu.
 
-- **[isuZu.work](https://isuzu.work/)**
+- [https://isuzu.work](https://isuzu.work/)
 - **Repository:** [github.com/grossi/isuzu-artist-portifolio](https://github.com/grossi/isuzu-artist-portifolio)
   - **Stack**: Typescript, ReactJs, Material-ui
   - Hosted in AWS S3 and distributed with Cloudfront
