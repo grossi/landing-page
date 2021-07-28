@@ -30,8 +30,10 @@ A chat app with authentication and user registration.
 
 ## Professional Experience
 
+- **Uber** — Full Stack Software Engineer
+  - May 2021 - Present
 - **ACCENTURE** — Senior Application Development Analyst
-  - November 2020 - Present
+  - November 2020 - May 2021
 - **RUSHDOWN REVOLT** — Full Stack Developer Freelancer
  - June 2020 - Present
 - **TVMANAGER** — Chief Technology Officer
