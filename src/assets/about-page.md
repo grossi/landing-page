@@ -30,8 +30,10 @@ A chat app with authentication and user registration.
 
 ## Professional Experience
 
+- **Lazuli** - Senior Full Stack Software Engineer
+  - Apr 2025 - present
 - **Uber** — Full Stack Software Engineer
-  - May 2021 - Present
+  - May 2021 - Aug 2024
 - **ACCENTURE** — Senior Application Development Analyst
   - November 2020 - May 2021
 - **RUSHDOWN REVOLT** — Full Stack Developer Freelancer
