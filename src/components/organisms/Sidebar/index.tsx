@@ -11,11 +11,11 @@ const Sidebar = (props: SidebarProps) => {
     <Box p={3}>
         <Flex direction="column">
           <Center>
-            <Text fontSize="2xl">Hello!</Text>
+            <Text fontSize="2xl" color={{ base: "gray.800", _dark: "white" }}>Hello!</Text>
           </Center>
           <SocialLinks links={props.socialInfo.links} />
           <Link href="/about">
-            <Text fontSize="2xl">
+            <Text fontSize="2xl" color={{ base: "gray.800", _dark: "white" }}>
               About me
             </Text>
           </Link>

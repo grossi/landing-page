@@ -1,8 +1,9 @@
 import * as React from 'react';
 import ReactMarkdown from 'markdown-to-jsx';
-import SyntaxHighlighter from 'react-syntax-highlighter';
 import { atomOneDarkReasonable } from 'react-syntax-highlighter/dist/esm/styles/hljs';
 import { Box, Link, Text } from '@chakra-ui/react';
+
+const SyntaxHighlighter = require('react-syntax-highlighter').default;
 
 function MarkdownListItem(props: any) {
   return (
@@ -16,7 +17,7 @@ function MarkdownListItem(props: any) {
 
 function MarkdownCode(props: any) {
   return (
-    <Box mx={[null, 2, 4, 6]} mb={4}>
+    <Box mx={{ base: 0, sm: 2, md: 4, lg: 6 }} mb={4}>
       <SyntaxHighlighter
         language="typescript"
         style={atomOneDarkReasonable}
@@ -69,7 +70,7 @@ const options = {
         mb: 4,
       },
     },
-    a: { component: Link, props: { isExternal: true } },
+    a: { component: Link, props: { target: '_blank', rel: 'noopener noreferrer' } },
     li: {
       component: MarkdownListItem,
     },

@@ -1,35 +1,27 @@
 import React from 'react';
 import {
   Box,
-  Button,
   Flex,
   Link,
   Text,
   Center,
   Spacer,
   Container,
-  useColorMode,
-  useColorModeValue,
 } from '@chakra-ui/react';
-import { MoonIcon, SunIcon } from '@chakra-ui/icons';
+import { ColorModeButton } from 'components/ui/color-mode';
 
 const Header = () => {
-  const { colorMode, toggleColorMode } = useColorMode();
-  const bg = useColorModeValue('gray.100', 'gray.700');
-
   return (
-    <Box bg={bg} p={3}>
+    <Box bg={{ base: 'gray.100', _dark: 'gray.700' }} p={3}>
       <Container maxW="container.xl">
         <Flex>
-          <Link href="\">
+          <Link href="/">
             <Center>
-              <Text fontSize="2xl">Gabriel Rossi</Text>
+              <Text fontSize="2xl" color={{ base: 'gray.800', _dark: 'white' }}>Gabriel Rossi</Text>
             </Center>
           </Link>
           <Spacer />
-          <Button onClick={toggleColorMode}>
-            {colorMode === 'light' ? <MoonIcon /> : <SunIcon />}
-          </Button>
+          <ColorModeButton />
         </Flex>
       </Container>
     </Box>
