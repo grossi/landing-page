@@ -183,22 +183,25 @@ const Experience: React.FC = () => {
                       </MotionBox>
                     </Box>
 
-                    <MotionCircle
-                      size="60px"
-                      bg={cardBg}
-                      borderWidth={3}
-                      borderColor={item.highlight ? highlightColor : lineColor}
+                    <Box
                       position={{ base: 'relative', md: 'absolute' }}
                       left={{ base: 'auto', md: '50%' }}
                       transform={{ base: 'none', md: 'translateX(-50%)' }}
-                      zIndex={2}
-                      whileHover={{ scale: 1.2 }}
-                      transition={{ duration: 0.2 }}
                       order={{ base: 0, md: 1 }}
                       mb={{ base: 4, md: 0 }}
                     >
-                      <Icon as={iconMap[item.icon]} boxSize={6} color={highlightColor} />
-                    </MotionCircle>
+                      <MotionCircle
+                        size="60px"
+                        bg={cardBg}
+                        borderWidth={3}
+                        borderColor={item.highlight ? highlightColor : lineColor}
+                        zIndex={2}
+                        whileHover={{ scale: 1.2 }}
+                        transition={{ duration: 0.2 }}
+                      >
+                        <Icon as={iconMap[item.icon]} boxSize={6} color={highlightColor} />
+                      </MotionCircle>
+                    </Box>
 
                     <Box
                       display={{ base: 'none', md: 'block' }}
