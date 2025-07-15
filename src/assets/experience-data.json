@@ -6,8 +6,8 @@
       "title": "Senior Full Stack Software Engineer",
       "organization": "Lazuli",
       "period": "Apr 2025 - Present",
-      "description": "Leading development of innovative solutions and mentoring team members in modern full-stack technologies.",
-      "skills": ["React", "Node.js", "TypeScript", "AWS", "GraphQL"],
+      "description": "Leading development of innovative AI solutions and mentoring team members in modern full-stack technologies.",
+      "skills": ["React", "Node.js", "Golang", "Google Cloud", "AI"],
       "icon": "FaBriefcase",
       "highlight": true
     },
@@ -25,22 +25,13 @@
     {
       "id": 3,
       "type": "work",
-      "title": "Senior Application Development Analyst",
+      "title": "Lead Frontend Developer",
       "organization": "Accenture",
       "period": "Nov 2020 - May 2021",
-      "description": "Led development teams in delivering enterprise solutions for Fortune 500 clients, focusing on digital transformation initiatives.",
-      "skills": ["Java", "Spring Boot", "Angular", "Azure", "Agile"],
-      "icon": "FaBriefcase"
-    },
-    {
-      "id": 4,
-      "type": "work",
-      "title": "Full Stack Developer Freelancer",
-      "organization": "Rushdown Revolt",
-      "period": "Jun 2020 - Present",
-      "description": "Developing game-related web applications and services for the competitive fighting game community.",
-      "skills": ["React", "Node.js", "WebSockets", "Game Development"],
-      "icon": "FaGamepad"
+      "description": "Led frontend development teams in designing and delivering B2B products for one of the biggest e-commerce platforms in Latin America.",
+      "skills": ["React", "Node.js", "TypeScript", "Design Systems", "GraphQL", "Agile"],
+      "icon": "FaBriefcase",
+      "highlight": true
     },
     {
       "id": 5,
@@ -61,7 +52,8 @@
       "period": "Jan 2015 - Nov 2015",
       "description": "Developed backend services for one of Latin America's leading e-commerce platforms, focusing on scalability and performance.",
       "skills": ["C#", ".NET", "SQL Server", "Redis", "E-commerce"],
-      "icon": "FaBriefcase"
+      "icon": "FaBriefcase",
+      "highlight": true
     },
     {
       "id": 7,
@@ -71,29 +63,8 @@
       "period": "Nov 2012 - Nov 2013",
       "description": "Developed desktop applications for engineering and scientific computing, working with computer graphics and data visualization.",
       "skills": ["C++", "Qt", "OpenGL", "Computer Graphics"],
-      "icon": "FaDesktop"
-    },
-    {
-      "id": 8,
-      "type": "achievement",
-      "title": "Open Source Contributor",
-      "organization": "Various Projects",
-      "period": "2018 - Present",
-      "description": "Active contributor to open source projects including isuZu Portfolio and Simple Chat, showcasing expertise in modern web technologies.",
-      "skills": ["TypeScript", "React", "GraphQL", "Open Source"],
-      "icon": "FaStar",
-      "projects": [
-        {
-          "name": "isuZu Portfolio",
-          "url": "https://isuzu.work",
-          "repo": "https://github.com/grossi/isuzu-artist-portifolio"
-        },
-        {
-          "name": "Simple Chat",
-          "url": "http://chat.grossi.life",
-          "repo": "https://github.com/grossi/simple-chat-frontend"
-        }
-      ]
+      "icon": "FaDesktop",
+      "highlight": true
     }
   ]
 }
