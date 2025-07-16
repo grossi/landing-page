@@ -62,7 +62,7 @@ const ParticleEffect: React.FC<{ particles: Particle[]; color: string; elementWi
       {particles.map((particle, index) => {
         let normalizedX = 0;
         let normalizedY = 0;
-        
+ 
         if (isCircle) {
           // For circular elements, calculate direction from center through particle position
           const centerX = elementWidth / 2 + 30; // Add offset for icon container
@@ -134,9 +134,9 @@ const TimelineItemComponent: React.FC<{
 
   const createParticlesAroundBorder = (width: number, height: number, isCircle: boolean = false): Particle[] => {
     const particles: Particle[] = [];
-    const particleCount = 16;
     
     if (isCircle) {
+      const particleCount = 20;
       // For circular elements (icons), place particles around the circle edge
       const radius = width / 2;
       const borderOffset = 5; // Start particles slightly outside the border
@@ -152,6 +152,7 @@ const TimelineItemComponent: React.FC<{
         });
       }
     } else {
+      const particleCount = 32;
       // For rectangular elements (cards), place particles around the perimeter
       const margin = -5; // Start particles outside the border
       const adjustedWidth = width - 2 * margin;
@@ -192,12 +193,11 @@ const TimelineItemComponent: React.FC<{
     const rect = e.currentTarget.getBoundingClientRect();
     
     setIconDimensions({ width: rect.width, height: rect.height });
-    // Create particles positioned relative to the 120x120 container (60px offset from center)
     const particles = createParticlesAroundBorder(rect.width, rect.height, true);
     const offsetParticles = particles.map(p => ({
       ...p,
-      x: p.x + 30, // Offset to center in 120x120 container
-      y: p.y + 30
+      x: p.x + 18,
+      y: p.y + 18
     }));
     setIconParticles(offsetParticles);
     setTimeout(() => setIconParticles([]), 800);
@@ -210,11 +210,10 @@ const TimelineItemComponent: React.FC<{
     const rect = e.currentTarget.getBoundingClientRect();
     
     setCardDimensions({ width: rect.width, height: rect.height });
-    // Create particles positioned relative to the extended container (20px padding on all sides)
     const particles = createParticlesAroundBorder(rect.width, rect.height, false);
     const offsetParticles = particles.map(p => ({
       ...p,
-      x: p.x + 20, // Offset for the 20px padding
+      x: p.x + 20,
       y: p.y + 20
     }));
     setCardParticles(offsetParticles);
