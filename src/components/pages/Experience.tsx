@@ -10,7 +10,7 @@ import {
   Flex,
   Badge,
 } from '@chakra-ui/react';
-import { motion, useScroll, useTransform, useAnimation } from 'framer-motion';
+import { motion, useScroll, useTransform, useAnimation, AnimatePresence } from 'framer-motion';
 import { FaBriefcase, FaGraduationCap, FaRocket, FaStar, FaGamepad, FaDesktop } from 'react-icons/fa';
 import { useColorMode } from 'components/ui/color-mode';
 import Header from '../organisms/Header';
@@ -50,6 +50,68 @@ const timelineData: TimelineItem[] = experienceData.experiences.map(item => ({
   type: item.type as 'work' | 'education' | 'achievement'
 }));
 
+interface Particle {
+  id: number;
+  x: number;
+  y: number;
+}
+
+const ParticleEffect: React.FC<{ particles: Particle[]; color: string; elementWidth: number; elementHeight: number; isCircle?: boolean }> = ({ particles, color, elementWidth, elementHeight, isCircle = false }) => {
+  return (
+    <AnimatePresence>
+      {particles.map((particle, index) => {
+        let normalizedX = 0;
+        let normalizedY = 0;
+        
+        if (isCircle) {
+          // For circular elements, calculate direction from center through particle position
+          const centerX = elementWidth / 2 + 30; // Add offset for icon container
+          const centerY = elementHeight / 2 + 30;
+          const dirX = particle.x - centerX;
+          const dirY = particle.y - centerY;
+          const magnitude = Math.sqrt(dirX * dirX + dirY * dirY);
+          normalizedX = magnitude > 0 ? (dirX / magnitude) * 100 : 0;
+          normalizedY = magnitude > 0 ? (dirY / magnitude) * 100 : 0;
+        } else {
+          // For rectangular elements, calculate outward direction based on particle position
+          const centerX = elementWidth / 2 + 20; // Add offset for card container
+          const centerY = elementHeight / 2 + 20;
+          const dirX = particle.x - centerX;
+          const dirY = particle.y - centerY;
+          const magnitude = Math.sqrt(dirX * dirX + dirY * dirY);
+          normalizedX = magnitude > 0 ? (dirX / magnitude) * 80 : 0;
+          normalizedY = magnitude > 0 ? (dirY / magnitude) * 80 : 0;
+        }
+        
+        return (
+          <MotionBox
+            key={particle.id}
+            position="absolute"
+            left={`${particle.x}px`}
+            top={`${particle.y}px`}
+            w="10px"
+            h="10px"
+            bg={color}
+            borderRadius="full"
+            pointerEvents="none"
+            zIndex={100}
+            initial={{ scale: 0, opacity: 1, x: 0, y: 0 }}
+            animate={{ 
+              scale: [0, 2, 0],
+              opacity: [1, 0.8, 0],
+              x: normalizedX,
+              y: normalizedY,
+            }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.8, ease: "easeOut" }}
+            style={{ transform: 'translate(-50%, -50%)' }}
+          />
+        );
+      })}
+    </AnimatePresence>
+  );
+};
+
 const TimelineItemComponent: React.FC<{
   item: TimelineItem;
   index: number;
@@ -65,13 +127,99 @@ const TimelineItemComponent: React.FC<{
   const cardControls = useAnimation();
   const [isIconHovered, setIsIconHovered] = React.useState(false);
   const [isCardHovered, setIsCardHovered] = React.useState(false);
+  const [iconParticles, setIconParticles] = React.useState<Particle[]>([]);
+  const [cardParticles, setCardParticles] = React.useState<Particle[]>([]);
+  const [iconDimensions, setIconDimensions] = React.useState({ width: 0, height: 0 });
+  const [cardDimensions, setCardDimensions] = React.useState({ width: 0, height: 0 });
 
-  const handleIconClick = async () => {
+  const createParticlesAroundBorder = (width: number, height: number, isCircle: boolean = false): Particle[] => {
+    const particles: Particle[] = [];
+    const particleCount = 16;
+    
+    if (isCircle) {
+      // For circular elements (icons), place particles around the circle edge
+      const radius = width / 2;
+      const borderOffset = 5; // Start particles slightly outside the border
+      const adjustedRadius = radius + borderOffset;
+      
+      for (let i = 0; i < particleCount; i++) {
+        // Distribute particles evenly around the circle
+        const angle = (i / particleCount) * Math.PI * 2;
+        particles.push({
+          id: Date.now() + i,
+          x: radius + adjustedRadius * Math.cos(angle),
+          y: radius + adjustedRadius * Math.sin(angle),
+        });
+      }
+    } else {
+      // For rectangular elements (cards), place particles around the perimeter
+      const margin = -5; // Start particles outside the border
+      const adjustedWidth = width - 2 * margin;
+      const adjustedHeight = height - 2 * margin;
+      const perimeter = 2 * (adjustedWidth + adjustedHeight);
+      const spacing = perimeter / particleCount;
+      
+      for (let i = 0; i < particleCount; i++) {
+        const distance = i * spacing;
+        let x, y;
+        
+        if (distance < adjustedWidth) {
+          // Top edge
+          x = margin + distance;
+          y = margin;
+        } else if (distance < adjustedWidth + adjustedHeight) {
+          // Right edge
+          x = width - margin;
+          y = margin + (distance - adjustedWidth);
+        } else if (distance < 2 * adjustedWidth + adjustedHeight) {
+          // Bottom edge
+          x = width - margin - (distance - adjustedWidth - adjustedHeight);
+          y = height - margin;
+        } else {
+          // Left edge
+          x = margin;
+          y = height - margin - (distance - 2 * adjustedWidth - adjustedHeight);
+        }
+        
+        particles.push({ id: Date.now() + i, x, y });
+      }
+    }
+    
+    return particles;
+  };
+
+  const handleIconClick = async (e: React.MouseEvent<HTMLDivElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    
+    setIconDimensions({ width: rect.width, height: rect.height });
+    // Create particles positioned relative to the 120x120 container (60px offset from center)
+    const particles = createParticlesAroundBorder(rect.width, rect.height, true);
+    const offsetParticles = particles.map(p => ({
+      ...p,
+      x: p.x + 30, // Offset to center in 120x120 container
+      y: p.y + 30
+    }));
+    setIconParticles(offsetParticles);
+    setTimeout(() => setIconParticles([]), 800);
+    
     await iconControls.start({ scale: 1.4 });
     await iconControls.start({ scale: isIconHovered ? 1.2 : 1 });
   };
 
-  const handleCardClick = async () => {
+  const handleCardClick = async (e: React.MouseEvent<HTMLDivElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    
+    setCardDimensions({ width: rect.width, height: rect.height });
+    // Create particles positioned relative to the extended container (20px padding on all sides)
+    const particles = createParticlesAroundBorder(rect.width, rect.height, false);
+    const offsetParticles = particles.map(p => ({
+      ...p,
+      x: p.x + 20, // Offset for the 20px padding
+      y: p.y + 20
+    }));
+    setCardParticles(offsetParticles);
+    setTimeout(() => setCardParticles([]), 800);
+    
     await cardControls.start({ scale: 1.05 });
     await cardControls.start({ scale: isCardHovered ? 1.02 : 1 });
   };
@@ -92,12 +240,27 @@ const TimelineItemComponent: React.FC<{
         position="relative"
       >
         <Box
-          w={{ base: 'full', md: '45%' }}
-          pr={{ base: 0, md: isLeft ? 8 : 0 }}
-          pl={{ base: 0, md: !isLeft ? 8 : 0 }}
+          w={{ base: 'full', md: '42%' }}
+          pr={{ base: 0, md: isLeft ? 12 : 0 }}
+          pl={{ base: 0, md: !isLeft ? 12 : 0 }}
           textAlign={{ base: 'left', md: isLeft ? 'right' : 'left' }}
           order={{ base: 1, md: isLeft ? 0 : 2 }}
+          position="relative"
+          overflow="visible"
         >
+          {/* Particle container that extends beyond card boundaries */}
+          <Box
+            position="absolute"
+            top="-20px"
+            left="-20px"
+            right="-20px"
+            bottom="-20px"
+            pointerEvents="none"
+            overflow="visible"
+            zIndex={100}
+          >
+            <ParticleEffect particles={cardParticles} color={highlightColor} elementWidth={cardDimensions.width} elementHeight={cardDimensions.height} isCircle={false} />
+          </Box>
           <MotionBox
             bg={cardBg}
             p={6}
@@ -112,6 +275,8 @@ const TimelineItemComponent: React.FC<{
             animate={cardControls}
             onMouseEnter={() => setIsCardHovered(true)}
             onMouseLeave={() => setIsCardHovered(false)}
+            position="relative"
+            zIndex={10}
           >
             <HStack
               justify={{ base: 'flex-start', md: isLeft ? 'flex-end' : 'flex-start' }}
@@ -154,13 +319,29 @@ const TimelineItemComponent: React.FC<{
           transform={{ base: 'none', md: 'translateX(-50%)' }}
           order={{ base: 0, md: 1 }}
           mb={{ base: 4, md: 0 }}
+          overflow="visible"
+          zIndex={50}
         >
+          {/* Particle container that allows overflow */}
+          <Box
+            position="absolute"
+            top="50%"
+            left="50%"
+            transform="translate(-50%, -50%)"
+            w="120px"
+            h="120px"
+            pointerEvents="none"
+            overflow="visible"
+            zIndex={100}
+          >
+            <ParticleEffect particles={iconParticles} color={highlightColor} elementWidth={iconDimensions.width} elementHeight={iconDimensions.height} isCircle={true} />
+          </Box>
           <MotionCircle
             size="60px"
             bg={cardBg}
             borderWidth={3}
             borderColor={item.highlight ? highlightColor : lineColor}
-            zIndex={2}
+            zIndex={50}
             whileHover={{ scale: 1.2 }}
             transition={{ duration: 0.2 }}
             cursor="pointer"
@@ -168,6 +349,7 @@ const TimelineItemComponent: React.FC<{
             animate={iconControls}
             onMouseEnter={() => setIsIconHovered(true)}
             onMouseLeave={() => setIsIconHovered(false)}
+            position="relative"
           >
             <Icon as={iconMap[item.icon]} boxSize={6} color={highlightColor} />
           </MotionCircle>
@@ -175,7 +357,7 @@ const TimelineItemComponent: React.FC<{
 
         <Box
           display={{ base: 'none', md: 'block' }}
-          w="45%"
+          w="42%"
           order={{ md: isLeft ? 2 : 0 }}
         />
       </Flex>
@@ -225,7 +407,7 @@ const Experience: React.FC = () => {
           </Text>
         </VStack>
 
-        <Box position="relative" w="full">
+        <Box position="relative" w="full" overflow="visible">
           <Box
             position="absolute"
             left="50%"
@@ -245,7 +427,7 @@ const Experience: React.FC = () => {
             initial={{ height: '0%' }}
           />
 
-          <VStack gap={12} position="relative">
+          <VStack gap={12} position="relative" overflow="visible">
             {timelineData.map((item, index) => (
               <TimelineItemComponent
                 key={item.id}
