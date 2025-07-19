@@ -24,38 +24,38 @@ const SocialLinks = (props: SocialLinksProps) => {
         <SideTitle title="Connect" />
         <Spacer />
         <Flex direction="column">
-          <Link href={links.linkedin} isExternal>
+          <Link href={links.linkedin} target="_blank" rel="noopener noreferrer">
             <Flex>
               <Center>
-                <Icon mr={2} as={FaLinkedin} />
-                <Text fontSize="lg">LinkedIn</Text>
+                <Icon mr={2} as={FaLinkedin} color={{ base: "gray.800", _dark: "white" }} />
+                <Text fontSize="lg" color={{ base: "gray.800", _dark: "white" }}>LinkedIn</Text>
               </Center>
             </Flex>
           </Link>
           <Spacer />
-          <Link href={links.github} isExternal>
+          <Link href={links.github} target="_blank" rel="noopener noreferrer">
             <Flex>
               <Center>
-                <Icon mr={2} as={FaGithub} />
-                <Text fontSize="lg">Github</Text>
+                <Icon mr={2} as={FaGithub} color={{ base: "gray.800", _dark: "white" }} />
+                <Text fontSize="lg" color={{ base: "gray.800", _dark: "white" }}>Github</Text>
               </Center>
             </Flex>
           </Link>
           <Spacer />
-          <Link href={links.twitter} isExternal>
+          <Link href={links.twitter} target="_blank" rel="noopener noreferrer">
             <Flex>
               <Center>
-                <Icon mr={2} as={FaTwitter} />
-                <Text fontSize="lg">Twitter</Text>
+                <Icon mr={2} as={FaTwitter} color={{ base: "gray.800", _dark: "white" }} />
+                <Text fontSize="lg" color={{ base: "gray.800", _dark: "white" }}>Twitter</Text>
               </Center>
             </Flex>
           </Link>
           <Spacer />
-          <Link href={links.email} isExternal>
+          <Link href={links.email} target="_blank" rel="noopener noreferrer">
             <Flex>
               <Center>
-                <Icon mr={2} as={FaRegEnvelope} />
-                <Text fontSize="lg">Email</Text>
+                <Icon mr={2} as={FaRegEnvelope} color={{ base: "gray.800", _dark: "white" }} />
+                <Text fontSize="lg" color={{ base: "gray.800", _dark: "white" }}>Email</Text>
               </Center>
             </Flex>
           </Link>

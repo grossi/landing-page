@@ -1,0 +1,70 @@
+{
+  "experiences": [
+    {
+      "id": 1,
+      "type": "work",
+      "title": "Senior Full Stack Software Engineer",
+      "organization": "Lazuli",
+      "period": "Apr 2025 - Present",
+      "description": "Leading development of innovative AI solutions and mentoring team members in modern full-stack technologies.",
+      "skills": ["React", "Node.js", "Golang", "Google Cloud", "AI"],
+      "icon": "FaBriefcase",
+      "highlight": true
+    },
+    {
+      "id": 2,
+      "type": "work",
+      "title": "Full Stack Software Engineer",
+      "organization": "Uber",
+      "period": "May 2021 - Aug 2024",
+      "description": "Developed and maintained critical features for Uber's platform, working with large-scale distributed systems and microservices architecture.",
+      "skills": ["React", "Go", "Microservices", "Kubernetes", "gRPC"],
+      "icon": "FaBriefcase",
+      "highlight": true
+    },
+    {
+      "id": 3,
+      "type": "work",
+      "title": "Lead Frontend Developer",
+      "organization": "Accenture",
+      "period": "Nov 2020 - May 2021",
+      "description": "Led frontend development teams in designing and delivering B2B products for one of the biggest e-commerce platforms in Latin America.",
+      "skills": ["React", "Node.js", "TypeScript", "Design Systems", "GraphQL", "Agile"],
+      "icon": "FaBriefcase",
+      "highlight": true
+    },
+    {
+      "id": 5,
+      "type": "work",
+      "title": "Chief Technology Officer",
+      "organization": "TVManager",
+      "period": "Jan 2019 - Nov 2020",
+      "description": "Led technical strategy and development of a content management platform for digital signage, managing a team of developers.",
+      "skills": ["React", "Node.js", "MongoDB", "Docker", "Leadership"],
+      "icon": "FaRocket",
+      "highlight": true
+    },
+    {
+      "id": 6,
+      "type": "work",
+      "title": "Backend Developer",
+      "organization": "VTEX",
+      "period": "Jan 2015 - Nov 2015",
+      "description": "Developed backend services for one of Latin America's leading e-commerce platforms, focusing on scalability and performance.",
+      "skills": ["C#", ".NET", "SQL Server", "Redis", "E-commerce"],
+      "icon": "FaBriefcase",
+      "highlight": true
+    },
+    {
+      "id": 7,
+      "type": "work",
+      "title": "Desktop Developer",
+      "organization": "TecGraf",
+      "period": "Nov 2012 - Nov 2013",
+      "description": "Developed desktop applications for engineering and scientific computing, working with computer graphics and data visualization.",
+      "skills": ["C++", "Qt", "OpenGL", "Computer Graphics"],
+      "icon": "FaDesktop",
+      "highlight": true
+    }
+  ]
+}

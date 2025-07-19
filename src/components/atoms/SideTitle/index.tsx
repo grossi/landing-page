@@ -8,8 +8,8 @@ interface SideTitleProps {
 const SideTitle = (props: SideTitleProps) => {
   return (
     <React.Fragment>
-      <Box borderBottom="4px solid" borderBottomStyle="solid" borderBottomColor="gray.100" py={1} mb={6}>
-        <Text fontSize="xl">{props.title}</Text>
+      <Box borderBottom="4px solid" borderBottomStyle="solid" borderBottomColor={{ base: "gray.100", _dark: "gray.600" }} py={1} mb={6}>
+        <Text fontSize="xl" color={{ base: "gray.800", _dark: "white" }}>{props.title}</Text>
       </Box>
     </React.Fragment>
   );

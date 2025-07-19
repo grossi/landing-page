@@ -1,19 +1,25 @@
 import React from 'react';
-import ReactDOM from 'react-dom';
+import ReactDOM from 'react-dom/client';
 import App from './App';
 import { ChakraProvider } from '@chakra-ui/react';
+import { ColorModeProvider } from './components/ui/color-mode';
 import theme from './theme';
 import reportWebVitals from './reportWebVitals';
-import 'fontsource-roboto';
+import '@fontsource/roboto';
 import './index.css';
 
-ReactDOM.render(
+const root = ReactDOM.createRoot(
+  document.getElementById('root') as HTMLElement
+);
+
+root.render(
   <React.StrictMode>
-    <ChakraProvider theme={theme}>
-      <App />
+    <ChakraProvider value={theme}>
+      <ColorModeProvider>
+        <App />
+      </ColorModeProvider>
     </ChakraProvider>
-  </React.StrictMode>,
-  document.getElementById('root')
+  </React.StrictMode>
 );
 
 // If you want to start measuring performance in your app, pass a function

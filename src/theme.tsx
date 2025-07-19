@@ -1,10 +1,6 @@
-import { extendTheme, ThemeConfig } from '@chakra-ui/react';
+import { createSystem, defaultConfig } from '@chakra-ui/react';
 
-const config: ThemeConfig = {
-  initialColorMode: 'dark',
-  useSystemColorMode: false,
-};
-
-const theme = extendTheme({ config });
+// Use default Chakra UI v3 theme without custom modifications
+const theme = createSystem(defaultConfig);
 
 export default theme;
