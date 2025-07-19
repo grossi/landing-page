@@ -26,7 +26,7 @@ import {
 } from 'react-icons/fa';
 import { useColorMode } from 'components/ui/color-mode';
 import { Field } from 'components/ui/field';
-import Header from '../organisms/Header';
+import PageLayout from 'templates/PageLayout';
 
 const MotionBox = motion.create(Box);
 const MotionButton = motion.create(Button);
@@ -49,7 +49,6 @@ const Contact: React.FC = () => {
   const [focusedField, setFocusedField] = useState<string | null>(null);
   const { colorMode } = useColorMode();
 
-  const bgColor = colorMode === 'light' ? 'gray.50' : 'gray.900';
   const cardBg = colorMode === 'light' ? 'white' : 'gray.800';
   const borderColor = colorMode === 'light' ? 'gray.200' : 'gray.700';
   const inputBg = colorMode === 'light' ? 'gray.50' : 'gray.700';
@@ -94,9 +93,8 @@ const Contact: React.FC = () => {
   };
 
   return (
-    <Box bg={bgColor} minH="100vh">
-      <Header />
-      <VStack gap={16} maxW="container.xl" mx="auto" px={4} py={12}>
+    <PageLayout>
+      <VStack gap={16}>
         <VStack gap={4} textAlign="center">
           <Heading
             size="4xl"
@@ -323,7 +321,7 @@ const Contact: React.FC = () => {
           </VStack>
         </Grid>
       </VStack>
-    </Box>
+    </PageLayout>
   );
 };
 

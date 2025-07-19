@@ -1,11 +1,11 @@
 import React from 'react';
 import { Box, VStack } from '@chakra-ui/react';
 import { useColorMode } from 'components/ui/color-mode';
-import Header from '../organisms/Header';
-import ExperienceHeader from '../organisms/ExperienceHeader';
-import Timeline from '../organisms/Timeline';
-import { TimelineItem } from '../../types/timeline';
-import experienceData from '../../assets/experience-data.json';
+import PageLayout from 'templates/PageLayout';
+import ExperienceHeader from 'components/organisms/ExperienceHeader';
+import Timeline from 'components/organisms/Timeline';
+import { TimelineItem } from 'types/timeline';
+import experienceData from 'assets/experience-data.json';
 
 const Experience: React.FC = () => {
   const { colorMode } = useColorMode();
@@ -18,7 +18,6 @@ const Experience: React.FC = () => {
 
   // Color theme configuration
   const colors = {
-    bgColor: colorMode === 'light' ? 'gray.50' : 'gray.900',
     cardBg: colorMode === 'light' ? 'white' : 'gray.800',
     borderColor: colorMode === 'light' ? 'gray.200' : 'gray.700',
     lineColor: colorMode === 'light' ? 'purple.200' : 'purple.700',
@@ -56,9 +55,8 @@ const Experience: React.FC = () => {
   };
 
   return (
-    <Box bg={colors.bgColor} minH="100vh">
-      <Header />
-      <VStack gap={16} maxW="container.lg" mx="auto" px={4} py={12}>
+    <PageLayout maxW="container.lg">
+      <VStack gap={16}>
         <ExperienceHeader
           title="Professional Journey"
           subtitle="A decade of growth, learning, and building impactful solutions"
@@ -71,7 +69,7 @@ const Experience: React.FC = () => {
           particleConfig={particleConfig}
         />
       </VStack>
-    </Box>
+    </PageLayout>
   );
 };
 

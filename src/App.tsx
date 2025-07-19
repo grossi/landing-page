@@ -2,9 +2,9 @@ import React from 'react';
 import { BrowserRouter, Route, Routes } from 'react-router-dom';
 import About from 'pages/About';
 import Blog from 'pages/Blog';
-import Projects from 'components/pages/Projects';
-import Experience from 'components/pages/Experience';
-import Contact from 'components/pages/Contact';
+import Projects from 'pages/Projects';
+import Experience from 'pages/Experience';
+import Contact from 'pages/Contact';
 
 function App() {
   return (

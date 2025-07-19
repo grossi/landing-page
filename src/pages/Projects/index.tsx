@@ -14,9 +14,9 @@ import {
 import { motion, AnimatePresence } from 'framer-motion';
 import { FaGithub, FaExternalLinkAlt } from 'react-icons/fa';
 import { useColorMode } from 'components/ui/color-mode';
-import Header from '../organisms/Header';
+import PageLayout from 'templates/PageLayout';
 
-const MotionBox = motion(Box);
+const MotionBox = motion.create(Box);
 
 interface Project {
   id: number;
@@ -90,7 +90,6 @@ const Projects: React.FC = () => {
   const [hoveredProject, setHoveredProject] = useState<number | null>(null);
   const { colorMode } = useColorMode();
 
-  const bgColor = colorMode === 'light' ? 'gray.50' : 'gray.900';
   const cardBg = colorMode === 'light' ? 'white' : 'gray.800';
   const borderColor = colorMode === 'light' ? 'gray.200' : 'gray.700';
 
@@ -103,9 +102,8 @@ const Projects: React.FC = () => {
     : projects;
 
   return (
-    <Box bg={bgColor} minH="100vh">
-      <Header />
-      <VStack gap={12} maxW="container.xl" mx="auto" px={4} py={12}>
+    <PageLayout>
+      <VStack gap={12}>
         <VStack gap={4} textAlign="center">
           <Heading
             size="4xl"
@@ -273,7 +271,7 @@ const Projects: React.FC = () => {
           </AnimatePresence>
         </Grid>
       </VStack>
-    </Box>
+    </PageLayout>
   );
 };
 
