@@ -14,11 +14,11 @@ const Sidebar = (props: SidebarProps) => {
             <Text fontSize="2xl" color={{ base: "gray.800", _dark: "white" }}>Hello!</Text>
           </Center>
           <SocialLinks links={props.socialInfo.links} />
-          <Link href="/about">
+          {/* <Link href="/about">
             <Text fontSize="2xl" color={{ base: "gray.800", _dark: "white" }}>
               About me
             </Text>
-          </Link>
+          </Link> */}
         </Flex>
     </Box>
   );

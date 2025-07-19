@@ -20,9 +20,9 @@ const MotionBox = motion(Box);
 const navItems = [
   { name: 'Experience', path: '/' },
   { name: 'Blog', path: '/blog' },
-  { name: 'About', path: '/about' },
-  { name: 'Projects', path: '/projects' },
-  { name: 'Contact', path: '/contact' },
+  // { name: 'About', path: '/about' },
+  // { name: 'Projects', path: '/projects' },
+  // { name: 'Contact', path: '/contact' },
 ];
 
 const Header = () => {
