@@ -21,7 +21,7 @@ const PageLayout: React.FC<PageLayoutProps> = ({
   return (
     <Box
       minHeight="100vh"
-      bg={{ base: 'gray.50', _dark: 'gray.800' }}
+      bg={{ base: 'gray.50', _dark: 'gray.950' }}
       color={{ base: 'gray.800', _dark: 'white' }}
     >
       <Header />

@@ -30,7 +30,7 @@ const Header = () => {
 
   return (
     <>
-      <Box bg={{ base: 'gray.100', _dark: 'gray.700' }} p={3} position="sticky" top={0} zIndex={10}>
+      <Box bg={{ base: 'gray.100', _dark: 'gray.900' }} p={3} position="sticky" top={0} zIndex={10}>
         <Container maxW="container.xl">
           <Flex align="center">
             <RouterLink to="/" style={{ textDecoration: 'none' }}>
