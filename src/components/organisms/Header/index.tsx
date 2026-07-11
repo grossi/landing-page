@@ -11,7 +11,7 @@ import {
   VStack,
 } from '@chakra-ui/react';
 import { ColorModeButton } from 'components/ui/color-mode';
-import { Link as RouterLink, useLocation } from 'react-router-dom';
+import { Link as RouterLink, useLocation } from 'react-router';
 import { motion, AnimatePresence } from 'framer-motion';
 import { FaBars, FaTimes } from 'react-icons/fa';
 
