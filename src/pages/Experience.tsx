@@ -3,7 +3,7 @@ import { VStack } from '@chakra-ui/react';
 import PageLayout from 'components/layout/PageLayout';
 import ExperienceHeader from 'components/timeline/ExperienceHeader';
 import Timeline from 'components/timeline/Timeline';
-import { TimelineItem } from 'types/timeline';
+import { TimelineItem } from 'components/timeline/types';
 import experienceData from 'assets/experience-data.json';
 
 const timelineItems = experienceData.experiences as TimelineItem[];

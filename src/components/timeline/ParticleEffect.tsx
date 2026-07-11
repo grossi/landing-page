@@ -1,7 +1,7 @@
 import React, { useMemo } from 'react';
 import { Box } from '@chakra-ui/react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ParticleEffectProps } from 'types/timeline';
+import { ParticleEffectProps } from 'components/timeline/types';
 
 // Constants for better maintainability
 const ICON_CONTAINER_OFFSET = 30;

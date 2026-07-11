@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useAnimation } from 'framer-motion';
-import { Particle } from 'types/timeline';
+import { Particle } from 'components/timeline/types';
 import { createParticlesAroundBorder, offsetParticles } from 'components/timeline/particleUtils';
 
 interface UseParticleAnimationProps {

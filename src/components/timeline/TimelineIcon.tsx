@@ -2,7 +2,7 @@ import React from 'react';
 import { Circle, Icon } from '@chakra-ui/react';
 import { motion, LegacyAnimationControls } from 'framer-motion';
 import { FaBriefcase, FaGraduationCap, FaRocket, FaStar, FaGamepad, FaDesktop } from 'react-icons/fa';
-import { timelineColors } from 'config/timeline';
+import { timelineColors } from 'components/timeline/config';
 
 const MotionCircle = motion(Circle);
 

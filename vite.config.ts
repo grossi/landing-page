@@ -12,7 +12,7 @@ export default defineConfig({
     // Imports are rooted at src/ (tsconfig baseUrl), e.g. `import Blog from 'pages/Blog'`.
     alias: [
       {
-        find: /^(assets|components|config|hooks|pages|types)(\/.*)?$/,
+        find: /^(assets|components|config|hooks|pages)(\/.*)?$/,
         replacement: `${src}/$1$2`,
       },
     ],

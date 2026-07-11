@@ -1,16 +1,20 @@
 import React from 'react';
 import { BrowserRouter, Route, Routes } from 'react-router';
-import Blog from 'pages/Blog';
-import Experience from 'pages/Experience';
+
+// Lazy routes keep the syntax highlighter out of the initial bundle.
+const Blog = React.lazy(() => import('pages/Blog'));
+const Experience = React.lazy(() => import('pages/Experience'));
 
 function App() {
   return (
     <BrowserRouter>
-      <Routes>
-        <Route path="/blog" element={<Blog />} />
-        <Route path="/" element={<Experience />} />
-        <Route path="/experience" element={<Experience />} />
-      </Routes>
+      <React.Suspense fallback={null}>
+        <Routes>
+          <Route path="/blog" element={<Blog />} />
+          <Route path="/" element={<Experience />} />
+          <Route path="/experience" element={<Experience />} />
+        </Routes>
+      </React.Suspense>
     </BrowserRouter>
   );
 }

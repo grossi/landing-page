@@ -1,4 +1,4 @@
-import { TimelineColors, TimelineItem, TimelineParticleConfig } from 'types/timeline';
+import { TimelineColors, TimelineItem, TimelineParticleConfig } from 'components/timeline/types';
 
 // Chakra conditional tokens resolve per color mode, so no useColorMode needed.
 export const timelineColors: TimelineColors = {

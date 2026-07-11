@@ -1,8 +1,8 @@
 import React from 'react';
 import { Box, Text } from '@chakra-ui/react';
 import { motion } from 'framer-motion';
-import { TimelineItem } from 'types/timeline';
-import { particleConfig, timelineColors } from 'config/timeline';
+import { TimelineItem } from 'components/timeline/types';
+import { particleConfig, timelineColors } from 'components/timeline/config';
 import TimelineItemHeader from 'components/timeline/TimelineItemHeader';
 import SkillsList from 'components/timeline/SkillsList';
 import AnimatedParticleContainer from 'components/timeline/AnimatedParticleContainer';

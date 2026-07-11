@@ -1,8 +1,13 @@
 import * as React from 'react';
 import ReactMarkdown from 'markdown-to-jsx';
-import SyntaxHighlighter from 'react-syntax-highlighter';
+import { Light as SyntaxHighlighter } from 'react-syntax-highlighter';
+import typescript from 'react-syntax-highlighter/dist/esm/languages/hljs/typescript';
 import { atomOneDarkReasonable } from 'react-syntax-highlighter/dist/esm/styles/hljs';
 import { Box, Link, Text } from '@chakra-ui/react';
+
+// All code blocks are rendered as TypeScript (see MarkdownCode below), so
+// only that language is registered — the full hljs build is ~800 kB.
+SyntaxHighlighter.registerLanguage('typescript', typescript);
 
 function MarkdownListItem(props: any) {
   return (

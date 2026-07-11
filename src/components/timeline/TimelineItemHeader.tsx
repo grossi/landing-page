@@ -1,7 +1,7 @@
 import React from 'react';
 import { Badge, HStack, Heading, Text } from '@chakra-ui/react';
-import { TimelineItem } from 'types/timeline';
-import { timelineColors, typeColorPalettes } from 'config/timeline';
+import { TimelineItem } from 'components/timeline/types';
+import { timelineColors, typeColorPalettes } from 'components/timeline/config';
 
 interface TimelineItemHeaderProps {
   type: TimelineItem['type'];
