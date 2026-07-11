@@ -1,6 +1,6 @@
 import React from 'react';
 import { Box } from '@chakra-ui/react';
-import ParticleEffect from 'components/atoms/ParticleEffect';
+import ParticleEffect from 'components/timeline/ParticleEffect';
 import { Particle, ParticleConfig } from 'types/timeline';
 import { timelineColors } from 'config/timeline';
 

@@ -1,8 +1,8 @@
 import React from 'react';
 import { VStack } from '@chakra-ui/react';
-import PageLayout from 'templates/PageLayout';
-import ExperienceHeader from 'components/organisms/ExperienceHeader';
-import Timeline from 'components/organisms/Timeline';
+import PageLayout from 'components/layout/PageLayout';
+import ExperienceHeader from 'components/timeline/ExperienceHeader';
+import Timeline from 'components/timeline/Timeline';
 import { TimelineItem } from 'types/timeline';
 import experienceData from 'assets/experience-data.json';
 

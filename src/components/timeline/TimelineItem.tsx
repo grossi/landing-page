@@ -3,10 +3,10 @@ import { Box, Flex } from '@chakra-ui/react';
 import { motion } from 'framer-motion';
 import { TimelineItem as TimelineItemType } from 'types/timeline';
 import { particleConfig, timelineColors } from 'config/timeline';
-import TimelineCard from 'components/molecules/TimelineCard';
-import TimelineIcon from 'components/atoms/TimelineIcon';
-import AnimatedParticleContainer from 'components/molecules/AnimatedParticleContainer';
-import { useParticleAnimation } from 'hooks/useParticleAnimation';
+import TimelineCard from 'components/timeline/TimelineCard';
+import TimelineIcon from 'components/timeline/TimelineIcon';
+import AnimatedParticleContainer from 'components/timeline/AnimatedParticleContainer';
+import { useParticleAnimation } from 'components/timeline/useParticleAnimation';
 
 const MotionBox = motion(Box);
 
@@ -29,7 +29,6 @@ const TimelineItem: React.FC<TimelineItemProps> = ({ item, index }) => {
 
   return (
     <MotionBox
-      key={item.id}
       initial={{ opacity: 0, x: isLeft ? -50 : 50 }}
       whileInView={{ opacity: 1, x: 0 }}
       viewport={{ once: true, margin: '-100px' }}

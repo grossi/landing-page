@@ -1,6 +1,5 @@
 import React from 'react';
-import { HStack } from '@chakra-ui/react';
-import SkillBadge from '../atoms/SkillBadge';
+import { Badge, HStack } from '@chakra-ui/react';
 
 interface SkillsListProps {
   skills: string[];
@@ -9,18 +8,15 @@ interface SkillsListProps {
 
 const SkillsList: React.FC<SkillsListProps> = ({ skills, isLeft }) => {
   return (
-    <HStack 
-      wrap="wrap" 
-      gap={2} 
+    <HStack
+      wrap="wrap"
+      gap={2}
       justify={{ base: 'flex-start', md: isLeft ? 'flex-end' : 'flex-start' }}
     >
       {skills.map((skill) => (
-        <SkillBadge 
-          key={skill} 
-          skill={skill} 
-          size="sm" 
-          variant="subtle" 
-        />
+        <Badge key={skill} size="sm" variant="subtle">
+          {skill}
+        </Badge>
       ))}
     </HStack>
   );

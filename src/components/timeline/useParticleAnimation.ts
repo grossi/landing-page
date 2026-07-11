@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useAnimation } from 'framer-motion';
 import { Particle } from 'types/timeline';
-import { createParticlesAroundBorder, offsetParticles } from 'utils/particleUtils';
+import { createParticlesAroundBorder, offsetParticles } from 'components/timeline/particleUtils';
 
 interface UseParticleAnimationProps {
   isCircle: boolean;

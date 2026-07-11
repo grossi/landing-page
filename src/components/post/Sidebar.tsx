@@ -1,6 +1,6 @@
 import React from 'react';
 import { Box, Flex, Text, Center } from '@chakra-ui/react';
-import SocialLinks from 'components/molecules/SocialLinks';
+import SocialLinks from 'components/post/SocialLinks';
 import { socialLinks } from 'config/site';
 
 const Sidebar = () => {

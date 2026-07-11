@@ -1,8 +1,7 @@
 import React from 'react';
-import { HStack, Heading, Text } from '@chakra-ui/react';
+import { Badge, HStack, Heading, Text } from '@chakra-ui/react';
 import { TimelineItem } from 'types/timeline';
 import { timelineColors, typeColorPalettes } from 'config/timeline';
-import SkillBadge from 'components/atoms/SkillBadge';
 
 interface TimelineItemHeaderProps {
   type: TimelineItem['type'];
@@ -25,11 +24,9 @@ const TimelineItemHeader: React.FC<TimelineItemHeaderProps> = ({
         justify={{ base: 'flex-start', md: isLeft ? 'flex-end' : 'flex-start' }}
         mb={2}
       >
-        <SkillBadge
-          skill={type}
-          colorPalette={typeColorPalettes[type]}
-          size="sm"
-        />
+        <Badge colorPalette={typeColorPalettes[type]} size="sm" variant="subtle">
+          {type}
+        </Badge>
         <Text fontSize="sm" color={{ base: 'gray.600', _dark: 'gray.400' }}>
           {period}
         </Text>

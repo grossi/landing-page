@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { Box, Container } from '@chakra-ui/react';
-import Header from 'components/organisms/Header';
+import Header from 'components/layout/Header';
 
 interface PageLayoutProps {
   children: React.ReactNode;

@@ -1,4 +1,4 @@
-import { Particle } from '../types/timeline';
+import { Particle } from 'types/timeline';
 
 /**
  * Creates particles around the border of a circular element

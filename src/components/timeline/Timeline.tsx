@@ -3,7 +3,7 @@ import { Box, VStack } from '@chakra-ui/react';
 import { motion, useScroll, useTransform } from 'framer-motion';
 import { TimelineItem as TimelineItemType } from 'types/timeline';
 import { timelineColors } from 'config/timeline';
-import TimelineItem from 'components/organisms/TimelineItem';
+import TimelineItem from 'components/timeline/TimelineItem';
 
 const MotionBox = motion(Box);
 

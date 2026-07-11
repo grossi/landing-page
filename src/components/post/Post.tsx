@@ -1,8 +1,8 @@
 import * as React from "react";
 import { SimpleGrid, GridItem } from "@chakra-ui/react";
-import Markdown from "components/atoms/Markdown";
-import Sidebar from "components/organisms/Sidebar";
-import PageLayout from "templates/PageLayout";
+import Markdown from "components/post/Markdown";
+import Sidebar from "components/post/Sidebar";
+import PageLayout from "components/layout/PageLayout";
 
 interface PostProps {
   text: string;

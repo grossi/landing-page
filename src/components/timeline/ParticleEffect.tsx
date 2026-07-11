@@ -1,7 +1,7 @@
 import React, { useMemo } from 'react';
 import { Box } from '@chakra-ui/react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ParticleEffectProps } from '../../types/timeline';
+import { ParticleEffectProps } from 'types/timeline';
 
 // Constants for better maintainability
 const ICON_CONTAINER_OFFSET = 30;
@@ -89,38 +89,4 @@ const ParticleEffect: React.FC<ParticleEffectProps> = ({
   );
 };
 
-// Custom comparison function for React.memo
-const arePropsEqual = (
-  prevProps: ParticleEffectProps,
-  nextProps: ParticleEffectProps
-): boolean => {
-  // Check if primitive props are equal
-  if (
-    prevProps.color !== nextProps.color ||
-    prevProps.elementWidth !== nextProps.elementWidth ||
-    prevProps.elementHeight !== nextProps.elementHeight ||
-    prevProps.isCircle !== nextProps.isCircle ||
-    prevProps.size !== nextProps.size ||
-    prevProps.speed !== nextProps.speed ||
-    prevProps.duration !== nextProps.duration
-  ) {
-    return false;
-  }
-
-  // Check if particles array has changed
-  if (prevProps.particles.length !== nextProps.particles.length) {
-    return false;
-  }
-
-  // Deep comparison of particles array
-  return prevProps.particles.every((particle, index) => {
-    const nextParticle = nextProps.particles[index];
-    return (
-      particle.id === nextParticle.id &&
-      particle.x === nextParticle.x &&
-      particle.y === nextParticle.y
-    );
-  });
-};
-
-export default React.memo(ParticleEffect, arePropsEqual);
+export default React.memo(ParticleEffect);

@@ -3,10 +3,10 @@ import { Box, Text } from '@chakra-ui/react';
 import { motion } from 'framer-motion';
 import { TimelineItem } from 'types/timeline';
 import { particleConfig, timelineColors } from 'config/timeline';
-import TimelineItemHeader from 'components/molecules/TimelineItemHeader';
-import SkillsList from 'components/molecules/SkillsList';
-import AnimatedParticleContainer from 'components/molecules/AnimatedParticleContainer';
-import { useParticleAnimation } from 'hooks/useParticleAnimation';
+import TimelineItemHeader from 'components/timeline/TimelineItemHeader';
+import SkillsList from 'components/timeline/SkillsList';
+import AnimatedParticleContainer from 'components/timeline/AnimatedParticleContainer';
+import { useParticleAnimation } from 'components/timeline/useParticleAnimation';
 
 const MotionBox = motion(Box);
 
