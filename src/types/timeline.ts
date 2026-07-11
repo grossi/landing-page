@@ -23,7 +23,7 @@ export interface Particle {
 
 export interface ParticleEffectProps {
   particles: Particle[];
-  color: string;
+  color: ColorToken;
   elementWidth: number;
   elementHeight: number;
   isCircle?: boolean;
@@ -32,22 +32,24 @@ export interface ParticleEffectProps {
   duration?: number;
 }
 
+/** A Chakra color value, either plain or conditional on color mode. */
+export type ColorToken = string | { base: string; _dark: string };
+
 export interface TimelineColors {
-  cardBg: string;
-  borderColor: string;
-  lineColor: string;
-  highlightColor: string;
+  cardBg: ColorToken;
+  borderColor: ColorToken;
+  lineColor: ColorToken;
+  highlightColor: ColorToken;
 }
 
-export interface AnimationControls {
-  start: (animation: any) => Promise<void>;
+export interface ParticleConfig {
+  count: number;
+  size: number;
+  speed: number;
+  duration: number;
 }
 
-export interface ParticleAnimationHookResult {
-  particles: Particle[];
-  dimensions: { width: number; height: number };
-  handleClick: (e: React.MouseEvent<HTMLDivElement>) => Promise<void>;
-  isHovered: boolean;
-  setIsHovered: (hovered: boolean) => void;
-  controls: any;
+export interface TimelineParticleConfig {
+  icon: ParticleConfig;
+  card: ParticleConfig;
 }

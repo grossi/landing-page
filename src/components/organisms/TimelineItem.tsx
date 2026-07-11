@@ -1,51 +1,30 @@
 import React from 'react';
 import { Box, Flex } from '@chakra-ui/react';
 import { motion } from 'framer-motion';
-import { TimelineItem as TimelineItemType, TimelineColors } from '../../types/timeline';
-import TimelineCard from '../molecules/TimelineCard';
-import TimelineIcon from '../atoms/TimelineIcon';
-import AnimatedParticleContainer from '../molecules/AnimatedParticleContainer';
-import { useParticleAnimation } from '../../hooks/useParticleAnimation';
+import { TimelineItem as TimelineItemType } from 'types/timeline';
+import { particleConfig, timelineColors } from 'config/timeline';
+import TimelineCard from 'components/molecules/TimelineCard';
+import TimelineIcon from 'components/atoms/TimelineIcon';
+import AnimatedParticleContainer from 'components/molecules/AnimatedParticleContainer';
+import { useParticleAnimation } from 'hooks/useParticleAnimation';
 
 const MotionBox = motion(Box);
 
 interface TimelineItemProps {
   item: TimelineItemType;
   index: number;
-  colors: TimelineColors;
-  getColorPalette: (type: string) => string;
-  particleConfig?: {
-    icon: {
-      count: number;
-      size: number;
-      speed: number;
-      duration: number;
-    };
-    card: {
-      count: number;
-      size: number;
-      speed: number;
-      duration: number;
-    };
-  };
 }
 
-const TimelineItem: React.FC<TimelineItemProps> = ({
-  item,
-  index,
-  colors,
-  getColorPalette,
-  particleConfig
-}) => {
+const TimelineItem: React.FC<TimelineItemProps> = ({ item, index }) => {
   const isLeft = index % 2 === 0;
-  
-  const { particles, dimensions, handleClick, isHovered, setIsHovered, controls } = useParticleAnimation({
+
+  const { particles, dimensions, handleClick, setIsHovered, controls } = useParticleAnimation({
     isCircle: true,
     offsetX: 18,
     offsetY: 18,
     scaleAnimation: { peak: 1.4, hover: 1.2 },
-    particleCount: particleConfig?.icon.count,
-    particleDuration: particleConfig?.icon.duration ? particleConfig.icon.duration * 1000 : undefined
+    particleCount: particleConfig.icon.count,
+    particleDuration: particleConfig.icon.duration * 1000
   });
 
   return (
@@ -63,13 +42,7 @@ const TimelineItem: React.FC<TimelineItemProps> = ({
         justify="center"
         position="relative"
       >
-        <TimelineCard
-          item={item}
-          isLeft={isLeft}
-          colors={colors}
-          getColorPalette={getColorPalette}
-          particleConfig={particleConfig?.card}
-        />
+        <TimelineCard item={item} isLeft={isLeft} />
 
         <Box
           position={{ base: 'relative', md: 'absolute' }}
@@ -82,7 +55,6 @@ const TimelineItem: React.FC<TimelineItemProps> = ({
         >
           <AnimatedParticleContainer
             particles={particles}
-            color={colors.highlightColor}
             dimensions={dimensions}
             isCircle={true}
             position={{
@@ -94,17 +66,12 @@ const TimelineItem: React.FC<TimelineItemProps> = ({
               width: "120px",
               height: "120px"
             }}
-            particleSize={particleConfig?.icon.size}
-            particleSpeed={particleConfig?.icon.speed}
-            particleDuration={particleConfig?.icon.duration}
+            config={particleConfig.icon}
           />
-          
+
           <TimelineIcon
             icon={item.icon}
             isHighlighted={!!item.highlight}
-            cardBg={colors.cardBg}
-            lineColor={colors.lineColor}
-            highlightColor={colors.highlightColor}
             onClick={handleClick}
             onMouseEnter={() => setIsHovered(true)}
             onMouseLeave={() => setIsHovered(false)}

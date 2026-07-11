@@ -1,41 +1,28 @@
 import React from 'react';
 import { Box, Text } from '@chakra-ui/react';
 import { motion } from 'framer-motion';
-import { TimelineItem, TimelineColors } from '../../types/timeline';
-import TimelineItemHeader from './TimelineItemHeader';
-import SkillsList from './SkillsList';
-import AnimatedParticleContainer from './AnimatedParticleContainer';
-import { useParticleAnimation } from '../../hooks/useParticleAnimation';
+import { TimelineItem } from 'types/timeline';
+import { particleConfig, timelineColors } from 'config/timeline';
+import TimelineItemHeader from 'components/molecules/TimelineItemHeader';
+import SkillsList from 'components/molecules/SkillsList';
+import AnimatedParticleContainer from 'components/molecules/AnimatedParticleContainer';
+import { useParticleAnimation } from 'hooks/useParticleAnimation';
 
 const MotionBox = motion(Box);
 
 interface TimelineCardProps {
   item: TimelineItem;
   isLeft: boolean;
-  colors: TimelineColors;
-  getColorPalette: (type: string) => string;
-  particleConfig?: {
-    count: number;
-    size: number;
-    speed: number;
-    duration: number;
-  };
 }
 
-const TimelineCard: React.FC<TimelineCardProps> = ({
-  item,
-  isLeft,
-  colors,
-  getColorPalette,
-  particleConfig
-}) => {
-  const { particles, dimensions, handleClick, isHovered, setIsHovered, controls } = useParticleAnimation({
+const TimelineCard: React.FC<TimelineCardProps> = ({ item, isLeft }) => {
+  const { particles, dimensions, handleClick, setIsHovered, controls } = useParticleAnimation({
     isCircle: false,
     offsetX: 20,
     offsetY: 20,
     scaleAnimation: { peak: 1.05, hover: 1.02 },
-    particleCount: particleConfig?.count,
-    particleDuration: particleConfig?.duration ? particleConfig.duration * 1000 : undefined
+    particleCount: particleConfig.card.count,
+    particleDuration: particleConfig.card.duration * 1000
   });
 
   return (
@@ -50,7 +37,6 @@ const TimelineCard: React.FC<TimelineCardProps> = ({
     >
       <AnimatedParticleContainer
         particles={particles}
-        color={colors.highlightColor}
         dimensions={dimensions}
         isCircle={false}
         position={{
@@ -59,17 +45,15 @@ const TimelineCard: React.FC<TimelineCardProps> = ({
           right: "-20px",
           bottom: "-20px"
         }}
-        particleSize={particleConfig?.size}
-        particleSpeed={particleConfig?.speed}
-        particleDuration={particleConfig?.duration}
+        config={particleConfig.card}
       />
-      
+
       <MotionBox
-        bg={colors.cardBg}
+        bg={timelineColors.cardBg}
         p={6}
         borderRadius="xl"
         borderWidth={1}
-        borderColor={item.highlight ? colors.highlightColor : colors.borderColor}
+        borderColor={item.highlight ? timelineColors.highlightColor : timelineColors.borderColor}
         shadow={item.highlight ? 'lg' : 'md'}
         whileHover={{ scale: 1.02, boxShadow: 'var(--chakra-shadows-xl)' }}
         transition={{ duration: 0.2 }}
@@ -87,14 +71,12 @@ const TimelineCard: React.FC<TimelineCardProps> = ({
           title={item.title}
           organization={item.organization}
           isLeft={isLeft}
-          highlightColor={colors.highlightColor}
-          getColorPalette={getColorPalette}
         />
-        
+
         <Text fontSize="sm" color={{ base: 'gray.600', _dark: 'gray.400' }} mb={4}>
           {item.description}
         </Text>
-        
+
         <SkillsList skills={item.skills} isLeft={isLeft} />
       </MotionBox>
     </Box>

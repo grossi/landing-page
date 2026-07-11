@@ -1,13 +1,14 @@
 import React from 'react';
 import { Box } from '@chakra-ui/react';
-import ParticleEffect from '../atoms/ParticleEffect';
-import { Particle } from '../../types/timeline';
+import ParticleEffect from 'components/atoms/ParticleEffect';
+import { Particle, ParticleConfig } from 'types/timeline';
+import { timelineColors } from 'config/timeline';
 
 interface AnimatedParticleContainerProps {
   particles: Particle[];
-  color: string;
   dimensions: { width: number; height: number };
   isCircle: boolean;
+  config: ParticleConfig;
   containerStyle?: React.CSSProperties;
   position?: {
     top?: string;
@@ -16,21 +17,15 @@ interface AnimatedParticleContainerProps {
     bottom?: string;
     transform?: string;
   };
-  particleSize?: number;
-  particleSpeed?: number;
-  particleDuration?: number;
 }
 
 const AnimatedParticleContainer: React.FC<AnimatedParticleContainerProps> = ({
   particles,
-  color,
   dimensions,
   isCircle,
+  config,
   containerStyle,
-  position,
-  particleSize,
-  particleSpeed,
-  particleDuration
+  position
 }) => {
   return (
     <Box
@@ -41,15 +36,15 @@ const AnimatedParticleContainer: React.FC<AnimatedParticleContainerProps> = ({
       style={containerStyle}
       {...position}
     >
-      <ParticleEffect 
-        particles={particles} 
-        color={color} 
-        elementWidth={dimensions.width} 
-        elementHeight={dimensions.height} 
+      <ParticleEffect
+        particles={particles}
+        color={timelineColors.highlightColor}
+        elementWidth={dimensions.width}
+        elementHeight={dimensions.height}
         isCircle={isCircle}
-        size={particleSize}
-        speed={particleSpeed}
-        duration={particleDuration}
+        size={config.size}
+        speed={config.speed}
+        duration={config.duration}
       />
     </Box>
   );

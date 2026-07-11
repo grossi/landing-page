@@ -1,15 +1,15 @@
 import React from 'react';
 import { HStack, Heading, Text } from '@chakra-ui/react';
-import SkillBadge from '../atoms/SkillBadge';
+import { TimelineItem } from 'types/timeline';
+import { timelineColors, typeColorPalettes } from 'config/timeline';
+import SkillBadge from 'components/atoms/SkillBadge';
 
 interface TimelineItemHeaderProps {
-  type: string;
+  type: TimelineItem['type'];
   period: string;
   title: string;
   organization: string;
   isLeft: boolean;
-  highlightColor: string;
-  getColorPalette: (type: string) => string;
 }
 
 const TimelineItemHeader: React.FC<TimelineItemHeaderProps> = ({
@@ -17,9 +17,7 @@ const TimelineItemHeader: React.FC<TimelineItemHeaderProps> = ({
   period,
   title,
   organization,
-  isLeft,
-  highlightColor,
-  getColorPalette
+  isLeft
 }) => {
   return (
     <>
@@ -27,10 +25,10 @@ const TimelineItemHeader: React.FC<TimelineItemHeaderProps> = ({
         justify={{ base: 'flex-start', md: isLeft ? 'flex-end' : 'flex-start' }}
         mb={2}
       >
-        <SkillBadge 
-          skill={type} 
-          colorPalette={getColorPalette(type)} 
-          size="sm" 
+        <SkillBadge
+          skill={type}
+          colorPalette={typeColorPalettes[type]}
+          size="sm"
         />
         <Text fontSize="sm" color={{ base: 'gray.600', _dark: 'gray.400' }}>
           {period}
@@ -42,7 +40,7 @@ const TimelineItemHeader: React.FC<TimelineItemHeaderProps> = ({
       <Text
         fontSize="sm"
         fontWeight="semibold"
-        color={highlightColor}
+        color={timelineColors.highlightColor}
         mb={3}
       >
         {organization}

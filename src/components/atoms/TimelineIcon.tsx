@@ -1,11 +1,12 @@
 import React from 'react';
 import { Circle, Icon } from '@chakra-ui/react';
-import { motion } from 'framer-motion';
+import { motion, LegacyAnimationControls } from 'framer-motion';
 import { FaBriefcase, FaGraduationCap, FaRocket, FaStar, FaGamepad, FaDesktop } from 'react-icons/fa';
+import { timelineColors } from 'config/timeline';
 
 const MotionCircle = motion(Circle);
 
-const iconMap: { [key: string]: any } = {
+const iconMap: { [key: string]: React.ElementType } = {
   FaBriefcase,
   FaGraduationCap,
   FaRocket,
@@ -17,21 +18,15 @@ const iconMap: { [key: string]: any } = {
 interface TimelineIconProps {
   icon: string;
   isHighlighted: boolean;
-  cardBg: string;
-  lineColor: string;
-  highlightColor: string;
   onClick: (e: React.MouseEvent<HTMLDivElement>) => void;
   onMouseEnter: () => void;
   onMouseLeave: () => void;
-  animate: any;
+  animate: LegacyAnimationControls;
 }
 
 const TimelineIcon: React.FC<TimelineIconProps> = ({
   icon,
   isHighlighted,
-  cardBg,
-  lineColor,
-  highlightColor,
   onClick,
   onMouseEnter,
   onMouseLeave,
@@ -40,9 +35,9 @@ const TimelineIcon: React.FC<TimelineIconProps> = ({
   return (
     <MotionCircle
       size="60px"
-      bg={cardBg}
+      bg={timelineColors.cardBg}
       borderWidth={3}
-      borderColor={isHighlighted ? highlightColor : lineColor}
+      borderColor={isHighlighted ? timelineColors.highlightColor : timelineColors.lineColor}
       zIndex={50}
       whileHover={{ scale: 1.2 }}
       transition={{ duration: 0.2 }}
@@ -53,7 +48,7 @@ const TimelineIcon: React.FC<TimelineIconProps> = ({
       onMouseLeave={onMouseLeave}
       position="relative"
     >
-      <Icon as={iconMap[icon]} boxSize={6} color={highlightColor} />
+      <Icon as={iconMap[icon]} boxSize={6} color={timelineColors.highlightColor} />
     </MotionCircle>
   );
 };

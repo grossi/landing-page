@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useAnimation } from 'framer-motion';
-import { Particle, ParticleAnimationHookResult } from '../types/timeline';
-import { createParticlesAroundBorder, offsetParticles } from '../utils/particleUtils';
+import { Particle } from 'types/timeline';
+import { createParticlesAroundBorder, offsetParticles } from 'utils/particleUtils';
 
 interface UseParticleAnimationProps {
   isCircle: boolean;
@@ -22,7 +22,7 @@ export const useParticleAnimation = ({
   scaleAnimation,
   particleCount,
   particleDuration = 800
-}: UseParticleAnimationProps): ParticleAnimationHookResult => {
+}: UseParticleAnimationProps) => {
   const [particles, setParticles] = useState<Particle[]>([]);
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
   const [isHovered, setIsHovered] = useState(false);
@@ -30,18 +30,18 @@ export const useParticleAnimation = ({
 
   const handleClick = async (e: React.MouseEvent<HTMLDivElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();
-    
+
     // Set dimensions for particle effect
     setDimensions({ width: rect.width, height: rect.height });
-    
+
     // Create and position particles
     const newParticles = createParticlesAroundBorder(rect.width, rect.height, isCircle, particleCount);
     const offsettedParticles = offsetParticles(newParticles, offsetX, offsetY);
     setParticles(offsettedParticles);
-    
+
     // Clear particles after animation
     setTimeout(() => setParticles([]), particleDuration);
-    
+
     // Animate scale
     await controls.start({ scale: scaleAnimation.peak });
     await controls.start({ scale: isHovered ? scaleAnimation.hover : 1 });
