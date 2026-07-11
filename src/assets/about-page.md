@@ -20,7 +20,6 @@ A simple website to showcase the amazing work from the artist isuZu.
 
 A chat app with authentication and user registration.
 
-- [http://chat.grossi.life/](http://chat.grossi.life/)
 - **Frontend repository:** [github.com/grossi/simple-chat-frontend](https://github.com/grossi/simple-chat-frontend)
   - **Stack**: ReactJs, Material-ui, GraphQl, Apollo
   - Hosted in AWS S3
