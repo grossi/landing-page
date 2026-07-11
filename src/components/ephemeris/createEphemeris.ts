@@ -1,8 +1,8 @@
 import * as THREE from 'three';
-import { hashCoords, makeName, mulberry32 } from 'components/ephemeris/rng';
+import { hashCoords, mulberry32 } from 'components/ephemeris/rng';
 import {
+  buildHomeSystem,
   buildSectorContent,
-  sectorName,
   softSprite,
   wireMat,
   type Poi,
@@ -28,15 +28,27 @@ export interface EphemerisHudElements {
 const SECTOR = 700;
 /** Sectors are kept alive within this many cells of the ship (1 → 3×3×3). */
 const ACTIVE_RANGE = 1;
+/** First close approach within this many units of a POI's surface logs it. */
+const DISCOVERY_RANGE = 60;
+/** The HUD flags "APPROACH" inside this surface distance. */
+const APPROACH_RANGE = 30;
+/**
+ * Beyond this radius the ship is gently curved back toward charted space.
+ * Not a gameplay wall — float32 world coordinates lose visible precision
+ * (jitter) past ~10^5, so the playable universe is capped well below that.
+ * ~64 sectors of travel in any direction ≈ minutes of sustained boost.
+ */
+const MAX_RANGE = 45000;
 
 /**
  * Mounts the EPHEMERIS solar-system simulation into `container` and starts
  * its render loop. Returns a dispose function that stops the loop, removes
  * listeners and frees all GPU resources.
  *
- * Space is infinite: beyond the hand-authored home system, every sector of
- * the universe deterministically generates its own content (asteroid
- * clusters, nebulae, rogue planets, minor star systems) from its coordinates.
+ * Space is effectively infinite: beyond the hand-authored home system, every
+ * sector of the universe deterministically generates its own content
+ * (asteroid clusters, nebulae, rogue planets, minor star systems, pulsars,
+ * derelicts…) from its coordinates.
  *
  * The sim owns its canvas; HUD text is written into the provided elements so
  * the caller controls layout/styling without re-rendering per frame.
@@ -56,108 +68,11 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
 
   const worldSeed = Math.floor(Math.random() * 2 ** 31);
 
-  // ---- the home system (hand-authored, permanent, at the origin) ----
-  const homeRand = mulberry32(worldSeed ^ 0x5eed);
-  const homePois: Poi[] = [];
-
-  const sun = new THREE.Mesh(new THREE.IcosahedronGeometry(26, 2), wireMat(0.9));
-  scene.add(sun);
-  homePois.push({ name: 'THE SUN', object: sun, radius: 26 });
-  const haloSpins: number[] = [];
-  for (let i = 0; i < 3; i++) {
-    const halo = new THREE.Mesh(new THREE.TorusGeometry(34 + i * 7, 0.12, 4, 64), wireMat(0.22 - i * 0.06));
-    halo.rotation.x = homeRand() * Math.PI;
-    halo.rotation.y = homeRand() * Math.PI;
-    haloSpins.push(0.05 + homeRand() * 0.1);
-    sun.add(halo);
-  }
-
-  interface MoonData { r: number; speed: number; phase: number }
-  interface PlanetData {
-    r: number;
-    speed: number;
-    phase: number;
-    spin: number;
-    moons: THREE.Mesh[];
-  }
-
-  const planets: THREE.Mesh[] = [];
-  const orbitMat = new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.1 });
-  const ORBIT_RADII = [95, 150, 215, 300, 400, 520, 660];
-  for (let i = 0; i < ORBIT_RADII.length; i++) {
-    const radius = 3.5 + homeRand() * 10;
-    const planet = new THREE.Mesh(new THREE.IcosahedronGeometry(radius, radius > 9 ? 1 : 0), wireMat(0.85));
-    const data: PlanetData = {
-      r: ORBIT_RADII[i],
-      speed: (0.5 / Math.pow(ORBIT_RADII[i] / 95, 1.5)) * 0.06,
-      phase: homeRand() * Math.PI * 2,
-      spin: 0.1 + homeRand() * 0.4,
-      moons: [],
-    };
-    planet.userData = data;
-    homePois.push({ name: `${makeName(homeRand)}-${i + 1}`, object: planet, radius });
-
-    const orbitPoints: THREE.Vector3[] = [];
-    for (let a = 0; a <= 96; a++) {
-      const angle = (a / 96) * Math.PI * 2;
-      orbitPoints.push(new THREE.Vector3(Math.cos(angle) * data.r, 0, Math.sin(angle) * data.r));
-    }
-    scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(orbitPoints), orbitMat));
-
-    if (homeRand() < 0.4) {
-      const ring = new THREE.Mesh(new THREE.TorusGeometry(radius * 1.9, 0.15, 4, 42), wireMat(0.5));
-      ring.rotation.x = Math.PI / 2 + (homeRand() - 0.5) * 0.6;
-      planet.add(ring);
-    }
-
-    const moonCount = homeRand() < 0.5 ? 1 + Math.floor(homeRand() * 2) : 0;
-    for (let k = 0; k < moonCount; k++) {
-      const moon = new THREE.Mesh(new THREE.IcosahedronGeometry(radius * 0.22, 0), wireMat(0.7));
-      const moonData: MoonData = {
-        r: radius * (2.6 + k * 1.4),
-        speed: 0.5 + homeRand(),
-        phase: homeRand() * Math.PI * 2,
-      };
-      moon.userData = moonData;
-      planet.add(moon);
-      data.moons.push(moon);
-    }
-    planets.push(planet);
-    scene.add(planet);
-  }
-
-  // asteroid belt between the 4th and 5th orbits
-  const belt = new THREE.Group();
-  {
-    const n = 500;
-    const positions = new Float32Array(n * 3);
-    for (let i = 0; i < n; i++) {
-      const a = homeRand() * Math.PI * 2;
-      const r = 340 + homeRand() * 34;
-      positions[i * 3] = Math.cos(a) * r;
-      positions[i * 3 + 1] = (homeRand() - 0.5) * 9;
-      positions[i * 3 + 2] = Math.sin(a) * r;
-    }
-    const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    belt.add(
-      new THREE.Points(
-        geometry,
-        new THREE.PointsMaterial({ color: 0xffffff, size: 0.9, transparent: true, opacity: 0.55 }),
-      ),
-    );
-    scene.add(belt);
-  }
-
-  // comet on an eccentric orbit, dragging a trail
-  const comet = new THREE.Mesh(new THREE.IcosahedronGeometry(1.6, 0), wireMat(0.9));
-  scene.add(comet);
-  homePois.push({ name: 'THE COMET', object: comet, radius: 2 });
-  const TRAIL_LENGTH = 70;
-  const trailPositions = new Float32Array(TRAIL_LENGTH * 3);
-  const trailGeo = new THREE.BufferGeometry();
-  trailGeo.setAttribute('position', new THREE.BufferAttribute(trailPositions, 3));
-  scene.add(new THREE.Line(trailGeo, new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.35 })));
+  // ---- the home system (permanent, at the origin) ----
+  const home = buildHomeSystem(mulberry32(worldSeed ^ 0x5eed));
+  home.pois.forEach((poi, i) => { poi.id = `home:${i}`; });
+  scene.add(home.group);
+  home.group.updateMatrixWorld(true);
 
   // stars — attached to the ship's position each frame so the backdrop is
   // infinite (they only rotate with the camera, never translate past you)
@@ -203,15 +118,14 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
   scene.add(dust);
 
   // ---- procedural sectors ----
-  const activeSectors = new Map<string, SectorContent>();
-  const sectorNames = new Map<string, string>();
-  const buildQueue: string[] = [];
+  // Value is null for cells reserved by the home system (no random content).
+  const activeSectors = new Map<string, SectorContent | null>();
+  const buildQueue = new Set<string>();
+  let cellX = NaN;
+  let cellY = NaN;
+  let cellZ = NaN;
+  let cellKey = '';
 
-  const sectorOf = (v: THREE.Vector3) => ({
-    x: Math.floor(v.x / SECTOR),
-    y: Math.floor(v.y / SECTOR),
-    z: Math.floor(v.z / SECTOR),
-  });
   const keyOf = (x: number, y: number, z: number) => `${x},${y},${z}`;
 
   // The home system spans these cells; they get no random content.
@@ -221,48 +135,63 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
   function buildSector(key: string) {
     if (activeSectors.has(key)) return;
     const [x, y, z] = key.split(',').map(Number);
-    const rand = mulberry32(hashCoords(x, y, z, worldSeed));
-    sectorNames.set(key, `${sectorName(rand)} ${['EXPANSE', 'REACH', 'DRIFT', 'VERGE', 'DEEP'][Math.floor(rand() * 5)]}`);
     if (isHomeCell(x, y, z)) {
-      // the hand-authored home system owns these cells; keep an empty entry
-      // so this sector isn't re-queued every frame
-      activeSectors.set(key, { group: new THREE.Group(), pois: [], dispose: () => {} });
+      activeSectors.set(key, null);
       return;
     }
+    const rand = mulberry32(hashCoords(x, y, z, worldSeed));
     const center = new THREE.Vector3((x + 0.5) * SECTOR, (y + 0.5) * SECTOR, (z + 0.5) * SECTOR);
     const content = buildSectorContent(rand, SECTOR, center);
+    content.pois.forEach((poi, i) => { poi.id = `${key}:${i}`; });
     scene.add(content.group);
+    // POI distances read matrixWorld, so make it valid before the next render
+    content.group.updateMatrixWorld(true);
     activeSectors.set(key, content);
   }
 
-  function syncSectors(shipPos: THREE.Vector3, immediate: boolean) {
-    const c = sectorOf(shipPos);
-    const needed = new Set<string>();
-    for (let dx = -ACTIVE_RANGE; dx <= ACTIVE_RANGE; dx++)
-      for (let dy = -ACTIVE_RANGE; dy <= ACTIVE_RANGE; dy++)
-        for (let dz = -ACTIVE_RANGE; dz <= ACTIVE_RANGE; dz++)
-          needed.add(keyOf(c.x + dx, c.y + dy, c.z + dz));
+  function syncSectors(immediate: boolean) {
+    const cx = Math.floor(ship.position.x / SECTOR);
+    const cy = Math.floor(ship.position.y / SECTOR);
+    const cz = Math.floor(ship.position.z / SECTOR);
+    const cellChanged = cx !== cellX || cy !== cellY || cz !== cellZ;
+    // most frames: same cell, nothing queued — skip all set/string work
+    if (!cellChanged && !immediate && buildQueue.size === 0) return;
 
-    for (const [key, content] of activeSectors) {
-      if (!needed.has(key)) {
-        scene.remove(content.group);
-        content.dispose();
-        activeSectors.delete(key);
+    if (cellChanged || immediate) {
+      cellX = cx; cellY = cy; cellZ = cz;
+      cellKey = keyOf(cx, cy, cz);
+      const needed = new Set<string>();
+      for (let dx = -ACTIVE_RANGE; dx <= ACTIVE_RANGE; dx++)
+        for (let dy = -ACTIVE_RANGE; dy <= ACTIVE_RANGE; dy++)
+          for (let dz = -ACTIVE_RANGE; dz <= ACTIVE_RANGE; dz++)
+            needed.add(keyOf(cx + dx, cy + dy, cz + dz));
+
+      for (const [key, content] of activeSectors) {
+        if (!needed.has(key)) {
+          if (content) {
+            scene.remove(content.group);
+            content.dispose();
+          }
+          activeSectors.delete(key);
+        }
       }
-    }
-    for (const key of needed) {
-      if (!activeSectors.has(key) && !buildQueue.includes(key)) {
-        if (immediate) buildSector(key);
-        else buildQueue.push(key);
+      for (const key of buildQueue) if (!needed.has(key)) buildQueue.delete(key);
+      for (const key of needed) {
+        if (activeSectors.has(key)) continue;
+        if (immediate) {
+          buildQueue.delete(key);
+          buildSector(key);
+        } else {
+          buildQueue.add(key);
+        }
       }
     }
     // spread construction over frames to avoid hitches while flying
-    for (let n = 0; n < 2 && buildQueue.length; n++) {
-      const key = buildQueue.shift()!;
-      const [x, y, z] = key.split(',').map(Number);
-      if (Math.max(Math.abs(x - c.x), Math.abs(y - c.y), Math.abs(z - c.z)) <= ACTIVE_RANGE) {
-        buildSector(key);
-      }
+    let built = 0;
+    for (const key of buildQueue) {
+      if (built++ >= 2) break;
+      buildQueue.delete(key);
+      buildSector(key);
     }
   }
 
@@ -318,19 +247,49 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
   const resizeObserver = new ResizeObserver(onResize);
   resizeObserver.observe(container);
 
+  // ---- HUD (write only on change; per-frame DOM writes cause layout churn) ----
+  const hudCache = new Map<HTMLElement, string>();
+  const setHudText = (el: HTMLElement, text: string) => {
+    if (hudCache.get(el) !== text) {
+      hudCache.set(el, text);
+      el.textContent = text;
+    }
+  };
+
+  // ---- discovery ----
+  // Keyed by stable POI id so re-entering a rebuilt sector doesn't re-log
+  // (POI ids are deterministic per sector rebuild).
+  const discoveredIds = new Set<string>();
+  let pingTimer = 0;
+  setHudText(hud.contacts, '0 CONTACTS LOGGED');
+
+  const nearest = { name: '', dist: 0 };
+  const poiPos = new THREE.Vector3();
+  const considerPoi = (poi: Poi) => {
+    poiPos.setFromMatrixPosition(poi.object.matrixWorld);
+    const d = ship.position.distanceTo(poiPos) - poi.radius;
+    if (d < nearest.dist) {
+      nearest.dist = d;
+      nearest.name = poi.name;
+    }
+    if (d < DISCOVERY_RANGE && poi.id && !discoveredIds.has(poi.id)) {
+      discoveredIds.add(poi.id);
+      pingTimer = 4;
+      setHudText(hud.ping, `NEW CONTACT · ${poi.name}`);
+      setHudText(hud.contacts, `${discoveredIds.size} CONTACT${discoveredIds.size === 1 ? '' : 'S'} LOGGED`);
+    }
+  };
+
   // ---- simulation loop ----
   const velocity = new THREE.Vector3();
   const attitude = { yaw: 0, pitch: -0.04 };
   const forward = new THREE.Vector3();
   const scratch = new THREE.Vector3();
-  const poiPos = new THREE.Vector3();
   let t = 0;
   let rafId = 0;
   let last = performance.now();
-  let discovered = 0;
-  let pingTimer = 0;
 
-  syncSectors(ship.position, true);
+  syncSectors(true);
 
   function tick(now: number) {
     rafId = requestAnimationFrame(tick);
@@ -338,37 +297,6 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
     const dt = Math.max(0, Math.min((now - last) / 1000, 0.05));
     last = now;
     t += dt;
-
-    // home-system orbits
-    sun.rotation.y += dt * 0.06;
-    const pulse = 1 + Math.sin(t * 1.3) * 0.025;
-    sun.scale.set(pulse, pulse, pulse);
-    sun.children.forEach((halo, i) => { halo.rotation.z += haloSpins[i] * dt; });
-    for (const planet of planets) {
-      const data = planet.userData as PlanetData;
-      const angle = data.phase + t * data.speed;
-      planet.position.set(Math.cos(angle) * data.r, 0, Math.sin(angle) * data.r);
-      planet.rotation.y += data.spin * dt;
-      for (const moon of data.moons) {
-        const moonData = moon.userData as MoonData;
-        const moonAngle = moonData.phase + t * moonData.speed;
-        moon.position.set(Math.cos(moonAngle) * moonData.r, 0, Math.sin(moonAngle) * moonData.r);
-      }
-    }
-    belt.rotation.y += dt * 0.012;
-
-    // comet ellipse + trail
-    const cometAngle = t * 0.045 + 2;
-    comet.position.set(Math.cos(cometAngle) * 620, Math.sin(cometAngle * 2) * 18, Math.sin(cometAngle) * 260);
-    for (let i = TRAIL_LENGTH - 1; i > 0; i--) {
-      trailPositions[i * 3] = trailPositions[(i - 1) * 3];
-      trailPositions[i * 3 + 1] = trailPositions[(i - 1) * 3 + 1];
-      trailPositions[i * 3 + 2] = trailPositions[(i - 1) * 3 + 2];
-    }
-    trailPositions[0] = comet.position.x;
-    trailPositions[1] = comet.position.y;
-    trailPositions[2] = comet.position.z;
-    trailGeo.attributes.position.needsUpdate = true;
 
     // steering
     let steerX = pointer.x;
@@ -385,54 +313,65 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
     forward.set(0, 0, -1).applyQuaternion(ship.quaternion);
     velocity.lerp(scratch.copy(forward).multiplyScalar(boost ? 170 : 55), Math.min(1, dt * 2.2));
     ship.position.addScaledVector(velocity, dt);
+    // precision guard — see MAX_RANGE
+    const range = ship.position.length();
+    if (range > MAX_RANGE) {
+      ship.position.multiplyScalar(1 - ((range - MAX_RANGE) / range) * Math.min(1, dt * 2));
+    }
 
-    // sectors follow the ship
-    syncSectors(ship.position, false);
-    for (const content of activeSectors.values()) content.update?.(dt, t);
+    // world updates
+    home.update?.(dt, t);
+    syncSectors(false);
+    for (const content of activeSectors.values()) content?.update?.(dt, t);
 
     // backdrop + dust follow the ship
     stars.position.copy(ship.position);
-    for (let i = 0; i < DUST_N; i++) {
-      for (let axis = 0; axis < 3; axis++) {
-        const idx = i * 3 + axis;
-        const shipAxis = axis === 0 ? ship.position.x : axis === 1 ? ship.position.y : ship.position.z;
-        while (dustPositions[idx] - shipAxis > DUST_RANGE) dustPositions[idx] -= DUST_RANGE * 2;
-        while (dustPositions[idx] - shipAxis < -DUST_RANGE) dustPositions[idx] += DUST_RANGE * 2;
+    {
+      const sx = ship.position.x;
+      const sy = ship.position.y;
+      const sz = ship.position.z;
+      const span = DUST_RANGE * 2;
+      let moved = false;
+      // O(1) modulo wrap per component — safe even across huge warp jumps
+      const wrap = (idx: number, center: number) => {
+        const d = dustPositions[idx] - center;
+        if (d > DUST_RANGE || d < -DUST_RANGE) {
+          dustPositions[idx] = center + ((((d + DUST_RANGE) % span) + span) % span) - DUST_RANGE;
+          moved = true;
+        }
+      };
+      for (let i = 0; i < DUST_N; i++) {
+        wrap(i * 3, sx);
+        wrap(i * 3 + 1, sy);
+        wrap(i * 3 + 2, sz);
       }
+      if (moved) dustGeo.attributes.position.needsUpdate = true;
     }
-    dustGeo.attributes.position.needsUpdate = true;
 
     // nearest-body HUD across home + all active sector POIs, plus discovery
-    let nearestName = 'THE SUN';
-    let nearestDist = ship.position.length() - 26;
-    const consider = (poi: Poi) => {
-      poi.object.getWorldPosition(poiPos);
-      const d = ship.position.distanceTo(poiPos) - poi.radius;
-      if (d < nearestDist) { nearestDist = d; nearestName = poi.name; }
-      if (!poi.discovered && d < 60) {
-        poi.discovered = true;
-        discovered++;
-        pingTimer = 4;
-        hud.ping.textContent = `NEW CONTACT · ${poi.name}`;
-        hud.contacts.textContent = `${discovered} CONTACT${discovered === 1 ? '' : 'S'} LOGGED`;
-      }
-    };
-    for (const poi of homePois) consider(poi);
-    for (const content of activeSectors.values()) for (const poi of content.pois) consider(poi);
+    nearest.name = 'THE SUN';
+    nearest.dist = ship.position.length() - 26;
+    for (const poi of home.pois) considerPoi(poi);
+    for (const content of activeSectors.values()) {
+      if (content) for (const poi of content.pois) considerPoi(poi);
+    }
     if (pingTimer > 0) {
       pingTimer -= dt;
       hud.ping.style.opacity = String(Math.max(0, Math.min(1, pingTimer / 1.5)));
     }
-    hud.body.textContent = nearestName;
-    hud.dist.textContent = `${Math.max(0, Math.floor(nearestDist))} km${nearestDist < 30 ? ' · APPROACH' : ''}`;
-    hud.speed.textContent = `${Math.floor(velocity.length())} km/s`;
-
-    const cell = sectorOf(ship.position);
-    const cellKey = keyOf(cell.x, cell.y, cell.z);
-    const isHome = isHomeCell(cell.x, cell.y, cell.z);
-    hud.sector.textContent = isHome
-      ? 'HOME SYSTEM'
-      : `${sectorNames.get(cellKey) ?? ''} · ${cell.x}.${cell.y}.${cell.z}`;
+    setHudText(hud.body, nearest.name);
+    setHudText(
+      hud.dist,
+      `${Math.max(0, Math.floor(nearest.dist))} km${nearest.dist < APPROACH_RANGE ? ' · APPROACH' : ''}`,
+    );
+    setHudText(hud.speed, `${Math.floor(velocity.length())} km/s`);
+    const cellContent = activeSectors.get(cellKey);
+    setHudText(
+      hud.sector,
+      isHomeCell(cellX, cellY, cellZ)
+        ? 'HOME SYSTEM'
+        : `${cellContent ? `${cellContent.name} · ` : ''}${cellX}.${cellY}.${cellZ}`,
+    );
 
     // chase camera
     const camTarget = scratch.set(0, 2.6, 9).applyQuaternion(ship.quaternion).add(ship.position);
@@ -447,7 +386,7 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
     warp: (x: number, y: number, z: number, lookX?: number, lookY?: number, lookZ?: number) => void;
     pois: () => Array<{ name: string; x: number; y: number; z: number; radius: number }>;
   }
-  (window as unknown as { __EPHEMERIS?: EphemerisDebug }).__EPHEMERIS = {
+  const debugHandle: EphemerisDebug = {
     warp: (x, y, z, lookX, lookY, lookZ) => {
       ship.position.set(x, y, z);
       velocity.set(0, 0, 0);
@@ -459,7 +398,7 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
         camera.position.copy(scratch.set(0, 2.6, 9).applyQuaternion(ship.quaternion).add(ship.position));
         camera.quaternion.copy(ship.quaternion);
       }
-      syncSectors(ship.position, true);
+      syncSectors(true);
     },
     pois: () => {
       const all: Array<{ name: string; x: number; y: number; z: number; radius: number }> = [];
@@ -467,16 +406,18 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
         poi.object.getWorldPosition(poiPos);
         all.push({ name: poi.name, x: poiPos.x, y: poiPos.y, z: poiPos.z, radius: poi.radius });
       };
-      homePois.forEach(collect);
-      for (const content of activeSectors.values()) content.pois.forEach(collect);
+      home.pois.forEach(collect);
+      for (const content of activeSectors.values()) content?.pois.forEach(collect);
       return all;
     },
   };
+  const globalHost = window as unknown as { __EPHEMERIS?: EphemerisDebug };
+  globalHost.__EPHEMERIS = debugHandle;
 
   return () => {
     cancelAnimationFrame(rafId);
     resizeObserver.disconnect();
-    delete (window as unknown as { __EPHEMERIS?: EphemerisDebug }).__EPHEMERIS;
+    if (globalHost.__EPHEMERIS === debugHandle) delete globalHost.__EPHEMERIS;
     window.removeEventListener('keydown', onKeyDown);
     window.removeEventListener('keyup', onKeyUp);
     container.removeEventListener('pointermove', onPointerMove);
@@ -484,10 +425,16 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
     window.removeEventListener('pointerup', onPointerUp);
     container.removeEventListener('touchmove', onTouchMove);
     for (const content of activeSectors.values()) {
-      scene.remove(content.group);
-      content.dispose();
+      if (content) {
+        scene.remove(content.group);
+        content.dispose();
+      }
     }
     activeSectors.clear();
+    home.dispose();
+    // Frees what this mount created (ship, stars, dust, home meshes). Shared
+    // module-level assets from sectorContent get disposed too when reachable,
+    // which is safe: three.js re-uploads a disposed resource on next use.
     scene.traverse((obj) => {
       if (obj instanceof THREE.Mesh || obj instanceof THREE.Line || obj instanceof THREE.Points) {
         obj.geometry.dispose();

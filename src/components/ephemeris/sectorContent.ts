@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { makeName } from 'components/ephemeris/rng';
+import { makeName, pickFrom } from 'components/ephemeris/rng';
 
 /** A named place the HUD can point at (and, later, "discover"). */
 export interface Poi {
@@ -7,10 +7,13 @@ export interface Poi {
   object: THREE.Object3D;
   /** Approximate radius of the thing, so distance reads as surface distance. */
   radius: number;
-  discovered?: boolean;
+  /** Stable identity across sector rebuilds; assigned by the engine. */
+  id?: string;
 }
 
 export interface SectorContent {
+  /** Display name, e.g. "KHEVEL EXPANSE" or "HOME SYSTEM". */
+  name: string;
   group: THREE.Group;
   pois: Poi[];
   update?: (dt: number, t: number) => void;
@@ -18,13 +21,17 @@ export interface SectorContent {
   dispose: () => void;
 }
 
-// ---- shared assets (created once, never disposed per sector) ----
+// ---- shared assets ----
+// Created once at module scope and reused by every sector for the lifetime
+// of the app; intentionally never disposed (three.js re-uploads a disposed
+// resource on next use, so even a full renderer teardown/remount is safe).
 
 export const wireMat = (opacity: number) =>
   new THREE.MeshBasicMaterial({ color: 0xffffff, wireframe: true, transparent: true, opacity });
 
 const ICO_LOW = new THREE.IcosahedronGeometry(1, 0);
 const ICO_MID = new THREE.IcosahedronGeometry(1, 1);
+const ICO_HIGH = new THREE.IcosahedronGeometry(1, 2);
 const RING = new THREE.TorusGeometry(1.9, 0.1, 4, 42);
 const BOX = new THREE.BoxGeometry(1, 1, 1);
 const CYL = new THREE.CylinderGeometry(1, 1, 1, 8);
@@ -33,7 +40,10 @@ const MAT_BRIGHT = wireMat(0.9);
 const MAT_BODY = wireMat(0.85);
 const MAT_DIM = wireMat(0.6);
 const MAT_RING = wireMat(0.5);
+const MAT_BEAM = wireMat(0.16);
 const ORBIT_MAT = new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.1 });
+const TRAIL_MAT = new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.35 });
+const BELT_MAT = new THREE.PointsMaterial({ color: 0xffffff, size: 0.9, transparent: true, opacity: 0.55 });
 
 // unit circle for orbit lines, scaled per orbit
 const UNIT_CIRCLE = (() => {
@@ -46,7 +56,7 @@ const UNIT_CIRCLE = (() => {
 })();
 
 // soft round sprite for nebula/dust points
-const softSprite = (() => {
+export const softSprite = (() => {
   const c = document.createElement('canvas');
   c.width = c.height = 64;
   const g = c.getContext('2d')!;
@@ -70,12 +80,35 @@ const NEBULA_MAT = new THREE.PointsMaterial({
   sizeAttenuation: true,
 });
 
+// ---- orbit helper shared by every builder ----
+
+interface Orbiter {
+  mesh: THREE.Object3D;
+  r: number;
+  speed: number;
+  phase: number;
+  /** Vertical wobble factor; 0/undefined keeps the orbit flat. */
+  tilt?: number;
+}
+
+function updateOrbiters(orbiters: Orbiter[], t: number) {
+  for (const o of orbiters) {
+    const a = o.phase + t * o.speed;
+    o.mesh.position.set(
+      Math.cos(a) * o.r,
+      o.tilt ? Math.sin(a) * o.r * o.tilt : 0,
+      Math.sin(a) * o.r,
+    );
+  }
+}
+
 // ---- archetype builders ----
 // Each places content in sector-local coordinates around (0,0,0); the caller
 // positions the group at the sector centre. Geometries created here (points,
 // per-sector lines) are pushed to `own` and disposed with the sector.
 
-type Builder = (rand: () => number, own: THREE.BufferGeometry[]) => Omit<SectorContent, 'dispose'>;
+type Built = Omit<SectorContent, 'dispose' | 'name'>;
+type Builder = (rand: () => number, own: THREE.BufferGeometry[]) => Built;
 
 const gaussish = (rand: () => number) => (rand() + rand() + rand()) / 3 - 0.5;
 
@@ -104,13 +137,15 @@ const nebula: Builder = (rand, own) => {
   const total = 380 + Math.floor(rand() * 280);
   const positions = new Float32Array(total * 3);
   const reach = 150 + rand() * 110;
-  for (let b = 0, i = 0; b < blobs; b++) {
+  let i = 0;
+  for (let b = 0; b < blobs; b++) {
     const cx = (rand() - 0.5) * reach * 1.4;
     const cy = (rand() - 0.5) * reach * 0.6;
     const cz = (rand() - 0.5) * reach * 1.4;
     const r = reach * (0.4 + rand() * 0.5);
-    const share = Math.floor(total / blobs);
-    for (let k = 0; k < share && i < total; k++, i++) {
+    // last blob takes the rounding remainder so no point is left at (0,0,0)
+    const share = b === blobs - 1 ? total - i : Math.floor(total / blobs);
+    for (let k = 0; k < share; k++, i++) {
       positions[i * 3] = cx + gaussish(rand) * r * 2;
       positions[i * 3 + 1] = cy + gaussish(rand) * r;
       positions[i * 3 + 2] = cz + gaussish(rand) * r * 2;
@@ -135,8 +170,6 @@ const nebula: Builder = (rand, own) => {
     update: (dt) => { group.rotation.y += spin * dt; },
   };
 };
-
-interface Orbiter { mesh: THREE.Mesh; r: number; speed: number; phase: number }
 
 const roguePlanet: Builder = (rand) => {
   const group = new THREE.Group();
@@ -165,10 +198,7 @@ const roguePlanet: Builder = (rand) => {
     pois: [{ name, object: planet, radius }],
     update: (dt, t) => {
       planet.rotation.y += spin * dt;
-      for (const m of moons) {
-        const a = m.phase + t * m.speed;
-        m.mesh.position.set(Math.cos(a) * m.r, 0, Math.sin(a) * m.r);
-      }
+      updateOrbiters(moons, t);
     },
   };
 };
@@ -207,10 +237,7 @@ const miniSystem: Builder = (rand) => {
     pois,
     update: (dt, t) => {
       star.rotation.y += dt * 0.06;
-      for (const p of planets) {
-        const a = p.phase + t * p.speed;
-        p.mesh.position.set(Math.cos(a) * p.r, 0, Math.sin(a) * p.r);
-      }
+      updateOrbiters(planets, t);
     },
   };
 };
@@ -218,32 +245,28 @@ const miniSystem: Builder = (rand) => {
 const binaryStars: Builder = (rand) => {
   const group = new THREE.Group();
   const name = makeName(rand);
-  const stars: Orbiter[] = [];
   const separation = 20 + rand() * 16;
+  const speed = 0.22 + rand() * 0.2; // shared — the pair stays opposed
+  const stars: Orbiter[] = [];
   for (let i = 0; i < 2; i++) {
     const radius = 6 + rand() * 5;
     const star = new THREE.Mesh(ICO_MID, MAT_BRIGHT);
     star.scale.setScalar(radius);
     group.add(star);
     const halo = new THREE.Mesh(RING, MAT_RING);
-    halo.scale.setScalar(radius * 0.8);
+    // child of a star scaled by `radius`, so this is in star units
+    halo.scale.setScalar(0.8);
     halo.rotation.x = rand() * Math.PI;
     star.add(halo);
-    stars.push({ mesh: star, r: separation, speed: 0.22 + rand() * 0.2, phase: i * Math.PI });
+    stars.push({ mesh: star, r: separation, speed, phase: i * Math.PI });
   }
   const orbit = new THREE.Line(UNIT_CIRCLE, ORBIT_MAT);
   orbit.scale.setScalar(separation);
   group.add(orbit);
-  const speed = stars[0].speed;
   return {
     group,
     pois: [{ name: `${name} BINARY`, object: group, radius: separation + 14 }],
-    update: (_dt, t) => {
-      for (const s of stars) {
-        const a = s.phase + t * speed;
-        s.mesh.position.set(Math.cos(a) * s.r, 0, Math.sin(a) * s.r);
-      }
-    },
+    update: (_dt, t) => { updateOrbiters(stars, t); },
   };
 };
 
@@ -256,7 +279,7 @@ const pulsar: Builder = (rand) => {
   // two opposed lighthouse beams, tilted off the spin axis
   const beams = new THREE.Group();
   for (const dir of [1, -1]) {
-    const beam = new THREE.Mesh(BEAM, wireMat(0.16));
+    const beam = new THREE.Mesh(BEAM, MAT_BEAM);
     beam.scale.set(7, 150, 7);
     beam.position.y = dir * 75;
     if (dir === 1) beam.rotation.z = Math.PI;
@@ -338,7 +361,7 @@ const cometSwarm: Builder = (rand) => {
   const group = new THREE.Group();
   const name = makeName(rand);
   const count = 5 + Math.floor(rand() * 5);
-  const swarm: Array<{ mesh: THREE.Mesh; r: number; speed: number; phase: number; tilt: number }> = [];
+  const swarm: Orbiter[] = [];
   for (let i = 0; i < count; i++) {
     const comet = new THREE.Mesh(ICO_LOW, MAT_BODY);
     comet.scale.setScalar(1 + rand() * 1.6);
@@ -354,12 +377,7 @@ const cometSwarm: Builder = (rand) => {
   return {
     group,
     pois: [{ name: `${name} SWARM`, object: group, radius: 140 }],
-    update: (_dt, t) => {
-      for (const c of swarm) {
-        const a = c.phase + t * c.speed;
-        c.mesh.position.set(Math.cos(a) * c.r, Math.sin(a) * c.r * c.tilt, Math.sin(a) * c.r);
-      }
-    },
+    update: (_dt, t) => { updateOrbiters(swarm, t); },
   };
 };
 
@@ -375,6 +393,8 @@ const BUILDERS: Array<[Builder, number]> = [
   [cometSwarm, 0.05],
   [derelictStation, 0.04],
 ];
+
+const SECTOR_SUFFIXES = ['EXPANSE', 'REACH', 'DRIFT', 'VERGE', 'DEEP'];
 
 /**
  * Small unnamed secondary feature so a sector rarely reads as empty even
@@ -421,6 +441,7 @@ export function buildSectorContent(
   center: THREE.Vector3,
 ): SectorContent {
   const own: THREE.BufferGeometry[] = [];
+  const name = `${makeName(rand)} ${pickFrom(rand, SECTOR_SUFFIXES)}`;
   let roll = rand();
   let builder = BUILDERS[BUILDERS.length - 1][0];
   for (const [candidate, weight] of BUILDERS) {
@@ -437,13 +458,135 @@ export function buildSectorContent(
   );
   return {
     ...content,
+    name,
     dispose: () => { own.forEach((g) => g.dispose()); },
   };
 }
 
-/** Sector display name, e.g. "KHEVEL EXPANSE". */
-export function sectorName(rand: () => number): string {
-  return makeName(rand);
-}
+/**
+ * The hand-authored solar system at the origin, expressed through the same
+ * SectorContent contract as procedural sectors so the engine has a single
+ * code path for updates, POIs, discovery, and disposal.
+ */
+export function buildHomeSystem(rand: () => number): SectorContent {
+  const own: THREE.BufferGeometry[] = [];
+  const group = new THREE.Group();
+  const pois: Poi[] = [];
 
-export { softSprite };
+  const sun = new THREE.Mesh(ICO_HIGH, MAT_BRIGHT);
+  sun.scale.setScalar(26);
+  group.add(sun);
+  pois.push({ name: 'THE SUN', object: sun, radius: 26 });
+  // halos live beside the sun (not inside it) so its unit-scale doesn't
+  // multiply their world-space radii
+  const halos = new THREE.Group();
+  group.add(halos);
+  const haloSpins: number[] = [];
+  for (let i = 0; i < 3; i++) {
+    const haloGeo = new THREE.TorusGeometry(34 + i * 7, 0.12, 4, 64);
+    own.push(haloGeo);
+    const halo = new THREE.Mesh(haloGeo, wireMat(0.22 - i * 0.06));
+    halo.rotation.x = rand() * Math.PI;
+    halo.rotation.y = rand() * Math.PI;
+    haloSpins.push(0.05 + rand() * 0.1);
+    halos.add(halo);
+  }
+
+  const ORBIT_RADII = [95, 150, 215, 300, 400, 520, 660];
+  const planetOrbiters: Orbiter[] = [];
+  const moonOrbiters: Orbiter[] = [];
+  const planetSpins: Array<{ mesh: THREE.Mesh; spin: number }> = [];
+  for (let i = 0; i < ORBIT_RADII.length; i++) {
+    const radius = 3.5 + rand() * 10;
+    const planet = new THREE.Mesh(radius > 9 ? ICO_MID : ICO_LOW, MAT_BODY);
+    planet.scale.setScalar(radius);
+    group.add(planet);
+    pois.push({ name: `${makeName(rand)}-${i + 1}`, object: planet, radius });
+    planetOrbiters.push({
+      mesh: planet,
+      r: ORBIT_RADII[i],
+      speed: (0.5 / Math.pow(ORBIT_RADII[i] / 95, 1.5)) * 0.06,
+      phase: rand() * Math.PI * 2,
+    });
+    planetSpins.push({ mesh: planet, spin: 0.1 + rand() * 0.4 });
+
+    const orbit = new THREE.Line(UNIT_CIRCLE, ORBIT_MAT);
+    orbit.scale.setScalar(ORBIT_RADII[i]);
+    group.add(orbit);
+
+    if (rand() < 0.4) {
+      const ring = new THREE.Mesh(RING, MAT_RING);
+      // child of a planet scaled by `radius`, so unit scale ≈ 1.9× planet
+      ring.rotation.x = Math.PI / 2 + (rand() - 0.5) * 0.6;
+      planet.add(ring);
+    }
+
+    const moonCount = rand() < 0.5 ? 1 + Math.floor(rand() * 2) : 0;
+    for (let k = 0; k < moonCount; k++) {
+      const moon = new THREE.Mesh(ICO_LOW, MAT_DIM);
+      // moons are children of a scaled planet, so size/orbit are in planet units
+      moon.scale.setScalar(0.22);
+      planet.add(moon);
+      moonOrbiters.push({ mesh: moon, r: 2.6 + k * 1.4, speed: 0.5 + rand(), phase: rand() * Math.PI * 2 });
+    }
+  }
+
+  // asteroid belt between the 4th and 5th orbits
+  const belt = new THREE.Group();
+  {
+    const n = 500;
+    const positions = new Float32Array(n * 3);
+    for (let i = 0; i < n; i++) {
+      const a = rand() * Math.PI * 2;
+      const r = 340 + rand() * 34;
+      positions[i * 3] = Math.cos(a) * r;
+      positions[i * 3 + 1] = (rand() - 0.5) * 9;
+      positions[i * 3 + 2] = Math.sin(a) * r;
+    }
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    own.push(geometry);
+    belt.add(new THREE.Points(geometry, BELT_MAT));
+    group.add(belt);
+  }
+
+  // comet on an eccentric orbit, dragging a trail
+  const comet = new THREE.Mesh(ICO_LOW, MAT_BRIGHT);
+  comet.scale.setScalar(1.6);
+  group.add(comet);
+  pois.push({ name: 'THE COMET', object: comet, radius: 2 });
+  const TRAIL_LENGTH = 70;
+  const trailPositions = new Float32Array(TRAIL_LENGTH * 3);
+  const trailGeo = new THREE.BufferGeometry();
+  trailGeo.setAttribute('position', new THREE.BufferAttribute(trailPositions, 3));
+  own.push(trailGeo);
+  group.add(new THREE.Line(trailGeo, TRAIL_MAT));
+
+  return {
+    name: 'HOME SYSTEM',
+    group,
+    pois,
+    update: (dt, t) => {
+      sun.rotation.y += dt * 0.06;
+      sun.scale.setScalar(26 * (1 + Math.sin(t * 1.3) * 0.025));
+      halos.children.forEach((halo, i) => { halo.rotation.z += haloSpins[i] * dt; });
+      updateOrbiters(planetOrbiters, t);
+      updateOrbiters(moonOrbiters, t);
+      for (const p of planetSpins) p.mesh.rotation.y += p.spin * dt;
+      belt.rotation.y += dt * 0.012;
+
+      const cometAngle = t * 0.045 + 2;
+      comet.position.set(Math.cos(cometAngle) * 620, Math.sin(cometAngle * 2) * 18, Math.sin(cometAngle) * 260);
+      for (let i = TRAIL_LENGTH - 1; i > 0; i--) {
+        trailPositions[i * 3] = trailPositions[(i - 1) * 3];
+        trailPositions[i * 3 + 1] = trailPositions[(i - 1) * 3 + 1];
+        trailPositions[i * 3 + 2] = trailPositions[(i - 1) * 3 + 2];
+      }
+      trailPositions[0] = comet.position.x;
+      trailPositions[1] = comet.position.y;
+      trailPositions[2] = comet.position.z;
+      trailGeo.attributes.position.needsUpdate = true;
+    },
+    dispose: () => { own.forEach((g) => g.dispose()); },
+  };
+}
