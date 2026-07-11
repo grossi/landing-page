@@ -10,9 +10,15 @@ export function useMarkdownAsset(url: string): string {
   useEffect(() => {
     let cancelled = false;
     fetch(url)
-      .then((response) => response.text())
+      .then((response) => {
+        if (!response.ok) throw new Error(`Failed to load ${url}: ${response.status}`);
+        return response.text();
+      })
       .then((content) => {
         if (!cancelled) setText(content);
+      })
+      .catch(() => {
+        if (!cancelled) setText('Sorry, this post failed to load. Please try again.');
       });
     return () => {
       cancelled = true;

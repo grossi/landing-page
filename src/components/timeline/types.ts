@@ -8,11 +8,6 @@ export interface TimelineItem {
   skills: string[];
   icon: string;
   highlight?: boolean;
-  projects?: Array<{
-    name: string;
-    url: string;
-    repo: string;
-  }>;
 }
 
 export interface Particle {

@@ -48,7 +48,7 @@ const TimelineIcon: React.FC<TimelineIconProps> = ({
       onMouseLeave={onMouseLeave}
       position="relative"
     >
-      <Icon as={iconMap[icon]} boxSize={6} color={timelineColors.highlightColor} />
+      <Icon as={iconMap[icon] ?? FaBriefcase} boxSize={6} color={timelineColors.highlightColor} />
     </MotionCircle>
   );
 };

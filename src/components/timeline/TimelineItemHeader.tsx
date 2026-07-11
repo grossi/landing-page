@@ -24,7 +24,7 @@ const TimelineItemHeader: React.FC<TimelineItemHeaderProps> = ({
         justify={{ base: 'flex-start', md: isLeft ? 'flex-end' : 'flex-start' }}
         mb={2}
       >
-        <Badge colorPalette={typeColorPalettes[type]} size="sm" variant="subtle">
+        <Badge colorPalette={typeColorPalettes[type] ?? 'gray'} size="sm" variant="subtle">
           {type}
         </Badge>
         <Text fontSize="sm" color={{ base: 'gray.600', _dark: 'gray.400' }}>

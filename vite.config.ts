@@ -17,4 +17,17 @@ export default defineConfig({
       },
     ],
   },
+  build: {
+    rollupOptions: {
+      output: {
+        // Vendor chunks load in parallel (modulepreload) and keep stable
+        // hashes across app-code-only deploys.
+        manualChunks: {
+          react: ['react', 'react-dom', 'react-router'],
+          chakra: ['@chakra-ui/react', '@emotion/react', '@emotion/styled', 'next-themes'],
+          motion: ['framer-motion'],
+        },
+      },
+    },
+  },
 });

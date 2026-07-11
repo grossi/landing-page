@@ -23,36 +23,22 @@ const ParticleEffect: React.FC<ParticleEffectProps> = ({
   speed = 100,
   duration = 0.8
 }) => {
-  // Memoize particle calculations to prevent recalculation on every render
+  // Memoize particle calculations to prevent recalculation on every render.
+  // Particles fly outward from the element center through their spawn point.
   const particleData = useMemo(() => {
+    const containerOffset = isCircle ? ICON_CONTAINER_OFFSET : CARD_CONTAINER_OFFSET;
+    const effectiveSpeed = isCircle ? speed : speed * RECT_SPEED_MULTIPLIER;
+    const centerX = elementWidth / 2 + containerOffset;
+    const centerY = elementHeight / 2 + containerOffset;
+
     return particles.map((particle) => {
-      let normalizedX = 0;
-      let normalizedY = 0;
-      
-      if (isCircle) {
-        // For circular elements, calculate direction from center through particle position
-        const centerX = elementWidth / 2 + ICON_CONTAINER_OFFSET;
-        const centerY = elementHeight / 2 + ICON_CONTAINER_OFFSET;
-        const dirX = particle.x - centerX;
-        const dirY = particle.y - centerY;
-        const magnitude = Math.sqrt(dirX * dirX + dirY * dirY);
-        normalizedX = magnitude > 0 ? (dirX / magnitude) * speed : 0;
-        normalizedY = magnitude > 0 ? (dirY / magnitude) * speed : 0;
-      } else {
-        // For rectangular elements, calculate outward direction based on particle position
-        const centerX = elementWidth / 2 + CARD_CONTAINER_OFFSET;
-        const centerY = elementHeight / 2 + CARD_CONTAINER_OFFSET;
-        const dirX = particle.x - centerX;
-        const dirY = particle.y - centerY;
-        const magnitude = Math.sqrt(dirX * dirX + dirY * dirY);
-        normalizedX = magnitude > 0 ? (dirX / magnitude) * (speed * RECT_SPEED_MULTIPLIER) : 0;
-        normalizedY = magnitude > 0 ? (dirY / magnitude) * (speed * RECT_SPEED_MULTIPLIER) : 0;
-      }
-      
+      const dirX = particle.x - centerX;
+      const dirY = particle.y - centerY;
+      const magnitude = Math.sqrt(dirX * dirX + dirY * dirY);
       return {
         ...particle,
-        normalizedX,
-        normalizedY
+        normalizedX: magnitude > 0 ? (dirX / magnitude) * effectiveSpeed : 0,
+        normalizedY: magnitude > 0 ? (dirY / magnitude) * effectiveSpeed : 0
       };
     });
   }, [particles, elementWidth, elementHeight, isCircle, speed]);

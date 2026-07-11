@@ -51,7 +51,6 @@ export const useParticleAnimation = ({
     particles,
     dimensions,
     handleClick,
-    isHovered,
     setIsHovered,
     controls
   };

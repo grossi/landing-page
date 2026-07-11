@@ -9,28 +9,25 @@ interface PageLayoutProps {
   py?: number | object;
 }
 
-const PageLayout: React.FC<PageLayoutProps> = ({ 
-  children, 
+// The window itself scrolls (no inner scroll container) so that
+// window-based effects like Timeline's useScroll work; Header handles
+// its own stickiness.
+const PageLayout: React.FC<PageLayoutProps> = ({
+  children,
   maxW = 'container.xl',
   px = 4,
-  py = 12 
+  py = 12
 }) => {
   return (
-    <Box 
-      display="flex"
-      flexDirection="column"
-      height="100vh"
-      bg={{ base: 'gray.50', _dark: 'gray.800' }} 
+    <Box
+      minHeight="100vh"
+      bg={{ base: 'gray.50', _dark: 'gray.800' }}
       color={{ base: 'gray.800', _dark: 'white' }}
     >
-      <Box position="sticky" top={0} zIndex={10} bg={{ base: 'gray.50', _dark: 'gray.800' }}>
-        <Header />
-      </Box>
-      <Box flex="1" overflowY="auto">
-        <Container maxW={maxW} px={px} py={py}>
-          {children}
-        </Container>
-      </Box>
+      <Header />
+      <Container maxW={maxW} px={px} py={py}>
+        {children}
+      </Container>
     </Box>
   );
 };

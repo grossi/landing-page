@@ -5,8 +5,8 @@ import typescript from 'react-syntax-highlighter/dist/esm/languages/hljs/typescr
 import { atomOneDarkReasonable } from 'react-syntax-highlighter/dist/esm/styles/hljs';
 import { Box, Link, Text } from '@chakra-ui/react';
 
-// All code blocks are rendered as TypeScript (see MarkdownCode below), so
-// only that language is registered — the full hljs build is ~800 kB.
+// Only the languages used by posts are registered — the full hljs build
+// is ~800 kB. Register more here as posts need them.
 SyntaxHighlighter.registerLanguage('typescript', typescript);
 
 function MarkdownListItem(props: any) {
@@ -20,14 +20,21 @@ function MarkdownListItem(props: any) {
 }
 
 function MarkdownCode(props: any) {
+  // markdown-to-jsx renders fenced/indented blocks as <pre><code>, with a
+  // `lang-*` class when the fence names a language; raw <pre> HTML in a post
+  // may have a plain string child instead.
+  const inner = props.children?.props;
+  const code = inner ? inner.children : props.children;
+  const language = inner?.className?.match(/lang-(\w+)/)?.[1] ?? 'typescript';
+
   return (
     <Box mx={{ base: 0, sm: 2, md: 4, lg: 6 }} mb={4}>
       <SyntaxHighlighter
-        language="typescript"
+        language={language}
         style={atomOneDarkReasonable}
         customStyle={{ borderRadius: 6 }}
       >
-        {props.children.props.children}
+        {code}
       </SyntaxHighlighter>
     </Box>
   );

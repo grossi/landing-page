@@ -70,9 +70,9 @@ export const createParticlesAroundBorder = (
   isCircle: boolean = false,
   particleCount?: number
 ): Particle[] => {
-  return isCircle 
-    ? createCircularParticles(width, height, particleCount || 20)
-    : createRectangularParticles(width, height, particleCount || 32);
+  return isCircle
+    ? createCircularParticles(width, height, particleCount)
+    : createRectangularParticles(width, height, particleCount);
 };
 
 /**
