@@ -26,6 +26,9 @@ export const wireMat = (opacity: number) =>
 const ICO_LOW = new THREE.IcosahedronGeometry(1, 0);
 const ICO_MID = new THREE.IcosahedronGeometry(1, 1);
 const RING = new THREE.TorusGeometry(1.9, 0.1, 4, 42);
+const BOX = new THREE.BoxGeometry(1, 1, 1);
+const CYL = new THREE.CylinderGeometry(1, 1, 1, 8);
+const BEAM = new THREE.ConeGeometry(1, 1, 6, 1, true);
 const MAT_BRIGHT = wireMat(0.9);
 const MAT_BODY = wireMat(0.85);
 const MAT_DIM = wireMat(0.6);
@@ -212,13 +215,204 @@ const miniSystem: Builder = (rand) => {
   };
 };
 
+const binaryStars: Builder = (rand) => {
+  const group = new THREE.Group();
+  const name = makeName(rand);
+  const stars: Orbiter[] = [];
+  const separation = 20 + rand() * 16;
+  for (let i = 0; i < 2; i++) {
+    const radius = 6 + rand() * 5;
+    const star = new THREE.Mesh(ICO_MID, MAT_BRIGHT);
+    star.scale.setScalar(radius);
+    group.add(star);
+    const halo = new THREE.Mesh(RING, MAT_RING);
+    halo.scale.setScalar(radius * 0.8);
+    halo.rotation.x = rand() * Math.PI;
+    star.add(halo);
+    stars.push({ mesh: star, r: separation, speed: 0.22 + rand() * 0.2, phase: i * Math.PI });
+  }
+  const orbit = new THREE.Line(UNIT_CIRCLE, ORBIT_MAT);
+  orbit.scale.setScalar(separation);
+  group.add(orbit);
+  const speed = stars[0].speed;
+  return {
+    group,
+    pois: [{ name: `${name} BINARY`, object: group, radius: separation + 14 }],
+    update: (_dt, t) => {
+      for (const s of stars) {
+        const a = s.phase + t * speed;
+        s.mesh.position.set(Math.cos(a) * s.r, 0, Math.sin(a) * s.r);
+      }
+    },
+  };
+};
+
+const pulsar: Builder = (rand) => {
+  const group = new THREE.Group();
+  const core = new THREE.Mesh(ICO_MID, MAT_BRIGHT);
+  const coreSize = 3.5 + rand() * 2;
+  core.scale.setScalar(coreSize);
+  group.add(core);
+  // two opposed lighthouse beams, tilted off the spin axis
+  const beams = new THREE.Group();
+  for (const dir of [1, -1]) {
+    const beam = new THREE.Mesh(BEAM, wireMat(0.16));
+    beam.scale.set(7, 150, 7);
+    beam.position.y = dir * 75;
+    if (dir === 1) beam.rotation.z = Math.PI;
+    beams.add(beam);
+  }
+  beams.rotation.x = 0.5 + rand() * 0.5;
+  group.add(beams);
+  const spin = 1.4 + rand() * 1.2;
+  const phase = rand() * Math.PI * 2;
+  return {
+    group,
+    pois: [{ name: `PULSAR ${makeName(rand)}`, object: core, radius: 8 }],
+    update: (dt, t) => {
+      beams.rotation.y += spin * dt;
+      core.scale.setScalar(coreSize * (1 + Math.sin(phase + t * 6) * 0.16));
+    },
+  };
+};
+
+const monolithField: Builder = (rand) => {
+  const group = new THREE.Group();
+  const count = 6 + Math.floor(rand() * 9);
+  const spread = 90 + rand() * 70;
+  for (let i = 0; i < count; i++) {
+    const monolith = new THREE.Mesh(BOX, MAT_DIM);
+    const h = 18 + rand() * 30;
+    monolith.scale.set(2 + rand() * 2.5, h, 1.2 + rand() * 1.6);
+    const a = rand() * Math.PI * 2;
+    const r = rand() * spread;
+    monolith.position.set(Math.cos(a) * r, (rand() - 0.5) * 30, Math.sin(a) * r);
+    monolith.rotation.y = rand() * Math.PI;
+    group.add(monolith);
+  }
+  const spin = (rand() - 0.5) * 0.01;
+  return {
+    group,
+    pois: [{ name: `THE ${makeName(rand)} MONOLITHS`, object: group, radius: spread }],
+    update: (dt) => { group.rotation.y += spin * dt; },
+  };
+};
+
+const derelictStation: Builder = (rand) => {
+  const group = new THREE.Group();
+  const hull = new THREE.Mesh(CYL, MAT_DIM);
+  hull.scale.set(6, 34, 6);
+  group.add(hull);
+  const ring = new THREE.Mesh(RING, MAT_RING);
+  ring.scale.setScalar(11);
+  ring.rotation.x = Math.PI / 2;
+  group.add(ring);
+  const pods = 2 + Math.floor(rand() * 4);
+  for (let i = 0; i < pods; i++) {
+    const pod = new THREE.Mesh(BOX, MAT_DIM);
+    pod.scale.set(4 + rand() * 5, 3 + rand() * 3, 3 + rand() * 3);
+    pod.position.set((rand() - 0.5) * 14, (rand() - 0.5) * 26, (rand() - 0.5) * 14);
+    pod.rotation.y = rand() * Math.PI;
+    group.add(pod);
+  }
+  // a broken-off spar drifting nearby
+  const spar = new THREE.Mesh(CYL, MAT_DIM);
+  spar.scale.set(1, 18, 1);
+  spar.position.set(30 + rand() * 25, (rand() - 0.5) * 20, (rand() - 0.5) * 30);
+  spar.rotation.set(rand() * Math.PI, 0, rand() * Math.PI);
+  group.add(spar);
+  const tumbleX = (rand() - 0.5) * 0.08;
+  const tumbleY = (rand() - 0.5) * 0.12;
+  return {
+    group,
+    pois: [{ name: `${makeName(rand)} STATION (DERELICT)`, object: group, radius: 26 }],
+    update: (dt) => {
+      group.rotation.x += tumbleX * dt;
+      group.rotation.y += tumbleY * dt;
+      spar.rotation.z += dt * 0.2;
+    },
+  };
+};
+
+const cometSwarm: Builder = (rand) => {
+  const group = new THREE.Group();
+  const name = makeName(rand);
+  const count = 5 + Math.floor(rand() * 5);
+  const swarm: Array<{ mesh: THREE.Mesh; r: number; speed: number; phase: number; tilt: number }> = [];
+  for (let i = 0; i < count; i++) {
+    const comet = new THREE.Mesh(ICO_LOW, MAT_BODY);
+    comet.scale.setScalar(1 + rand() * 1.6);
+    group.add(comet);
+    swarm.push({
+      mesh: comet,
+      r: 30 + rand() * 110,
+      speed: 0.1 + rand() * 0.25,
+      phase: rand() * Math.PI * 2,
+      tilt: (rand() - 0.5) * 1.2,
+    });
+  }
+  return {
+    group,
+    pois: [{ name: `${name} SWARM`, object: group, radius: 140 }],
+    update: (_dt, t) => {
+      for (const c of swarm) {
+        const a = c.phase + t * c.speed;
+        c.mesh.position.set(Math.cos(a) * c.r, Math.sin(a) * c.r * c.tilt, Math.sin(a) * c.r);
+      }
+    },
+  };
+};
+
 // weights roughly tuned so space feels varied but never empty
 const BUILDERS: Array<[Builder, number]> = [
-  [asteroidCluster, 0.3],
-  [nebula, 0.26],
-  [roguePlanet, 0.24],
-  [miniSystem, 0.2],
+  [asteroidCluster, 0.2],
+  [nebula, 0.2],
+  [roguePlanet, 0.16],
+  [miniSystem, 0.14],
+  [binaryStars, 0.08],
+  [monolithField, 0.07],
+  [pulsar, 0.06],
+  [cometSwarm, 0.05],
+  [derelictStation, 0.04],
 ];
+
+/**
+ * Small unnamed secondary feature so a sector rarely reads as empty even
+ * when its main content sits behind the camera: a knot of rocks or a wisp
+ * of nebula dust.
+ */
+function addGarnish(rand: () => number, group: THREE.Group, own: THREE.BufferGeometry[]) {
+  const offset = new THREE.Vector3(
+    (rand() - 0.5) * 420,
+    (rand() - 0.5) * 300,
+    (rand() - 0.5) * 420,
+  );
+  if (rand() < 0.5) {
+    for (let i = 0; i < 8 + Math.floor(rand() * 7); i++) {
+      const rock = new THREE.Mesh(ICO_LOW, MAT_DIM);
+      rock.position.set(
+        offset.x + gaussish(rand) * 70,
+        offset.y + gaussish(rand) * 40,
+        offset.z + gaussish(rand) * 70,
+      );
+      rock.scale.setScalar(0.6 + rand() * 2.4);
+      rock.rotation.set(rand() * Math.PI, rand() * Math.PI, rand() * Math.PI);
+      group.add(rock);
+    }
+  } else {
+    const n = 70 + Math.floor(rand() * 60);
+    const positions = new Float32Array(n * 3);
+    for (let i = 0; i < n; i++) {
+      positions[i * 3] = offset.x + gaussish(rand) * 130;
+      positions[i * 3 + 1] = offset.y + gaussish(rand) * 60;
+      positions[i * 3 + 2] = offset.z + gaussish(rand) * 130;
+    }
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    own.push(geometry);
+    group.add(new THREE.Points(geometry, NEBULA_MAT));
+  }
+}
 
 /** Builds the deterministic content of one sector from its own PRNG. */
 export function buildSectorContent(
@@ -234,6 +428,7 @@ export function buildSectorContent(
     roll -= weight;
   }
   const content = builder(rand, own);
+  if (rand() < 0.55) addGarnish(rand, content.group, own);
   // scatter the content off-centre so sector boundaries aren't felt
   content.group.position.set(
     center.x + (rand() - 0.5) * sectorSize * 0.5,

@@ -18,6 +18,10 @@ export interface EphemerisHudElements {
   speed: HTMLElement;
   /** Current sector, e.g. "KHEVEL EXPANSE · 2.0.-1". */
   sector: HTMLElement;
+  /** Running discovery tally, e.g. "5 CONTACTS LOGGED". */
+  contacts: HTMLElement;
+  /** Transient "NEW CONTACT" banner; the sim drives its opacity. */
+  ping: HTMLElement;
 }
 
 /** Edge length of one cubic sector of procedural space. */
@@ -323,6 +327,8 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
   let t = 0;
   let rafId = 0;
   let last = performance.now();
+  let discovered = 0;
+  let pingTimer = 0;
 
   syncSectors(ship.position, true);
 
@@ -396,16 +402,27 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
     }
     dustGeo.attributes.position.needsUpdate = true;
 
-    // nearest-body HUD across home + all active sector POIs
+    // nearest-body HUD across home + all active sector POIs, plus discovery
     let nearestName = 'THE SUN';
     let nearestDist = ship.position.length() - 26;
     const consider = (poi: Poi) => {
       poi.object.getWorldPosition(poiPos);
       const d = ship.position.distanceTo(poiPos) - poi.radius;
       if (d < nearestDist) { nearestDist = d; nearestName = poi.name; }
+      if (!poi.discovered && d < 60) {
+        poi.discovered = true;
+        discovered++;
+        pingTimer = 4;
+        hud.ping.textContent = `NEW CONTACT · ${poi.name}`;
+        hud.contacts.textContent = `${discovered} CONTACT${discovered === 1 ? '' : 'S'} LOGGED`;
+      }
     };
     for (const poi of homePois) consider(poi);
     for (const content of activeSectors.values()) for (const poi of content.pois) consider(poi);
+    if (pingTimer > 0) {
+      pingTimer -= dt;
+      hud.ping.style.opacity = String(Math.max(0, Math.min(1, pingTimer / 1.5)));
+    }
     hud.body.textContent = nearestName;
     hud.dist.textContent = `${Math.max(0, Math.floor(nearestDist))} km${nearestDist < 30 ? ' · APPROACH' : ''}`;
     hud.speed.textContent = `${Math.floor(velocity.length())} km/s`;
@@ -426,12 +443,33 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
   rafId = requestAnimationFrame(tick);
 
   // debug/testing hook — lets tests (and the curious) jump across the universe
-  interface EphemerisDebug { warp: (x: number, y: number, z: number) => void }
+  interface EphemerisDebug {
+    warp: (x: number, y: number, z: number, lookX?: number, lookY?: number, lookZ?: number) => void;
+    pois: () => Array<{ name: string; x: number; y: number; z: number; radius: number }>;
+  }
   (window as unknown as { __EPHEMERIS?: EphemerisDebug }).__EPHEMERIS = {
-    warp: (x: number, y: number, z: number) => {
+    warp: (x, y, z, lookX, lookY, lookZ) => {
       ship.position.set(x, y, z);
       velocity.set(0, 0, 0);
+      if (lookX !== undefined && lookY !== undefined && lookZ !== undefined) {
+        const dir = scratch.set(lookX - x, lookY - y, lookZ - z).normalize();
+        attitude.pitch = Math.asin(Math.max(-1, Math.min(1, dir.y)));
+        attitude.yaw = Math.atan2(-dir.x, -dir.z);
+        ship.quaternion.setFromEuler(new THREE.Euler(attitude.pitch, attitude.yaw, 0, 'YXZ'));
+        camera.position.copy(scratch.set(0, 2.6, 9).applyQuaternion(ship.quaternion).add(ship.position));
+        camera.quaternion.copy(ship.quaternion);
+      }
       syncSectors(ship.position, true);
+    },
+    pois: () => {
+      const all: Array<{ name: string; x: number; y: number; z: number; radius: number }> = [];
+      const collect = (poi: Poi) => {
+        poi.object.getWorldPosition(poiPos);
+        all.push({ name: poi.name, x: poiPos.x, y: poiPos.y, z: poiPos.z, radius: poi.radius });
+      };
+      homePois.forEach(collect);
+      for (const content of activeSectors.values()) content.pois.forEach(collect);
+      return all;
     },
   };
 
