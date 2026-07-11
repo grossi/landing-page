@@ -15,13 +15,22 @@ const Ephemeris = () => {
   const bodyRef = useRef<HTMLDivElement>(null);
   const distRef = useRef<HTMLDivElement>(null);
   const speedRef = useRef<HTMLDivElement>(null);
+  const sectorRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (!containerRef.current || !bodyRef.current || !distRef.current || !speedRef.current) return;
+    if (
+      !containerRef.current ||
+      !bodyRef.current ||
+      !distRef.current ||
+      !speedRef.current ||
+      !sectorRef.current
+    )
+      return;
     return createEphemeris(containerRef.current, {
       body: bodyRef.current,
       dist: distRef.current,
       speed: speedRef.current,
+      sector: sectorRef.current,
     });
   }, []);
 
@@ -61,6 +70,16 @@ const Ephemeris = () => {
             letterSpacing=".18em"
             opacity={0.5}
             ref={speedRef}
+          />
+          <Text
+            {...hudFont}
+            position="absolute"
+            top="42px"
+            right="20px"
+            fontSize="12px"
+            letterSpacing=".18em"
+            opacity={0.5}
+            ref={sectorRef}
           />
           <Text
             {...hudFont}
