@@ -1,0 +1,231 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<link rel="icon" href="/logo98.png">
+<title>MONOSTACK</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+  canvas { display: block; }
+  .hud {
+    position: fixed; inset: 0; pointer-events: none; color: #fff;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    user-select: none; -webkit-user-select: none;
+  }
+  .score {
+    position: absolute; top: 26px; left: 0; right: 0; text-align: center;
+    font-size: 44px; font-weight: 700; letter-spacing: .1em;
+  }
+  .combo { position: absolute; top: 84px; left: 0; right: 0; text-align: center;
+    font-size: 12px; letter-spacing: .3em; opacity: .7; }
+  .center {
+    position: absolute; inset: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; text-align: center; gap: 14px;
+  }
+  .title { font-size: clamp(28px, 6vw, 54px); letter-spacing: .32em; font-weight: 700; }
+  .sub   { font-size: 13px; letter-spacing: .22em; opacity: .6; line-height: 2; }
+  .blink { animation: blink 1.2s steps(2) infinite; font-size: 13px; letter-spacing: .3em; }
+  @keyframes blink { 50% { opacity: 0; } }
+  .hidden { display: none; }
+</style>
+<div class="hud">
+  <div class="score hidden" id="score"></div>
+  <div class="combo" id="combo"></div>
+  <div class="center" id="menu">
+    <div class="title">MONOSTACK</div>
+    <div class="sub">DROP THE BLOCK &middot; PERFECT DROPS PAY DOUBLE<br>CLICK / TAP / SPACE</div>
+    <div class="blink">TAP TO START</div>
+  </div>
+  <div class="center hidden" id="over">
+    <div class="title">TOPPLED</div>
+    <div class="sub" id="finalScore"></div>
+    <div class="blink">TAP TO RETRY</div>
+  </div>
+</div>
+<script type="importmap">
+  { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js" } }
+</script>
+<script type="module">
+import * as THREE from 'three';
+
+const DEMO = new URLSearchParams(location.search).has('demo');
+const scene = new THREE.Scene();
+scene.fog = new THREE.Fog(0x000000, 60, 130);
+const camera = new THREE.PerspectiveCamera(35, innerWidth / innerHeight, 0.1, 200);
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+document.body.appendChild(renderer.domElement);
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.55));
+const sun = new THREE.DirectionalLight(0xffffff, 1.6);
+sun.position.set(18, 30, 8);
+scene.add(sun);
+
+const SIZE = 10, H = 2, AMP = 15;
+const boxGeo = new THREE.BoxGeometry(1, 1, 1);
+const edgeGeo = new THREE.EdgesGeometry(boxGeo);
+
+function makeBlock(w, d, y, shade) {
+  const g = new THREE.Group();
+  const mat = new THREE.MeshLambertMaterial({ color: new THREE.Color().setHSL(0, 0, shade) });
+  g.add(new THREE.Mesh(boxGeo, mat));
+  g.add(new THREE.LineSegments(edgeGeo, new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.85 })));
+  g.scale.set(w, H, d);
+  g.position.y = y;
+  scene.add(g);
+  return g;
+}
+const shadeFor = i => 0.2 + 0.55 * (0.5 + 0.5 * Math.sin(i * 0.9));
+
+const scoreEl = document.getElementById('score'), comboEl = document.getElementById('combo'),
+      menuEl = document.getElementById('menu'), overEl = document.getElementById('over'),
+      finalEl = document.getElementById('finalScore');
+
+let state = 'menu', stack = [], falling = [], moving = null, level = 0, score = 0, combo = 0,
+    axis = 'x', dir = 1, speed = 9, camY = 0, lockUntil = 0, t = 0;
+
+function clearAll() {
+  for (const b of [...stack, ...falling, ...(moving ? [moving.mesh] : [])]) scene.remove(b.mesh || b);
+  stack = []; falling = []; moving = null;
+}
+function reset() {
+  clearAll();
+  level = 0; score = 0; combo = 0; speed = 9; t = 0;
+  const base = makeBlock(SIZE, SIZE, -H / 2, shadeFor(0));
+  stack = [{ mesh: base, w: SIZE, d: SIZE, x: 0, z: 0 }];
+  camY = 0;
+  spawnMoving();
+  state = 'play';
+  menuEl.classList.add('hidden'); overEl.classList.add('hidden');
+  scoreEl.classList.remove('hidden');
+  scoreEl.textContent = '0'; comboEl.textContent = '';
+}
+function spawnMoving() {
+  const top = stack[stack.length - 1];
+  level++;
+  axis = level % 2 ? 'x' : 'z';
+  dir = 1;
+  const y = (level - 0.5) * H - H / 2 - H / 2 + H; // top of stack + half height
+  const mesh = makeBlock(top.w, top.d, level * H - H / 2, shadeFor(level));
+  moving = { mesh, w: top.w, d: top.d, x: top.x, z: top.z, phase: -Math.PI / 2,
+             demoOffset: DEMO && Math.random() < 0.55 ? (Math.random() - 0.5) * 2.4 : 0 };
+  mesh.position.x = axis === 'x' ? -AMP : top.x;
+  mesh.position.z = axis === 'z' ? -AMP : top.z;
+  speed = Math.min(34, 18 + level * 0.7);
+}
+function drop() {
+  if (!moving) return;
+  const top = stack[stack.length - 1];
+  const m = moving; moving = null;
+  const pos = m.mesh.position;
+  const isX = axis === 'x';
+  const cur = isX ? pos.x : pos.z, prev = isX ? top.x : top.z;
+  const size = isX ? m.w : m.d;
+  let delta = cur - prev;
+
+  if (Math.abs(delta) < 0.28) { // perfect
+    delta = 0;
+    combo++;
+    score += 2 * combo;
+    comboEl.textContent = 'PERFECT ×' + combo;
+    pulse(m.mesh);
+  } else {
+    combo = 0; comboEl.textContent = '';
+    score += 1;
+  }
+  const overlap = size - Math.abs(delta);
+  if (overlap <= 0) { // total miss
+    falling.push({ mesh: m.mesh, vy: 0, vr: (Math.random() - 0.5) * 3 });
+    return gameOver();
+  }
+  // slice
+  const newCenter = prev + delta / 2;
+  const cutSize = Math.abs(delta);
+  if (cutSize > 0.001) {
+    const cutCenter = cur + Math.sign(delta) * (overlap / 2);
+    const cw = isX ? cutSize : m.w, cd = isX ? m.d : cutSize;
+    const cut = makeBlock(cw, cd, pos.y, shadeFor(level));
+    cut.position.x = isX ? cutCenter : pos.x;
+    cut.position.z = isX ? pos.z : cutCenter;
+    falling.push({ mesh: cut, vy: 0, vr: (Math.random() - 0.5) * 4 * Math.sign(delta) });
+  }
+  const nw = isX ? overlap : m.w, nd = isX ? m.d : overlap;
+  m.mesh.scale.set(nw, H, nd);
+  m.mesh.position.x = isX ? newCenter : pos.x;
+  m.mesh.position.z = isX ? pos.z : newCenter;
+  stack.push({ mesh: m.mesh, w: nw, d: nd, x: m.mesh.position.x, z: m.mesh.position.z });
+  scoreEl.textContent = String(score);
+  spawnMoving();
+}
+let pulses = [];
+function pulse(mesh) { pulses.push({ mesh, t: 0 }); }
+
+function gameOver() {
+  state = 'over';
+  finalEl.textContent = 'SCORE ' + score + ' · HEIGHT ' + (stack.length - 1);
+  overEl.classList.remove('hidden');
+  lockUntil = performance.now() + 600;
+}
+
+function press() {
+  if (performance.now() < lockUntil) return;
+  if (state === 'play') drop();
+  else reset();
+}
+addEventListener('keydown', e => { if (e.code === 'Space' || e.code === 'Enter') { e.preventDefault(); press(); } });
+addEventListener('pointerdown', press);
+
+let last = performance.now();
+function tick(now) {
+  requestAnimationFrame(tick);
+  const dt = Math.max(0, Math.min((now - last) / 1000, 0.05));
+  last = now;
+  t += dt;
+
+  if (state === 'play' && moving) {
+    moving.phase += (speed / AMP) * dt;
+    const off = Math.sin(moving.phase) * AMP;
+    const top = stack[stack.length - 1];
+    if (axis === 'x') moving.mesh.position.x = top.x + off;
+    else moving.mesh.position.z = top.z + off;
+    if (DEMO) {
+      const cur = axis === 'x' ? moving.mesh.position.x : moving.mesh.position.z;
+      const prev = (axis === 'x' ? top.x : top.z) + moving.demoOffset;
+      const vel = Math.cos(moving.phase) * speed;
+      // drop when we'll be centered next frame-ish
+      if (Math.abs(cur - prev) < Math.abs(vel) * dt * 1.2 + 0.05 && level > 0) drop();
+    }
+  }
+  // falling pieces
+  for (let i = falling.length - 1; i >= 0; i--) {
+    const f = falling[i];
+    f.vy += 38 * dt;
+    f.mesh.position.y -= f.vy * dt;
+    f.mesh.rotation.z += f.vr * dt;
+    if (f.mesh.position.y < camY - 50) { scene.remove(f.mesh); falling.splice(i, 1); }
+  }
+  // perfect pulse
+  for (let i = pulses.length - 1; i >= 0; i--) {
+    const p = pulses[i]; p.t += dt * 5;
+    const s = 1 + Math.sin(Math.min(p.t, Math.PI)) * 0.06;
+    p.mesh.scale.x *= 1; // scale is meaningful; pulse via position bump instead
+    if (p.t >= Math.PI) pulses.splice(i, 1);
+  }
+
+  const targetY = Math.max(0, (stack.length - 1) * H);
+  camY += (targetY - camY) * Math.min(1, dt * 3);
+  const orbit = state === 'over' ? t * 0.25 : 0;
+  const a = Math.PI / 4 + orbit;
+  camera.position.set(Math.cos(a) * 34, camY + 22, Math.sin(a) * 34);
+  camera.lookAt(0, camY + 1, 0);
+
+  renderer.render(scene, camera);
+}
+requestAnimationFrame(tick);
+
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+if (DEMO) setTimeout(reset, 400);
+</script>

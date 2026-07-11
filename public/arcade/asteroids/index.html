@@ -1,0 +1,287 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<link rel="icon" href="/logo98.png">
+<title>VOID FIELD</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+  canvas { display: block; }
+  .hud {
+    position: fixed; inset: 0; pointer-events: none; color: #fff;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    user-select: none; -webkit-user-select: none;
+  }
+  .score { position: absolute; top: 18px; left: 20px; font-size: 15px; letter-spacing: .18em; }
+  .lives { position: absolute; top: 18px; right: 20px; font-size: 15px; letter-spacing: .3em; }
+  .wave  { position: absolute; top: 40px; left: 20px; font-size: 12px; letter-spacing: .18em; opacity: .5; }
+  .center {
+    position: absolute; inset: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; text-align: center; gap: 14px;
+  }
+  .title { font-size: clamp(28px, 6vw, 54px); letter-spacing: .32em; font-weight: 700; }
+  .sub   { font-size: 13px; letter-spacing: .22em; opacity: .6; line-height: 2; }
+  .blink { animation: blink 1.2s steps(2) infinite; font-size: 13px; letter-spacing: .3em; }
+  @keyframes blink { 50% { opacity: 0; } }
+  .hidden { display: none; }
+</style>
+<div class="hud">
+  <div class="score" id="score"></div>
+  <div class="wave" id="wave"></div>
+  <div class="lives" id="lives"></div>
+  <div class="center" id="menu">
+    <div class="title">VOID FIELD</div>
+    <div class="sub">&larr; &rarr; ROTATE &middot; &uarr; THRUST &middot; SPACE FIRE</div>
+    <div class="blink">PRESS ANY KEY TO START</div>
+  </div>
+  <div class="center hidden" id="over">
+    <div class="title">DESTROYED</div>
+    <div class="sub" id="finalScore"></div>
+    <div class="blink">PRESS ANY KEY TO RETRY</div>
+  </div>
+</div>
+<script type="importmap">
+  { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js" } }
+</script>
+<script type="module">
+import * as THREE from 'three';
+
+const DEMO = new URLSearchParams(location.search).has('demo');
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 1, 400);
+camera.position.set(0, 78, 34);
+camera.lookAt(0, 0, 0);
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+document.body.appendChild(renderer.domElement);
+
+const BX = 52, BZ = 36; // wrap half-extents
+
+// starfield floor dots
+{
+  const n = 260, pos = new Float32Array(n * 3);
+  for (let i = 0; i < n; i++) {
+    pos[i * 3] = (Math.random() * 2 - 1) * BX * 1.3;
+    pos[i * 3 + 1] = -6 - Math.random() * 20;
+    pos[i * 3 + 2] = (Math.random() * 2 - 1) * BZ * 1.6;
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  scene.add(new THREE.Points(g, new THREE.PointsMaterial({ color: 0xffffff, size: 0.5, transparent: true, opacity: 0.4 })));
+}
+// faint boundary frame
+{
+  const pts = [[-BX, -BZ], [BX, -BZ], [BX, BZ], [-BX, BZ], [-BX, -BZ]].map(p => new THREE.Vector3(p[0], 0, p[1]));
+  scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),
+    new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.1 })));
+}
+
+const wireMat = new THREE.MeshBasicMaterial({ color: 0xffffff, wireframe: true });
+
+// ship
+const ship = new THREE.Group();
+const shipGeo = new THREE.ConeGeometry(1.1, 3.2, 3);
+shipGeo.rotateX(Math.PI / 2); // point +z
+ship.add(new THREE.Mesh(shipGeo, wireMat));
+const flame = new THREE.Mesh(new THREE.ConeGeometry(0.5, 1.6, 3), wireMat);
+flame.rotation.x = -Math.PI / 2; flame.position.z = -2.2; flame.visible = false;
+ship.add(flame);
+scene.add(ship);
+
+// pools
+const bullets = [], asteroids = [], shards = [];
+const bulletGeo = new THREE.SphereGeometry(0.35, 6, 4);
+const astGeos = [null,
+  new THREE.IcosahedronGeometry(1.5, 0),
+  new THREE.IcosahedronGeometry(2.6, 0),
+  new THREE.IcosahedronGeometry(4.4, 1)];
+const AST_R = [0, 1.5, 2.6, 4.4], AST_SCORE = [0, 100, 50, 20];
+
+function spawnAsteroid(size, x, z) {
+  const m = new THREE.Mesh(astGeos[size], wireMat);
+  m.position.set(x, 0, z);
+  const sp = 4 + Math.random() * 5 + (3 - size) * 2.5;
+  const a = Math.random() * Math.PI * 2;
+  m.userData = {
+    size, vx: Math.cos(a) * sp, vz: Math.sin(a) * sp,
+    rx: (Math.random() - 0.5) * 1.4, rz: (Math.random() - 0.5) * 1.4
+  };
+  asteroids.push(m); scene.add(m);
+}
+function spawnShards(p, count, sp) {
+  for (let i = 0; i < count; i++) {
+    const m = new THREE.Mesh(bulletGeo, wireMat);
+    m.position.copy(p);
+    const a = Math.random() * Math.PI * 2, s = sp * (0.4 + Math.random());
+    m.userData = { vx: Math.cos(a) * s, vz: Math.sin(a) * s, life: 0.6 };
+    shards.push(m); scene.add(m);
+  }
+}
+
+const scoreEl = document.getElementById('score'), livesEl = document.getElementById('lives'),
+      waveEl = document.getElementById('wave'), menuEl = document.getElementById('menu'),
+      overEl = document.getElementById('over'), finalEl = document.getElementById('finalScore');
+
+let state = 'menu', heading = 0, vel = new THREE.Vector2(), score = 0, lives = 3, wave = 0,
+    fireCd = 0, invuln = 0, lockUntil = 0;
+
+function hud() {
+  scoreEl.textContent = String(score).padStart(6, '0');
+  livesEl.textContent = '▲'.repeat(Math.max(0, lives));
+  waveEl.textContent = 'WAVE ' + wave;
+}
+function newWave() {
+  wave++;
+  for (let i = 0; i < 3 + wave; i++) {
+    let x, z;
+    do { x = (Math.random() * 2 - 1) * BX; z = (Math.random() * 2 - 1) * BZ; }
+    while (Math.hypot(x - ship.position.x, z - ship.position.z) < 18);
+    spawnAsteroid(3, x, z);
+  }
+  hud();
+}
+function reset() {
+  for (const a of [...asteroids, ...bullets, ...shards]) scene.remove(a);
+  asteroids.length = bullets.length = shards.length = 0;
+  score = 0; lives = 3; wave = 0; heading = 0; vel.set(0, 0); invuln = 2;
+  ship.position.set(0, 0, 0); ship.visible = true;
+  state = 'play';
+  menuEl.classList.add('hidden'); overEl.classList.add('hidden');
+  newWave();
+}
+function die() {
+  spawnShards(ship.position, 14, 14);
+  lives--;
+  if (lives <= 0) {
+    state = 'over'; ship.visible = false;
+    finalEl.textContent = 'SCORE ' + score;
+    overEl.classList.remove('hidden');
+    lockUntil = performance.now() + 600;
+  } else {
+    ship.position.set(0, 0, 0); vel.set(0, 0); invuln = 2.5;
+  }
+  hud();
+}
+
+const keys = {};
+function press() {
+  if (performance.now() < lockUntil) return;
+  if (state !== 'play') reset();
+}
+addEventListener('keydown', e => {
+  if (['ArrowUp', 'ArrowDown', 'Space'].includes(e.code)) e.preventDefault();
+  keys[e.code] = true; press();
+});
+addEventListener('keyup', e => { keys[e.code] = false; });
+addEventListener('pointerdown', press);
+
+const wrap = m => {
+  if (m.position.x > BX) m.position.x = -BX; if (m.position.x < -BX) m.position.x = BX;
+  if (m.position.z > BZ) m.position.z = -BZ; if (m.position.z < -BZ) m.position.z = BZ;
+};
+
+let last = performance.now();
+function tick(now) {
+  requestAnimationFrame(tick);
+  const dt = Math.max(0, Math.min((now - last) / 1000, 0.05));
+  last = now;
+
+  if (state === 'play') {
+    // demo autopilot
+    let left = keys.ArrowLeft || keys.KeyA, right = keys.ArrowRight || keys.KeyD,
+        thrust = keys.ArrowUp || keys.KeyW, fire = keys.Space;
+    if (DEMO && asteroids.length) {
+      let nearest = asteroids[0], nd = 1e9;
+      for (const a of asteroids) {
+        const d = Math.hypot(a.position.x - ship.position.x, a.position.z - ship.position.z);
+        if (d < nd) { nd = d; nearest = a; }
+      }
+      const want = Math.atan2(nearest.position.x - ship.position.x, nearest.position.z - ship.position.z);
+      let d = (want - heading) % (Math.PI * 2);
+      if (d > Math.PI) d -= Math.PI * 2; if (d < -Math.PI) d += Math.PI * 2;
+      left = d > 0.08; right = d < -0.08;
+      fire = Math.abs(d) < 0.25;
+      thrust = nd > 30 && Math.abs(d) < 0.6;
+      if (nd < 12) { // evade
+        left = d < 0; right = d >= 0; thrust = Math.abs(d) > 1.2; fire = Math.abs(d) < 0.4;
+      }
+    }
+
+    if (left) heading += 3.4 * dt;
+    if (right) heading -= 3.4 * dt;
+    flame.visible = !!thrust && Math.floor(now / 60) % 2 === 0;
+    if (thrust) {
+      vel.x += Math.sin(heading) * 34 * dt;
+      vel.y += Math.cos(heading) * 34 * dt;
+    }
+    vel.multiplyScalar(Math.pow(0.35, dt));
+    const sp = vel.length(); if (sp > 34) vel.multiplyScalar(34 / sp);
+    ship.position.x += vel.x * dt; ship.position.z += vel.y * dt;
+    wrap(ship);
+    ship.rotation.y = heading;
+
+    fireCd -= dt;
+    if (fire && fireCd <= 0) {
+      fireCd = 0.22;
+      const b = new THREE.Mesh(bulletGeo, wireMat);
+      b.position.copy(ship.position);
+      b.userData = { vx: Math.sin(heading) * 62 + vel.x, vz: Math.cos(heading) * 62 + vel.y, life: 0.9 };
+      bullets.push(b); scene.add(b);
+    }
+
+    for (let i = bullets.length - 1; i >= 0; i--) {
+      const b = bullets[i];
+      b.position.x += b.userData.vx * dt; b.position.z += b.userData.vz * dt;
+      wrap(b);
+      b.userData.life -= dt;
+      if (b.userData.life <= 0) { scene.remove(b); bullets.splice(i, 1); }
+    }
+    for (let i = shards.length - 1; i >= 0; i--) {
+      const s = shards[i];
+      s.position.x += s.userData.vx * dt; s.position.z += s.userData.vz * dt;
+      s.userData.life -= dt;
+      if (s.userData.life <= 0) { scene.remove(s); shards.splice(i, 1); }
+    }
+
+    invuln -= dt;
+    ship.visible = invuln <= 0 || Math.floor(now / 90) % 2 === 0;
+
+    for (let i = asteroids.length - 1; i >= 0; i--) {
+      const a = asteroids[i];
+      a.position.x += a.userData.vx * dt; a.position.z += a.userData.vz * dt;
+      a.rotation.x += a.userData.rx * dt; a.rotation.z += a.userData.rz * dt;
+      wrap(a);
+      const r = AST_R[a.userData.size];
+      // bullet hits
+      let killed = false;
+      for (let j = bullets.length - 1; j >= 0; j--) {
+        if (a.position.distanceTo(bullets[j].position) < r + 0.5) {
+          scene.remove(bullets[j]); bullets.splice(j, 1);
+          killed = true; break;
+        }
+      }
+      if (killed) {
+        score += AST_SCORE[a.userData.size];
+        spawnShards(a.position, 6, 10);
+        if (a.userData.size > 1)
+          for (let k = 0; k < 2; k++) spawnAsteroid(a.userData.size - 1, a.position.x, a.position.z);
+        scene.remove(a); asteroids.splice(i, 1);
+        hud();
+        continue;
+      }
+      // ship hit
+      if (invuln <= 0 && a.position.distanceTo(ship.position) < r + 1.2) die();
+    }
+    if (state === 'play' && asteroids.length === 0) newWave();
+  }
+  renderer.render(scene, camera);
+}
+requestAnimationFrame(tick);
+
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+hud();
+if (DEMO) setTimeout(reset, 400);
+</script>

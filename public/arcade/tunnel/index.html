@@ -1,0 +1,192 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<link rel="icon" href="/logo98.png">
+<title>HYPERTUNNEL</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+  canvas { display: block; }
+  .hud {
+    position: fixed; inset: 0; pointer-events: none; color: #fff;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    user-select: none; -webkit-user-select: none;
+  }
+  .score { position: absolute; top: 18px; left: 20px; font-size: 15px; letter-spacing: .18em; }
+  .best  { position: absolute; top: 18px; right: 20px; font-size: 15px; letter-spacing: .18em; opacity: .5; }
+  .center {
+    position: absolute; inset: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; text-align: center; gap: 14px;
+  }
+  .title { font-size: clamp(28px, 6vw, 54px); letter-spacing: .32em; font-weight: 700; }
+  .sub   { font-size: 13px; letter-spacing: .22em; opacity: .6; line-height: 2; }
+  .blink { animation: blink 1.2s steps(2) infinite; font-size: 13px; letter-spacing: .3em; }
+  @keyframes blink { 50% { opacity: 0; } }
+  .hidden { display: none; }
+</style>
+<div class="hud">
+  <div class="score" id="score"></div>
+  <div class="best" id="best"></div>
+  <div class="center" id="menu">
+    <div class="title">HYPERTUNNEL</div>
+    <div class="sub">STEER THROUGH THE GAPS<br>&larr; &rarr; OR A / D &middot; TOUCH LEFT / RIGHT</div>
+    <div class="blink">PRESS ANY KEY TO START</div>
+  </div>
+  <div class="center hidden" id="over">
+    <div class="title">WRECKED</div>
+    <div class="sub" id="finalScore"></div>
+    <div class="blink">PRESS ANY KEY TO RETRY</div>
+  </div>
+</div>
+<script type="importmap">
+  { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js" } }
+</script>
+<script type="module">
+import * as THREE from 'three';
+
+const DEMO = new URLSearchParams(location.search).has('demo');
+const scene = new THREE.Scene();
+scene.fog = new THREE.Fog(0x000000, 40, 220);
+
+const camera = new THREE.PerspectiveCamera(78, innerWidth / innerHeight, 0.1, 300);
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+document.body.appendChild(renderer.domElement);
+
+const TUNNEL_R = 6, PLAYER_R = 4.6, PLAYER_Z = -12;
+
+// tunnel guide rings
+const ringGeo = new THREE.TorusGeometry(TUNNEL_R, 0.03, 6, 48);
+const ringMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.28 });
+const rings = [];
+for (let i = 0; i < 34; i++) {
+  const r = new THREE.Mesh(ringGeo, ringMat);
+  r.position.z = -i * 8;
+  rings.push(r); scene.add(r);
+}
+// tunnel rails
+const railMat = new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.14 });
+for (let i = 0; i < 12; i++) {
+  const a = (i / 12) * Math.PI * 2;
+  const pts = [new THREE.Vector3(Math.cos(a) * TUNNEL_R, Math.sin(a) * TUNNEL_R, 4),
+               new THREE.Vector3(Math.cos(a) * TUNNEL_R, Math.sin(a) * TUNNEL_R, -270)];
+  scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), railMat));
+}
+
+// player ship — small wireframe dart
+const ship = new THREE.Group();
+const shipGeo = new THREE.ConeGeometry(0.45, 1.5, 4);
+shipGeo.rotateX(-Math.PI / 2);
+ship.add(new THREE.Mesh(shipGeo, new THREE.MeshBasicMaterial({ color: 0xffffff, wireframe: true })));
+scene.add(ship);
+
+// obstacle pool: arcs with a gap
+const obstacles = [];
+const obsMat = new THREE.MeshBasicMaterial({ color: 0xffffff, wireframe: true });
+function spawnObstacle(z, gapWidth) {
+  const gapCenter = Math.random() * Math.PI * 2;
+  const arc = Math.PI * 2 - gapWidth;
+  const geo = new THREE.TorusGeometry(PLAYER_R, 0.5, 6, 40, arc);
+  const m = new THREE.Mesh(geo, obsMat);
+  m.rotation.z = gapCenter + gapWidth / 2; // arc starts at gap edge
+  m.position.z = z;
+  m.userData = { gapCenter, gapWidth, hit: false };
+  obstacles.push(m); scene.add(m);
+}
+
+const scoreEl = document.getElementById('score');
+const bestEl = document.getElementById('best');
+const menuEl = document.getElementById('menu');
+const overEl = document.getElementById('over');
+const finalEl = document.getElementById('finalScore');
+
+let state = 'menu', angle = -Math.PI / 2, steer = 0, speed = 0, dist = 0, nextSpawn = 0;
+let best = +(localStorage.getItem('ht_best') || 0);
+bestEl.textContent = 'BEST ' + best;
+
+function reset() {
+  for (const o of obstacles) { scene.remove(o); o.geometry.dispose(); }
+  obstacles.length = 0;
+  angle = -Math.PI / 2; speed = 34; dist = 0; nextSpawn = 90;
+  state = 'play';
+  menuEl.classList.add('hidden'); overEl.classList.add('hidden');
+}
+function gameOver() {
+  state = 'over';
+  const s = Math.floor(dist);
+  if (s > best) { best = s; localStorage.setItem('ht_best', best); }
+  bestEl.textContent = 'BEST ' + best;
+  finalEl.textContent = 'DISTANCE ' + s;
+  overEl.classList.remove('hidden');
+  lockUntil = performance.now() + 600; // ignore keys briefly
+}
+
+let lockUntil = 0;
+const keys = {};
+function press() {
+  if (performance.now() < lockUntil) return;
+  if (state !== 'play') reset();
+}
+addEventListener('keydown', e => { keys[e.code] = true; press(); });
+addEventListener('keyup', e => { keys[e.code] = false; });
+let touchDir = 0;
+addEventListener('touchstart', e => { touchDir = e.touches[0].clientX < innerWidth / 2 ? -1 : 1; press(); }, { passive: true });
+addEventListener('touchend', () => { touchDir = 0; }, { passive: true });
+addEventListener('pointerdown', e => { if (e.pointerType === 'mouse') press(); });
+
+const angDiff = (a, b) => { let d = (a - b) % (Math.PI * 2); if (d > Math.PI) d -= Math.PI * 2; if (d < -Math.PI) d += Math.PI * 2; return d; };
+
+let last = performance.now();
+function tick(now) {
+  requestAnimationFrame(tick);
+  const dt = Math.max(0, Math.min((now - last) / 1000, 0.05));
+  last = now;
+
+  if (state === 'play') {
+    // input
+    let dir = (keys.ArrowLeft || keys.KeyA ? 1 : 0) + (keys.ArrowRight || keys.KeyD ? -1 : 0) - touchDir;
+    if (DEMO) {
+      const next = obstacles.find(o => o.position.z < PLAYER_Z + 2);
+      if (next) { const d = angDiff(next.userData.gapCenter, angle); dir = Math.abs(d) > 0.06 ? Math.sign(d) : 0; }
+      else dir = 0;
+    }
+    steer += (dir * 4.2 - steer) * Math.min(1, dt * 10);
+    angle += steer * dt;
+
+    speed = Math.min(95, speed + dt * 1.6);
+    dist += speed * dt;
+    scoreEl.textContent = 'DIST ' + Math.floor(dist);
+
+    // spawn
+    if (dist > nextSpawn) {
+      const gap = Math.max(0.7, 1.35 - dist / 4000);
+      spawnObstacle(-250, gap);
+      nextSpawn += Math.max(42, 78 - dist / 120);
+    }
+    // move obstacles, collide
+    for (let i = obstacles.length - 1; i >= 0; i--) {
+      const o = obstacles[i];
+      o.position.z += speed * dt;
+      if (!o.userData.hit && o.position.z > PLAYER_Z - 0.8 && o.position.z < PLAYER_Z + 0.8) {
+        o.userData.hit = true;
+        if (Math.abs(angDiff(angle, o.userData.gapCenter)) > o.userData.gapWidth / 2 - 0.12) gameOver();
+      }
+      if (o.position.z > 6) { scene.remove(o); o.geometry.dispose(); obstacles.splice(i, 1); }
+    }
+    // scroll rings
+    for (const r of rings) { r.position.z += speed * dt; if (r.position.z > 4) r.position.z -= 34 * 8; }
+  }
+
+  ship.position.set(Math.cos(angle) * PLAYER_R, Math.sin(angle) * PLAYER_R, PLAYER_Z);
+  ship.rotation.z = angle + Math.PI / 2;
+  camera.rotation.z += ((angDiff(-Math.PI / 2, angle) * 0.22) - camera.rotation.z) * Math.min(1, 0.016 * 6 * (state === 'play' ? 1 : 0.3));
+  renderer.render(scene, camera);
+}
+requestAnimationFrame(tick);
+
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+if (DEMO) setTimeout(reset, 400);
+</script>

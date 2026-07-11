@@ -1,0 +1,255 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<link rel="icon" href="/logo98.png">
+<title>GRID CITY</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+  canvas { display: block; }
+  .hud {
+    position: fixed; inset: 0; pointer-events: none; color: #fff;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    user-select: none; -webkit-user-select: none;
+  }
+  .score { position: absolute; top: 18px; left: 20px; font-size: 15px; letter-spacing: .18em; }
+  .mult  { position: absolute; top: 42px; left: 20px; font-size: 12px; letter-spacing: .18em; opacity: .7; }
+  .best  { position: absolute; top: 18px; right: 20px; font-size: 15px; letter-spacing: .18em; opacity: .5; }
+  .center {
+    position: absolute; inset: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; text-align: center; gap: 14px;
+  }
+  .title { font-size: clamp(28px, 6vw, 54px); letter-spacing: .32em; font-weight: 700; }
+  .sub   { font-size: 13px; letter-spacing: .22em; opacity: .6; line-height: 2; }
+  .blink { animation: blink 1.2s steps(2) infinite; font-size: 13px; letter-spacing: .3em; }
+  @keyframes blink { 50% { opacity: 0; } }
+  .hidden { display: none; }
+</style>
+<div class="hud">
+  <div class="score" id="score"></div>
+  <div class="mult" id="mult"></div>
+  <div class="best" id="best"></div>
+  <div class="center" id="menu">
+    <div class="title">GRID CITY</div>
+    <div class="sub">FLY THE STREETS &middot; STAY LOW FOR ×3 SCORE<br>ARROWS / WASD OR MOUSE</div>
+    <div class="blink">PRESS ANY KEY TO START</div>
+  </div>
+  <div class="center hidden" id="over">
+    <div class="title">IMPACT</div>
+    <div class="sub" id="finalScore"></div>
+    <div class="blink">PRESS ANY KEY TO RETRY</div>
+  </div>
+</div>
+<script type="importmap">
+  { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js" } }
+</script>
+<script type="module">
+import * as THREE from 'three';
+
+const DEMO = new URLSearchParams(location.search).has('demo');
+const scene = new THREE.Scene();
+scene.fog = new THREE.Fog(0x000000, 120, 360);
+const camera = new THREE.PerspectiveCamera(64, innerWidth / innerHeight, 0.5, 500);
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+document.body.appendChild(renderer.domElement);
+
+// buildings: black solid faces + white edges (solid so nearer towers occlude)
+const boxGeo = new THREE.BoxGeometry(1, 1, 1);
+const boxEdges = new THREE.EdgesGeometry(boxGeo);
+const faceMat = new THREE.MeshBasicMaterial({ color: 0x000000, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
+const edgeMat = new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.75 });
+
+const LANES = 9, LANE_W = 22, ROWS = 14, ROW_D = 40;
+const SPAN = ROWS * ROW_D;
+const buildings = []; // ROWS × LANES groups
+for (let r = 0; r < ROWS; r++) {
+  const row = [];
+  for (let l = 0; l < LANES; l++) {
+    const g = new THREE.Group();
+    g.add(new THREE.Mesh(boxGeo, faceMat));
+    g.add(new THREE.LineSegments(boxEdges, edgeMat));
+    scene.add(g);
+    row.push(g);
+  }
+  buildings.push({ z: 0, cells: row, heights: new Array(LANES).fill(0) });
+}
+const laneX = l => (l - (LANES - 1) / 2) * LANE_W;
+
+let corridor = Math.floor(LANES / 2); // guaranteed path walks ≤1 lane per row
+function rollRow(row, z) {
+  row.z = z;
+  corridor = Math.max(1, Math.min(LANES - 2, corridor + Math.floor(Math.random() * 3) - 1));
+  for (let l = 0; l < LANES; l++) {
+    const g = row.cells[l];
+    const inCorridor = Math.abs(l - corridor) <= 1;
+    const h = (inCorridor || Math.random() < 0.35) ? 0 : 8 + Math.random() * 34;
+    row.heights[l] = h;
+    if (h === 0) { g.visible = false; continue; }
+    g.visible = true;
+    const w = 10 + Math.random() * 8, d = 10 + Math.random() * 9;
+    g.scale.set(w, h, d);
+    g.position.set(laneX(l) + (Math.random() - 0.5) * 4, h / 2, z);
+  }
+}
+
+// street grid on the ground
+const gridLines = new THREE.Group();
+{
+  const mat = new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.18 });
+  for (let l = 0; l <= LANES; l++) {
+    const x = (l - LANES / 2) * LANE_W;
+    const g = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(x, 0, 40), new THREE.Vector3(x, 0, -SPAN)]);
+    gridLines.add(new THREE.Line(g, mat));
+  }
+  for (let r = 0; r <= ROWS + 2; r++) {
+    const g = new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(-LANES / 2 * LANE_W, 0, -r * ROW_D + 40), new THREE.Vector3(LANES / 2 * LANE_W, 0, -r * ROW_D + 40)]);
+    gridLines.add(new THREE.Line(g, mat));
+  }
+  scene.add(gridLines);
+}
+
+// ship
+const ship = new THREE.Group();
+const shipGeo = new THREE.ConeGeometry(0.9, 3, 4);
+shipGeo.rotateX(-Math.PI / 2);
+ship.add(new THREE.Mesh(shipGeo, new THREE.MeshBasicMaterial({ color: 0xffffff, wireframe: true })));
+const wingGeo = new THREE.BufferGeometry().setFromPoints([
+  new THREE.Vector3(-2.4, 0, 1.2), new THREE.Vector3(0, 0, -1), new THREE.Vector3(2.4, 0, 1.2), new THREE.Vector3(-2.4, 0, 1.2)
+]);
+ship.add(new THREE.Line(wingGeo, new THREE.LineBasicMaterial({ color: 0xffffff })));
+scene.add(ship);
+
+const scoreEl = document.getElementById('score'), multEl = document.getElementById('mult'),
+      bestEl = document.getElementById('best'), menuEl = document.getElementById('menu'),
+      overEl = document.getElementById('over'), finalEl = document.getElementById('finalScore');
+
+let state = 'menu', px = 0, py = 8, vx = 0, vy = 0, speed = 0, score = 0, lockUntil = 0;
+let best = +(localStorage.getItem('gc_best') || 0);
+bestEl.textContent = 'BEST ' + Math.floor(best);
+
+function reset() {
+  px = 0; py = 9; vx = vy = 0; speed = 45; score = 0;
+  corridor = Math.floor(LANES / 2);
+  for (let r = 0; r < ROWS; r++) {
+    rollRow(buildings[r], -60 - r * ROW_D);
+    // clear the first few rows around the start lane
+    if (r < 3) {
+      const mid = Math.floor(LANES / 2);
+      for (const l of [mid - 1, mid, mid + 1]) {
+        buildings[r].cells[l].visible = false;
+        buildings[r].heights[l] = 0;
+      }
+    }
+  }
+  state = 'play';
+  menuEl.classList.add('hidden'); overEl.classList.add('hidden');
+}
+function gameOver() {
+  state = 'over';
+  const s = Math.floor(score);
+  if (s > best) { best = s; localStorage.setItem('gc_best', best); }
+  bestEl.textContent = 'BEST ' + best;
+  finalEl.textContent = 'SCORE ' + s;
+  overEl.classList.remove('hidden');
+  lockUntil = performance.now() + 600;
+}
+
+const keys = {};
+let pointer = null, keyboardBias = 0;
+function press() {
+  if (performance.now() < lockUntil) return;
+  if (state !== 'play') reset();
+}
+addEventListener('keydown', e => {
+  if (e.code.startsWith('Arrow') || e.code === 'Space') e.preventDefault();
+  keys[e.code] = true; press();
+});
+addEventListener('keyup', e => { keys[e.code] = false; });
+addEventListener('pointermove', e => { pointer = { x: e.clientX / innerWidth * 2 - 1, y: e.clientY / innerHeight * 2 - 1 }; });
+addEventListener('pointerdown', press);
+addEventListener('touchmove', e => {
+  pointer = { x: e.touches[0].clientX / innerWidth * 2 - 1, y: e.touches[0].clientY / innerHeight * 2 - 1 };
+}, { passive: true });
+
+let last = performance.now();
+function tick(now) {
+  requestAnimationFrame(tick);
+  const dt = Math.max(0, Math.min((now - last) / 1000, 0.05));
+  last = now;
+
+  if (state === 'play') {
+    let ax = (keys.ArrowLeft || keys.KeyA ? -1 : 0) + (keys.ArrowRight || keys.KeyD ? 1 : 0);
+    let ay = (keys.ArrowUp || keys.KeyW ? 1 : 0) + (keys.ArrowDown || keys.KeyS ? -1 : 0);
+    const usingKeys = ax !== 0 || ay !== 0;
+    if (usingKeys) keyboardBias = 1.2;
+    keyboardBias = Math.max(0, keyboardBias - dt);
+
+    if (DEMO) {
+      // steer to the open lane of the nearest row ahead, hug the deck
+      let nearest = null;
+      for (const row of buildings)
+        if (row.z < -12 && (!nearest || row.z > nearest.z)) nearest = row;
+      let target = px, bestD = 1e9;
+      if (nearest) for (let l = 0; l < LANES; l++)
+        if (nearest.heights[l] === 0 && Math.abs(laneX(l) - px) < bestD) {
+          bestD = Math.abs(laneX(l) - px); target = laneX(l);
+        }
+      vx += (Math.max(-1, Math.min(1, (target - px) / 10)) * 115 - vx * 5) * dt;
+      vy += ((9 - py) * 3 - vy * 4) * dt;
+    } else if (usingKeys || !pointer || keyboardBias > 0) {
+      vx += (ax * 105 - vx * 4.5) * dt;
+      vy += (ay * 80 - vy * 4.5) * dt;
+    } else {
+      vx += (pointer.x * 120 - vx * 5) * dt;
+      vy += (-pointer.y * 90 - vy * 5) * dt;
+    }
+    const HALF = (LANES / 2) * LANE_W - 6;
+    px = Math.max(-HALF, Math.min(HALF, px + vx * dt));
+    py = Math.max(1.5, Math.min(60, py + vy * dt));
+
+    speed = Math.min(115, speed + dt * 2);
+    const low = py < 14;
+    score += speed * dt * 0.1 * (low ? 3 : 1);
+    scoreEl.textContent = 'SCORE ' + Math.floor(score);
+    multEl.textContent = low ? 'LOW ALT ×3' : '';
+
+    // scroll rows, collide
+    for (const row of buildings) {
+      row.z += speed * dt;
+      for (const g of row.cells) if (g.visible) g.position.z = row.z;
+      if (row.z > 40) rollRow(row, row.z - SPAN);
+    }
+    for (const row of buildings) {
+      if (row.z < -14 || row.z > 14) continue;
+      for (let l = 0; l < LANES; l++) {
+        const g = row.cells[l];
+        if (!g.visible) continue;
+        const hw = g.scale.x / 2 + 0.8, hd = g.scale.z / 2 + 0.8;
+        if (Math.abs(px - g.position.x) < hw && py < g.scale.y + 0.6 && Math.abs(0 - row.z) < hd)
+          return gameOver();
+      }
+    }
+    // scroll ground grid
+    gridLines.position.z = (gridLines.position.z + speed * dt) % ROW_D;
+  }
+
+  ship.position.set(px, py, 0);
+  ship.rotation.z = -vx * 0.011;
+  ship.rotation.x = vy * 0.006;
+  camera.position.x += (px * 0.9 - camera.position.x) * Math.min(1, dt * 4.5);
+  camera.position.y += ((py + 5) - camera.position.y) * Math.min(1, dt * 4.5);
+  camera.position.z = 17;
+  camera.lookAt(px, py, -40);
+  renderer.render(scene, camera);
+}
+for (let r = 0; r < ROWS; r++) rollRow(buildings[r], -60 - r * ROW_D); // menu backdrop
+requestAnimationFrame(tick);
+
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+if (DEMO) setTimeout(reset, 400);
+</script>

@@ -20,6 +20,7 @@ const MotionBox = motion(Box);
 const navItems = [
   { name: 'Experience', path: '/' },
   { name: 'Blog', path: '/blog' },
+  { name: 'Arcade', path: '/arcade' },
 ];
 
 const Header = () => {

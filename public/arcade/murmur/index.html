@@ -1,0 +1,232 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<link rel="icon" href="/logo98.png">
+<title>MURMUR</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+  canvas { display: block; }
+  .hud {
+    position: fixed; inset: 0; pointer-events: none; color: #fff;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    user-select: none; -webkit-user-select: none;
+  }
+  .count { position: absolute; top: 18px; left: 20px; font-size: 15px; letter-spacing: .18em; }
+  .state { position: absolute; top: 42px; left: 20px; font-size: 12px; letter-spacing: .18em; opacity: .5; }
+  .title-line {
+    position: absolute; top: 26px; left: 0; right: 0; text-align: center;
+    font-size: 13px; letter-spacing: .5em; opacity: .8;
+  }
+  .hint  {
+    position: absolute; bottom: 26px; left: 0; right: 0; text-align: center;
+    font-size: 12px; letter-spacing: .28em; opacity: .45;
+  }
+</style>
+<div class="hud">
+  <div class="title-line">MURMUR</div>
+  <div class="count" id="count"></div>
+  <div class="state" id="state"></div>
+  <div class="hint">MOUSE STEERS &middot; FLY INTO THE FLOCK AND SCATTER IT &middot; IT ALWAYS REFORMS</div>
+</div>
+<script type="importmap">
+  { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js" } }
+</script>
+<script type="module">
+import * as THREE from 'three';
+
+const DEMO = new URLSearchParams(location.search).has('demo');
+const scene = new THREE.Scene();
+scene.fog = new THREE.Fog(0x000000, 120, 340);
+const camera = new THREE.PerspectiveCamera(64, innerWidth / innerHeight, 0.5, 900);
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+document.body.appendChild(renderer.domElement);
+
+// ---- flock ----
+const N = 1100;
+const pos = new Float32Array(N * 3), vel = new Float32Array(N * 3);
+for (let i = 0; i < N; i++) {
+  const v = new THREE.Vector3().randomDirection().multiplyScalar(30 + Math.random() * 80);
+  pos[i * 3] = v.x; pos[i * 3 + 1] = v.y * 0.5; pos[i * 3 + 2] = v.z - 120;
+  vel[i * 3] = (Math.random() - 0.5) * 10;
+  vel[i * 3 + 1] = (Math.random() - 0.5) * 10;
+  vel[i * 3 + 2] = (Math.random() - 0.5) * 10;
+}
+// soft round sprite for each bird
+const spriteTex = (() => {
+  const c = document.createElement('canvas'); c.width = c.height = 64;
+  const g = c.getContext('2d');
+  const grad = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+  grad.addColorStop(0, 'rgba(255,255,255,1)');
+  grad.addColorStop(0.35, 'rgba(255,255,255,.85)');
+  grad.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = grad; g.fillRect(0, 0, 64, 64);
+  return new THREE.CanvasTexture(c);
+})();
+const flockGeo = new THREE.BufferGeometry();
+flockGeo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+const flock = new THREE.Points(flockGeo, new THREE.PointsMaterial({
+  color: 0xffffff, size: 2.6, map: spriteTex, transparent: true, opacity: 0.9,
+  sizeAttenuation: true, depthWrite: false, blending: THREE.AdditiveBlending
+}));
+flock.frustumCulled = false;
+scene.add(flock);
+
+// wander target the flock loosely follows
+const target = new THREE.Vector3(0, 0, -140);
+
+// stars
+{
+  const n = 500, sp = new Float32Array(n * 3);
+  for (let i = 0; i < n; i++) {
+    const v = new THREE.Vector3().randomDirection().multiplyScalar(500 + Math.random() * 250);
+    sp.set([v.x, v.y, v.z], i * 3);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(sp, 3));
+  scene.add(new THREE.Points(g, new THREE.PointsMaterial({ color: 0xffffff, size: 1.3, transparent: true, opacity: 0.4, fog: false })));
+}
+// faint reference plane far below
+{
+  const grid = new THREE.Group();
+  const mat = new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.07 });
+  for (let i = -8; i <= 8; i++) {
+    grid.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(i * 60, -160, -480), new THREE.Vector3(i * 60, -160, 480)]), mat));
+    grid.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(-480, -160, i * 60), new THREE.Vector3(480, -160, i * 60)]), mat));
+  }
+  scene.add(grid);
+}
+
+// ship
+const ship = new THREE.Group();
+const body = new THREE.Group();
+const shipGeo = new THREE.ConeGeometry(0.8, 2.6, 4);
+shipGeo.rotateX(-Math.PI / 2);
+body.add(new THREE.Mesh(shipGeo, new THREE.MeshBasicMaterial({ color: 0xffffff, wireframe: true })));
+const wingGeo = new THREE.BufferGeometry().setFromPoints([
+  new THREE.Vector3(-2, 0, 1), new THREE.Vector3(0, 0, -1), new THREE.Vector3(2, 0, 1), new THREE.Vector3(-2, 0, 1)
+]);
+body.add(new THREE.Line(wingGeo, new THREE.LineBasicMaterial({ color: 0xffffff })));
+ship.add(body);
+scene.add(ship);
+
+const countEl = document.getElementById('count'), stateEl = document.getElementById('state');
+countEl.textContent = N + ' BIRDS';
+
+const keys = {};
+let pointer = { x: 0, y: 0 }, pointerDown = false;
+addEventListener('keydown', e => { keys[e.code] = true; });
+addEventListener('keyup', e => { keys[e.code] = false; });
+addEventListener('pointermove', e => { pointer = { x: e.clientX / innerWidth * 2 - 1, y: e.clientY / innerHeight * 2 - 1 }; });
+addEventListener('pointerdown', () => { pointerDown = true; });
+addEventListener('pointerup', () => { pointerDown = false; });
+addEventListener('touchmove', e => {
+  pointer = { x: e.touches[0].clientX / innerWidth * 2 - 1, y: e.touches[0].clientY / innerHeight * 2 - 1 };
+}, { passive: true });
+
+const shipVel = new THREE.Vector3(), yawPitch = { yaw: Math.PI, pitch: 0 };
+const fwd = new THREE.Vector3(), tmp = new THREE.Vector3(), center = new THREE.Vector3();
+let t = 0, scatter = 0;
+
+let last = performance.now();
+function tick(now) {
+  requestAnimationFrame(tick);
+  const dt = Math.max(0, Math.min((now - last) / 1000, 0.05));
+  last = now;
+  t += dt;
+
+  // wander target drifts on slow lissajous
+  target.set(Math.sin(t * 0.11) * 150, Math.sin(t * 0.07) * 60, -140 + Math.cos(t * 0.09) * 150);
+
+  // ---- ship flight (drift-style, gentle) ----
+  let sx = pointer.x, sy = pointer.y;
+  let boost = pointerDown || keys.KeyW || keys.ArrowUp || keys.Space;
+  if (DEMO) {
+    // cruise through the flock's centre, then loop around
+    tmp.copy(center).sub(ship.position);
+    const local = tmp.applyQuaternion(ship.quaternion.clone().invert()).normalize();
+    if (local.z > 0) { sx = local.x >= 0 ? 0.7 : -0.7; sy = 0; }
+    else {
+      sx = Math.max(-0.7, Math.min(0.7, local.x * 1.8));
+      sy = Math.max(-0.7, Math.min(0.7, -local.y * 1.8));
+    }
+    boost = true;
+  }
+  yawPitch.yaw -= sx * 2.2 * dt;
+  yawPitch.pitch -= sy * 1.7 * dt;
+  yawPitch.pitch = Math.max(-1.3, Math.min(1.3, yawPitch.pitch));
+  ship.quaternion.setFromEuler(new THREE.Euler(yawPitch.pitch, yawPitch.yaw, 0, 'YXZ'));
+  body.rotation.z += ((-sx * 0.9) - body.rotation.z) * Math.min(1, dt * 8);
+  fwd.set(0, 0, -1).applyQuaternion(ship.quaternion);
+  shipVel.lerp(tmp.copy(fwd).multiplyScalar(boost ? 55 : 26), Math.min(1, dt * 2.4));
+  ship.position.addScaledVector(shipVel, dt);
+  // soft leash
+  const rr = ship.position.length();
+  if (rr > 420) ship.position.multiplyScalar(1 - (rr - 420) / rr * Math.min(1, dt * 2));
+
+  // ---- boids (neighbor sampling: i checks i+1..i+7 ring) ----
+  const sxp = ship.position.x, syp = ship.position.y, szp = ship.position.z;
+  let scattered = 0;
+  center.set(0, 0, 0);
+  for (let i = 0; i < N; i++) {
+    const ix = i * 3;
+    let px = pos[ix], py = pos[ix + 1], pz = pos[ix + 2];
+    let vx = vel[ix], vy = vel[ix + 1], vz = vel[ix + 2];
+
+    let cx = 0, cy = 0, cz = 0, ax = 0, ay = 0, az = 0, sepx = 0, sepy = 0, sepz = 0;
+    for (let k = 1; k <= 7; k++) {
+      const j = ((i + k * 151) % N) * 3;
+      const dx = pos[j] - px, dy = pos[j + 1] - py, dz = pos[j + 2] - pz;
+      cx += dx; cy += dy; cz += dz;
+      ax += vel[j]; ay += vel[j + 1]; az += vel[j + 2];
+      const d2 = dx * dx + dy * dy + dz * dz;
+      if (d2 < 36 && d2 > 0.001) { const w = 1 / d2; sepx -= dx * w; sepy -= dy * w; sepz -= dz * w; }
+    }
+    vx += (cx * 0.0034 + ax * 0.0045 + sepx * 3.2) * 60 * dt;
+    vy += (cy * 0.0034 + ay * 0.0045 + sepy * 3.2) * 60 * dt;
+    vz += (cz * 0.0034 + az * 0.0045 + sepz * 3.2) * 60 * dt;
+    // pull to wander target
+    vx += (target.x - px) * 0.028 * 60 * dt * 0.016;
+    vy += (target.y - py) * 0.028 * 60 * dt * 0.016;
+    vz += (target.z - pz) * 0.028 * 60 * dt * 0.016;
+    // flee the ship
+    const fx = px - sxp, fy = py - syp, fz = pz - szp;
+    const fd2 = fx * fx + fy * fy + fz * fz;
+    if (fd2 < 900) {
+      const fd = Math.sqrt(fd2) || 1, w = (1 - fd / 30) * 130 * dt;
+      vx += fx / fd * w; vy += fy / fd * w; vz += fz / fd * w;
+      scattered++;
+    }
+    // speed limits
+    const sp = Math.sqrt(vx * vx + vy * vy + vz * vz) || 1;
+    const max = 30, min = 9;
+    if (sp > max) { vx *= max / sp; vy *= max / sp; vz *= max / sp; }
+    if (sp < min) { vx *= min / sp; vy *= min / sp; vz *= min / sp; }
+
+    px += vx * dt; py += vy * dt; pz += vz * dt;
+    pos[ix] = px; pos[ix + 1] = py; pos[ix + 2] = pz;
+    vel[ix] = vx; vel[ix + 1] = vy; vel[ix + 2] = vz;
+    center.x += px; center.y += py; center.z += pz;
+  }
+  center.multiplyScalar(1 / N);
+  flockGeo.attributes.position.needsUpdate = true;
+
+  scatter += ((scattered > 20 ? 1 : 0) - scatter) * Math.min(1, dt * 3);
+  stateEl.textContent = scattered > 20 ? 'SCATTERING' : 'MURMURATION';
+
+  // chase camera
+  const camTarget = tmp.copy(new THREE.Vector3(0, 2.4, 9)).applyQuaternion(ship.quaternion).add(ship.position);
+  camera.position.lerp(camTarget, Math.min(1, dt * 5));
+  camera.quaternion.slerp(ship.quaternion, Math.min(1, dt * 6));
+  renderer.render(scene, camera);
+}
+requestAnimationFrame(tick);
+
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+</script>

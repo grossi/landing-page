@@ -2,9 +2,12 @@ import React from 'react';
 import { BrowserRouter, Route, Routes } from 'react-router';
 import Experience from 'pages/Experience';
 
-// Blog is lazy so the markdown/syntax-highlighter chunk loads only on /blog;
-// Experience is the landing route and renders without a chunk round-trip.
+// Blog and the arcade pages are lazy so their chunks (markdown/syntax
+// highlighting, three.js) load only on their routes; Experience is the
+// landing route and renders without a chunk round-trip.
 const Blog = React.lazy(() => import('pages/Blog'));
+const Arcade = React.lazy(() => import('pages/Arcade'));
+const Ephemeris = React.lazy(() => import('pages/Ephemeris'));
 
 interface ErrorBoundaryState {
   hasError: boolean;
@@ -40,6 +43,8 @@ function App() {
         <React.Suspense fallback={null}>
           <Routes>
             <Route path="/blog" element={<Blog />} />
+            <Route path="/arcade" element={<Arcade />} />
+            <Route path="/ephemeris" element={<Ephemeris />} />
             <Route path="/" element={<Experience />} />
             <Route path="/experience" element={<Experience />} />
           </Routes>
