@@ -12,10 +12,7 @@ const ExperienceHeader: React.FC<ExperienceHeaderProps> = ({ title, subtitle }) 
       <Heading
         size="4xl"
         fontWeight="bold"
-        bgGradient="to-r"
-        gradientFrom="blue.400"
-        gradientTo="purple.400"
-        bgClip="text"
+        color={{ base: 'gray.900', _dark: 'white' }}
       >
         {title}
       </Heading>

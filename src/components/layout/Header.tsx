@@ -54,8 +54,8 @@ const Header = () => {
                     position="relative"
                     color={{ base: 'gray.600', _dark: 'gray.300' }}
                     fontWeight="medium"
-                    _hover={{ 
-                      color: { base: 'purple.600', _dark: 'purple.400' }
+                    _hover={{
+                      color: { base: 'gray.900', _dark: 'white' }
                     }}
                   >
                     {item.name}
@@ -66,7 +66,7 @@ const Header = () => {
                         left={0}
                         right={0}
                         height="2px"
-                        bg={{ base: 'purple.600', _dark: 'purple.400' }}
+                        bg={{ base: 'gray.900', _dark: 'gray.100' }}
                         initial={{ scaleX: 0 }}
                         animate={{ scaleX: 1 }}
                         transition={{ duration: 0.3 }}
@@ -119,8 +119,8 @@ const Header = () => {
                   <Box
                     p={3}
                     borderRadius="md"
-                    bg={isActive(item.path) ? { base: 'purple.100', _dark: 'purple.900' } : 'transparent'}
-                    color={isActive(item.path) ? { base: 'purple.700', _dark: 'purple.200' } : { base: 'gray.700', _dark: 'gray.300' }}
+                    bg={isActive(item.path) ? { base: 'gray.200', _dark: 'gray.700' } : 'transparent'}
+                    color={isActive(item.path) ? { base: 'gray.900', _dark: 'gray.100' } : { base: 'gray.700', _dark: 'gray.300' }}
                     fontWeight={isActive(item.path) ? 'bold' : 'medium'}
                     _hover={{ 
                       bg: { base: 'gray.100', _dark: 'gray.700' }
