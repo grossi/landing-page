@@ -1,9 +1,8 @@
 import * as React from 'react';
 import ReactMarkdown from 'markdown-to-jsx';
+import SyntaxHighlighter from 'react-syntax-highlighter';
 import { atomOneDarkReasonable } from 'react-syntax-highlighter/dist/esm/styles/hljs';
 import { Box, Link, Text } from '@chakra-ui/react';
-
-const SyntaxHighlighter = require('react-syntax-highlighter').default;
 
 function MarkdownListItem(props: any) {
   return (
