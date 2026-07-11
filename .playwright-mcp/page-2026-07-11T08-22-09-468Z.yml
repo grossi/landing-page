@@ -1,0 +1,102 @@
+- generic [ref=f1e3]:
+  - generic [ref=f1e7]:
+    - link [ref=f1e8] [cursor=pointer]:
+      - /url: /
+      - paragraph [ref=f1e10]: Gabriel Rossi
+    - generic [ref=f1e12]:
+      - link "Experience" [ref=f1e13] [cursor=pointer]:
+        - /url: /
+      - link [ref=f1e15] [cursor=pointer]:
+        - /url: /blog
+    - button [ref=f1e18] [cursor=pointer]
+  - generic [ref=f1e23]:
+    - generic [ref=f1e25]:
+      - paragraph [ref=f1e26]: 🚀 Publishing a NPM library
+      - paragraph [ref=f1e27]: In this post I will explain how to bundle and publish a Typescript component library on NPM.
+      - paragraph [ref=f1e28]: So I needed to create a component library for my work. Separating all the main components into a component library allows us to re-use it across projects and have better quality control.
+      - paragraph [ref=f1e29]: I decided to write about what I found while learning how to create a component library and how to bundle and publish it to npm as a package.
+      - paragraph [ref=f1e30]: Create-react-app
+      - paragraph [ref=f1e31]: I decided to use create-react-app (with the typescript template) to speed up the process. Even if I'm not creating a SPA, having already Babel, Webpack, Jest and hot reloading is a big head start.
+      - code [ref=f1e34]: cd /project-folder npx create-react-app . --template typescript
+      - paragraph [ref=f1e35]: "We can then remove the files not related to those tools:"
+      - code [ref=f1e38]: rm src/App.css src/App.test.tsx src/App.tsx src/logo.svg \ src/index.css src/index.tsx && rm -rf public/
+      - paragraph [ref=f1e39]: Building the library
+      - paragraph [ref=f1e40]: There are many available options to build the library into a usable state, but since we are using typescript the simplest one is just using the tsc compiler to build the folder we will export on npm as our package. Another popular choice is rollup, if you are publishing a package without typescript I recommend looking it up.
+      - paragraph [ref=f1e41]: "If we set \"noEmit: false\" on the tsconfig.json tsc will output the compiled project into files. But if you just set noEmit to false on the tsconfig.json you will be greeted with this message the next time you run yarn tests:"
+      - code [ref=f1e44]: "$ yarn test yarn run v1.22.5 $ react-scripts test --watchAll=false The following changes are being made to your tsconfig.json file: - compilerOptions.noEmit must be true"
+      - paragraph [ref=f1e45]: ...and react-scripts will automatically change noEmit to true again. One way to get around this is to create a separate tsconfig for building the project.
+      - paragraph [ref=f1e46]:
+        - text: Create a
+        - code [ref=f1e47]: tsconfig.build.json
+        - text: "and on that file put noEmit as false:"
+      - code [ref=f1e50]: "{ \"extends\": \"./tsconfig.json\", \"compilerOptions\": { \"outDir\": \"lib\", \"noEmit\": false }, \"exclude\": [ \"**/*.test.tsx\", \"**/*.stories.tsx\" ] }"
+      - paragraph [ref=f1e51]: This extends the normal tsconfig, preferring the new values if the same attribute is declared.
+      - paragraph [ref=f1e52]:
+        - text: "So our build script on package.json becomes:"
+        - code [ref=f1e53]: "\"build\": \"tsc --build tsconfig.build.json\""
+      - paragraph [ref=f1e54]: Most of the configuration can stay on the tsconfig.json, which will just be extended.
+      - paragraph [ref=f1e55]: "Here is the full tsconfig.json file:"
+      - paragraph [ref=f1e56]: tsconfig.json
+      - code [ref=f1e59]: "{ \"compilerOptions\": { \"baseUrl\": \"src\", \"target\": \"es5\", \"lib\": [ \"dom\", \"dom.iterable\", \"esnext\" ], \"allowJs\": false, \"allowSyntheticDefaultImports\": true, \"alwaysStrict\": true, \"declaration\": true, \"declarationMap\": true, \"esModuleInterop\": true, \"forceConsistentCasingInFileNames\": true, \"isolatedModules\": true, \"jsx\": \"react-jsx\", \"module\": \"esnext\", \"moduleResolution\": \"node\", \"noFallthroughCasesInSwitch\": true, \"noImplicitAny\": false, \"noImplicitReturns\": true, \"noImplicitThis\": true, \"noUnusedLocals\": true, \"noUnusedParameters\": true, \"resolveJsonModule\": true, \"sourceMap\": true, \"strict\": true, \"strictFunctionTypes\": true, \"strictNullChecks\": true, \"strictPropertyInitialization\": true, \"noEmit\": true }, \"include\": [ \"src/lib\" ] }"
+      - paragraph [ref=f1e60]: "Here is some explanation of the most important configurations for a library:"
+      - list [ref=f1e61]:
+        - listitem [ref=f1e63]:
+          - paragraph [ref=f1e64]:
+            - paragraph [ref=f1e65]:
+              - code [ref=f1e66]: declaration
+              - text: creates .d.ts files with types for every file, essential for other typescript projects to be able to use the library.
+        - listitem [ref=f1e68]:
+          - paragraph [ref=f1e69]:
+            - paragraph [ref=f1e70]:
+              - code [ref=f1e71]: sourceMap
+              - text: creates annotations for js files that tools like debuggers can use to better navigate the project
+        - listitem [ref=f1e73]:
+          - paragraph [ref=f1e74]:
+            - paragraph [ref=f1e75]:
+              - code [ref=f1e76]: declarationMap
+              - text: creates annotations similar to sourceMap but for the .d.ts files
+      - paragraph [ref=f1e77]:
+        - text: The rest of the options are more related to what tsc considers an error and how it builds the code. You can learn more about each option on
+        - link "https://www.typescriptlang.org/tsconfig" [ref=f1e78] [cursor=pointer]:
+          - /url: https://www.typescriptlang.org/tsconfig
+        - text: .
+      - paragraph [ref=f1e79]:
+        - text: With this running
+        - code [ref=f1e80]: yarn build
+        - text: will generate a /lib folder on the root of the project. That will be the folder we will be exposing as our npm package.
+      - paragraph [ref=f1e81]: Publishing on npm
+      - paragraph [ref=f1e82]: "Since we are compiling everything we want to publish into the /lib folder, we just need to add that as the directory on package.json and npm will ignore the rest (outside of the basic project files: package.json, README, CHANGELOG and LICENSE)"
+      - paragraph [ref=f1e83]: We also need to specify the entry point to our package, in this case '/lib/index.js'.
+      - paragraph [ref=f1e84]: package.json
+      - code [ref=f1e87]: "... \"private\": false, \"main\": \"lib/index.js\", \"directories\": { \"lib\": \"lib\" }, \"files\": [ \"lib\" ]` ..."
+      - paragraph [ref=f1e88]:
+        - text: To see what files will be included you can run
+        - code [ref=f1e89]: npx npm-packlist
+        - text: ", it should only include the files inside /lib as well as the README and package.json"
+      - paragraph [ref=f1e90]: "Now we just need to create an account on npm:"
+      - paragraph [ref=f1e91]: "ps.: After running this command will you need to verify your email address to confirm your registration"
+      - code [ref=f1e94]: npm adduser
+      - paragraph [ref=f1e95]: "and publish our package:"
+      - code [ref=f1e98]: npm publish
+      - paragraph [ref=f1e99]: If you get an 403 error, check to see if a package with the same name doesn't already exist and make sure to verify your email address.
+      - paragraph [ref=f1e100]:
+        - text: And that's it! Now you can install your library anywhere using
+        - code [ref=f1e101]: yarn add library-name
+        - text: "!"
+    - generic [ref=f1e104]:
+      - paragraph [ref=f1e106]: Hello!
+      - generic [ref=f1e108]:
+        - paragraph [ref=f1e110]: Connect
+        - generic [ref=f1e111]:
+          - link [ref=f1e112] [cursor=pointer]:
+            - /url: https://www.linkedin.com/in/gabriel-r-rossi/
+            - paragraph [ref=f1e117]: LinkedIn
+          - link [ref=f1e118] [cursor=pointer]:
+            - /url: https://github.com/grossi
+            - paragraph [ref=f1e123]: Github
+          - link [ref=f1e124] [cursor=pointer]:
+            - /url: https://twitter.com/RossisFox
+            - paragraph [ref=f1e129]: Twitter
+          - link [ref=f1e130] [cursor=pointer]:
+            - /url: mailto:rossi@grossi.tech
+            - paragraph [ref=f1e135]: Email
