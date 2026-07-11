@@ -30,7 +30,8 @@ const Header = () => {
 
   return (
     <>
-      <Box bg={{ base: 'gray.100', _dark: 'gray.900' }} p={3} position="sticky" top={0} zIndex={10}>
+      {/* Above all page content — the timeline uses z-indexes up to 100 internally. */}
+      <Box bg={{ base: 'gray.100', _dark: 'gray.900' }} p={3} position="sticky" top={0} zIndex={1100}>
         <Container maxW="container.xl">
           <Flex align="center">
             <RouterLink to="/" style={{ textDecoration: 'none' }}>
@@ -101,7 +102,7 @@ const Header = () => {
             right={0}
             bg={{ base: 'white', _dark: 'gray.800' }}
             shadow="lg"
-            zIndex={9}
+            zIndex={1000}
             initial={{ opacity: 0, y: -20 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -20 }}
