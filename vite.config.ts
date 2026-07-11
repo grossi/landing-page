@@ -9,10 +9,10 @@ export default defineConfig({
   // Markdown files are imported as asset URLs and fetched at runtime.
   assetsInclude: ['**/*.md'],
   resolve: {
-    // Imports are rooted at src/ (tsconfig baseUrl), e.g. `import Main from 'pages/Main'`.
+    // Imports are rooted at src/ (tsconfig baseUrl), e.g. `import Blog from 'pages/Blog'`.
     alias: [
       {
-        find: /^(assets|components|hooks|pages|templates|types|utils)(\/.*)?$/,
+        find: /^(assets|components|config|hooks|pages|templates|types|utils)(\/.*)?$/,
         replacement: `${src}/$1$2`,
       },
     ],

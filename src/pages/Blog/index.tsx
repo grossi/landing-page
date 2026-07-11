@@ -1,18 +1,11 @@
 import * as React from 'react';
-import BlogPost from 'assets/npm-library.md';
-import Main from 'pages/Main';
+import npmLibraryPost from 'assets/npm-library.md';
+import { useMarkdownAsset } from 'hooks/useMarkdownAsset';
+import Post from 'templates/Post';
 
 const Blog = () => {
-  const [page, setPage] = React.useState('');
-  React.useEffect(() => {
-    fetch(BlogPost)
-      .then((data) => data.text())
-      .then((text) => {
-        setPage(text);
-      });
-  }, []);
-
-  return <Main post={page} />;
+  const post = useMarkdownAsset(npmLibraryPost);
+  return <Post text={post} />;
 };
 
 export default Blog;
