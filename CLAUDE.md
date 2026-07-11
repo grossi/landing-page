@@ -6,18 +6,21 @@ Deployment happens automatically via Vercel's GitHub integration — pushes to `
 
 ## Architecture
 
-### Component Structure (Atomic Design)
-The project follows Atomic Design principles:
-- **components/atoms/** - Basic reusable components (Markdown, SideTitle)
-- **components/molecules/** - Combinations of atoms (SocialLinks)
-- **components/organisms/** - Complex UI sections (Header, Sidebar)
-- **components/ui/** - Chakra UI helper components
-- **pages/** - Full page components (About, Blog, Contact, Experience, Main, Projects)
-- **templates/** - Page templates (PageLayout, Post)
+### Component Structure (feature-grouped)
+Components are grouped by feature, not by atomic-design layer:
+- **components/layout/** - Shared page shell (Header, PageLayout)
+- **components/post/** - Markdown-post feature (Post, Markdown, Sidebar, SocialLinks)
+- **components/timeline/** - Experience-timeline feature (Timeline, cards, icons, particle animation, plus its own types.ts and config.ts)
+- **components/ui/** - Chakra UI helper components (color-mode)
+- **pages/** - Route components (Blog, Experience), composed from the above
+- **config/** - Site-wide constants (social links)
+- **hooks/** - Shared hooks (useMarkdownAsset)
+
+Imports are rooted at `src/` (e.g. `import Post from 'components/post/Post'`); the
+alias regex in `vite.config.ts` must list every top-level `src/` directory.
 
 ### Content Management
-Blog posts and about content are stored as markdown files in `/src/assets/`:
-- Blog posts: `/src/assets/posts/`
-- About page: `/src/assets/about.md`
+Blog content is stored as markdown files in `/src/assets/` (currently a single
+post, `npm-library.md`, rendered at `/blog`).
 
-Markdown files are imported as asset URLs (`assetsInclude` in `vite.config.ts`) and fetched at runtime.
+Markdown files are imported as asset URLs (`assetsInclude` in `vite.config.ts`) and fetched at runtime via `useMarkdownAsset`.
