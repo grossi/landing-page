@@ -1,5 +1,29 @@
 import * as THREE from 'three';
 import { makeName, pickFrom } from 'engine/core/rng';
+import {
+  BEAM,
+  BELT_MAT,
+  BOX,
+  CYL,
+  ICO_HIGH,
+  ICO_LOW,
+  ICO_MID,
+  MAT_BEAM,
+  MAT_BODY,
+  MAT_BRIGHT,
+  MAT_DIM,
+  MAT_RING,
+  NEBULA_MAT,
+  ORBIT_MAT,
+  RING,
+  TRAIL_MAT,
+  UNIT_CIRCLE,
+  wireMat,
+} from 'engine/render/assets';
+
+// Shared GPU assets live in engine/render/assets; re-exported so existing
+// consumers (createEphemeris) keep compiling from this module.
+export { softSprite, wireMat } from 'engine/render/assets';
 
 /** A named place the HUD can point at (and, later, "discover"). */
 export interface Poi {
@@ -20,67 +44,6 @@ export interface SectorContent {
   /** Frees only resources created for this sector (shared assets stay). */
   dispose: () => void;
 }
-
-// ---- shared assets ----
-// Created once at module scope and reused by every sector for the lifetime
-// of the app; intentionally never disposed (three.js re-uploads a disposed
-// resource on next use, so even a full renderer teardown/remount is safe).
-
-export const wireMat = (opacity: number) =>
-  new THREE.MeshBasicMaterial({ color: 0xffffff, wireframe: true, transparent: true, opacity });
-
-const ICO_LOW = new THREE.IcosahedronGeometry(1, 0);
-const ICO_MID = new THREE.IcosahedronGeometry(1, 1);
-const ICO_HIGH = new THREE.IcosahedronGeometry(1, 2);
-const RING = new THREE.TorusGeometry(1.9, 0.1, 4, 42);
-const BOX = new THREE.BoxGeometry(1, 1, 1);
-const CYL = new THREE.CylinderGeometry(1, 1, 1, 8);
-const BEAM = new THREE.ConeGeometry(1, 1, 6, 1, true);
-const MAT_BRIGHT = wireMat(0.9);
-const MAT_BODY = wireMat(0.85);
-const MAT_DIM = wireMat(0.6);
-const MAT_RING = wireMat(0.5);
-const MAT_BEAM = wireMat(0.16);
-const ORBIT_MAT = new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.1 });
-const TRAIL_MAT = new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.35 });
-const BELT_MAT = new THREE.PointsMaterial({ color: 0xffffff, size: 0.9, transparent: true, opacity: 0.55 });
-
-// unit circle for orbit lines, scaled per orbit
-const UNIT_CIRCLE = (() => {
-  const pts: THREE.Vector3[] = [];
-  for (let a = 0; a <= 96; a++) {
-    const angle = (a / 96) * Math.PI * 2;
-    pts.push(new THREE.Vector3(Math.cos(angle), 0, Math.sin(angle)));
-  }
-  return new THREE.BufferGeometry().setFromPoints(pts);
-})();
-
-// soft round sprite for nebula/dust points
-export const softSprite = (() => {
-  const c = document.createElement('canvas');
-  c.width = c.height = 64;
-  const g = c.getContext('2d'); // null in canvas-less test environments
-  if (g) {
-    const grad = g.createRadialGradient(32, 32, 0, 32, 32, 32);
-    grad.addColorStop(0, 'rgba(255,255,255,1)');
-    grad.addColorStop(0.35, 'rgba(255,255,255,.8)');
-    grad.addColorStop(1, 'rgba(255,255,255,0)');
-    g.fillStyle = grad;
-    g.fillRect(0, 0, 64, 64);
-  }
-  return new THREE.CanvasTexture(c);
-})();
-
-const NEBULA_MAT = new THREE.PointsMaterial({
-  color: 0xffffff,
-  size: 7,
-  map: softSprite,
-  transparent: true,
-  opacity: 0.28,
-  depthWrite: false,
-  blending: THREE.AdditiveBlending,
-  sizeAttenuation: true,
-});
 
 // ---- orbit helper shared by every builder ----
 

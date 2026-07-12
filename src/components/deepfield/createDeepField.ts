@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { DODEC, ICO_MID, OCT, RING_THIN, softSprite, wireMat } from 'engine/render/assets';
 
 /** Per-body drift state kept outside the scene graph for type safety. */
 interface BodyState {
@@ -48,6 +49,10 @@ export function createDeepField(container: HTMLElement): () => void {
   renderer.setSize(container.clientWidth, container.clientHeight);
   container.appendChild(renderer.domElement);
 
+  // Geometries created here (star/dust point clouds); the shared unit
+  // geometries from engine/render/assets are intentionally never disposed.
+  const own: THREE.BufferGeometry[] = [];
+
   // ---- distant stars (rotate with the view, never translate) ----
   {
     const n = 900;
@@ -58,6 +63,7 @@ export function createDeepField(container: HTMLElement): () => void {
     }
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    own.push(geometry);
     const stars = new THREE.Points(
       geometry,
       new THREE.PointsMaterial({ color: 0xffffff, size: 1.7, transparent: true, opacity: 0.5, fog: false }),
@@ -66,37 +72,39 @@ export function createDeepField(container: HTMLElement): () => void {
     scene.add(stars);
   }
 
-  // ---- drifting wireframe bodies ----
-  const wire = (opacity: number) =>
-    new THREE.MeshBasicMaterial({ color: 0xffffff, wireframe: true, transparent: true, opacity });
-
+  // ---- drifting wireframe bodies (shared unit geometries, per-mesh scale) ----
   function makeBody(): BodyState {
     const group = new THREE.Group();
     const kind = Math.random();
     if (kind < 0.45) {
-      // asteroid — jittered dodecahedron
+      // asteroid — dodecahedron squashed a little differently on each axis
       const r = 6 + Math.random() * 14;
-      const geo = new THREE.DodecahedronGeometry(r, 0);
-      const p = geo.attributes.position;
-      for (let i = 0; i < p.count; i++) {
-        const s = 0.75 + Math.random() * 0.5;
-        p.setXYZ(i, p.getX(i) * s, p.getY(i) * s, p.getZ(i) * s);
-      }
-      group.add(new THREE.Mesh(geo, wire(0.5)));
+      const rock = new THREE.Mesh(DODEC, wireMat(0.5));
+      rock.scale.set(
+        r * (0.75 + Math.random() * 0.5),
+        r * (0.75 + Math.random() * 0.5),
+        r * (0.75 + Math.random() * 0.5),
+      );
+      group.add(rock);
     } else if (kind < 0.8) {
       // planet, sometimes ringed
       const r = 18 + Math.random() * 30;
-      group.add(new THREE.Mesh(new THREE.IcosahedronGeometry(r, 1), wire(0.45)));
+      const planet = new THREE.Mesh(ICO_MID, wireMat(0.45));
+      planet.scale.setScalar(r);
+      group.add(planet);
       if (Math.random() < 0.55) {
-        const ring = new THREE.Mesh(new THREE.TorusGeometry(r * 1.7, r * 0.015, 3, 56), wire(0.6));
+        const ring = new THREE.Mesh(RING_THIN, wireMat(0.6));
+        ring.scale.setScalar(r);
         ring.rotation.x = Math.PI / 2 + (Math.random() - 0.5) * 0.7;
         group.add(ring);
       }
     } else {
       // beacon / derelict — stacked octahedra
       const r = 8 + Math.random() * 8;
-      const outer = new THREE.Mesh(new THREE.OctahedronGeometry(r, 0), wire(0.7));
-      const inner = new THREE.Mesh(new THREE.OctahedronGeometry(r * 0.55, 0), wire(0.9));
+      const outer = new THREE.Mesh(OCT, wireMat(0.7));
+      outer.scale.setScalar(r);
+      const inner = new THREE.Mesh(OCT, wireMat(0.9));
+      inner.scale.setScalar(r * 0.55);
       inner.rotation.z = Math.PI / 4;
       group.add(outer, inner);
     }
@@ -122,24 +130,13 @@ export function createDeepField(container: HTMLElement): () => void {
   for (let i = 0; i < DUST_N * 3; i++) dustPositions[i] = (Math.random() - 0.5) * DUST_RANGE * 2;
   const dustGeo = new THREE.BufferGeometry();
   dustGeo.setAttribute('position', new THREE.BufferAttribute(dustPositions, 3));
-  const dustSprite = (() => {
-    const c = document.createElement('canvas');
-    c.width = c.height = 32;
-    const g = c.getContext('2d')!;
-    const grad = g.createRadialGradient(16, 16, 0, 16, 16, 16);
-    grad.addColorStop(0, 'rgba(255,255,255,1)');
-    grad.addColorStop(0.5, 'rgba(255,255,255,.55)');
-    grad.addColorStop(1, 'rgba(255,255,255,0)');
-    g.fillStyle = grad;
-    g.fillRect(0, 0, 32, 32);
-    return new THREE.CanvasTexture(c);
-  })();
+  own.push(dustGeo);
   const dust = new THREE.Points(
     dustGeo,
     new THREE.PointsMaterial({
       color: 0xffffff,
       size: 1.5,
-      map: dustSprite,
+      map: softSprite,
       transparent: true,
       opacity: 0.34,
       depthWrite: false,
@@ -325,14 +322,14 @@ export function createDeepField(container: HTMLElement): () => void {
     window.removeEventListener('pointerdown', onPointerDown);
     window.removeEventListener('pointerup', onPointerUp);
     window.removeEventListener('pointercancel', onPointerUp);
+    // Materials are created per-mesh here so they're safe to dispose; the
+    // geometries are shared engine assets, so only our own point clouds go.
     scene.traverse((obj) => {
       if (obj instanceof THREE.Mesh || obj instanceof THREE.Points || obj instanceof THREE.LineSegments) {
-        obj.geometry.dispose();
-        const material = obj.material as THREE.Material;
-        material.dispose();
+        (obj.material as THREE.Material).dispose();
       }
     });
-    dustSprite.dispose();
+    own.forEach((g) => g.dispose());
     renderer.dispose();
     renderer.domElement.remove();
   };
