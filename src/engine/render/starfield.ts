@@ -7,7 +7,7 @@ export interface StarfieldOptions {
   minRadius?: number;
   /** Stars spawn within `minRadius + spread` of the origin. */
   spread?: number;
-  /** Point size in pixels (size-attenuated). */
+  /** Point size in world units (size-attenuated by distance). */
   size?: number;
   opacity?: number;
   /** Whether scene fog dims the stars (default true, three's default). */
