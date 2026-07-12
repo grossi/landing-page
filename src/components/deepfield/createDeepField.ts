@@ -18,6 +18,8 @@ interface GiantState {
   maxOpacity: number;
   /** Slow self-rotation (rad/s) — barely perceptible, just alive. */
   spin: number;
+  /** Farthest reach of the geometry from the group origin (ring or body). */
+  extent: number;
 }
 
 /** Half-width / half-height of the corridor bodies spawn in. */
@@ -49,6 +51,16 @@ const GIANT_SPAWN_FAR = 14000;
 /** Distance-driven opacity ramp: 0 at FADE_FAR, full at FADE_NEAR. */
 const GIANT_FADE_NEAR = 9000;
 const GIANT_FADE_FAR = 14000;
+/**
+ * Giants are fog-free, so unlike the mid bodies (which fog erases before
+ * they recycle) they must fade to black explicitly before leaving the
+ * corridor — otherwise the lateral recycle would despawn a visible
+ * silhouette inside the frustum. The fade band starts beyond the widest
+ * possible spawn (√2 · SPREAD ≈ 1.42) and ends before the recycle rim.
+ */
+const GIANT_LAT_FADE_NEAR = GIANT_SPREAD * 1.45;
+const GIANT_LAT_FADE_FAR = GIANT_SPREAD * 1.8;
+const GIANT_LAT_LIMIT = GIANT_SPREAD * 1.9;
 /** Giants drift at this fraction of ship speed — far things barely parallax. */
 const GIANT_PARALLAX = 0.06;
 const GIANT_COUNT = 3;
@@ -180,12 +192,14 @@ export function createDeepField(container: HTMLElement): () => void {
     const body = new THREE.Mesh(ICO_MID, mat);
     body.scale.setScalar(r);
     group.add(body);
+    let extent = r;
     if (Math.random() < 0.2) {
       // one in five giants gets a ring — same fading material, shared torus
       const ring = new THREE.Mesh(RING_THIN, mat);
       ring.scale.setScalar(r);
       ring.rotation.x = Math.PI / 2 + (Math.random() - 0.5) * 0.7;
       group.add(ring);
+      extent = r * 1.75; // RING_THIN reaches 1.7 body radii (+ tube)
     }
     // first spawn fills the whole corridor so the deep field opens populated
     group.position.set(
@@ -194,7 +208,7 @@ export function createDeepField(container: HTMLElement): () => void {
       -(GIANT_FIRST_NEAR + Math.random() * (GIANT_FIRST_FAR - GIANT_FIRST_NEAR)),
     );
     scene.add(group);
-    return { group, mat, maxOpacity, spin: (Math.random() - 0.5) * 0.04 };
+    return { group, mat, maxOpacity, spin: (Math.random() - 0.5) * 0.04, extent };
   }
   const giants = Array.from({ length: GIANT_COUNT }, makeGiant);
 
@@ -344,21 +358,28 @@ export function createDeepField(container: HTMLElement): () => void {
     }
 
     // giants: barely-parallaxing silhouettes in the far field. The opacity
-    // TARGET is a pure function of distance (fades in over the 14k → 9k
-    // band); actual opacity glides toward it, so a respawn (which zeroes it)
-    // always resolves out of black over a couple of seconds — never a pop.
+    // TARGET is a pure function of position — a depth ramp (fades in over
+    // the 14k → 9k band) times a lateral ramp (fades out toward the recycle
+    // rim); actual opacity glides toward it, so a respawn (which zeroes it)
+    // always resolves out of black over a couple of seconds. Recycling waits
+    // until the giant is provably invisible — fully behind the camera, or
+    // past the rim with its glided opacity at black — so it never pops in
+    // EITHER direction.
     for (const g of giants) {
       g.group.position.addScaledVector(heading, -speed * GIANT_PARALLAX * dt);
       g.group.rotation.y += g.spin * dt;
       const proj = g.group.position.dot(heading);
       lateral.copy(g.group.position).addScaledVector(heading, -proj);
-      if (proj < -NEAR || lateral.lengthSq() > (GIANT_SPREAD * 1.9) ** 2) {
-        respawnGiantAhead(g);
-      }
+      const lat = lateral.length();
       const d = g.group.position.length();
       const targetOpacity =
-        g.maxOpacity * (1 - THREE.MathUtils.smoothstep(d, GIANT_FADE_NEAR, GIANT_FADE_FAR));
+        g.maxOpacity *
+        (1 - THREE.MathUtils.smoothstep(d, GIANT_FADE_NEAR, GIANT_FADE_FAR)) *
+        (1 - THREE.MathUtils.smoothstep(lat, GIANT_LAT_FADE_NEAR, GIANT_LAT_FADE_FAR));
       g.mat.opacity += (targetOpacity - g.mat.opacity) * Math.min(1, dt * 0.6);
+      if (proj < -(NEAR + g.extent) || (lat > GIANT_LAT_LIMIT && g.mat.opacity < 0.005)) {
+        respawnGiantAhead(g);
+      }
     }
 
     // dust: streams past opposite the heading; the wrap cube is centered 60
