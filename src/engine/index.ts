@@ -47,6 +47,24 @@ export {
   type DisplacementProfile,
 } from 'engine/lod/displacement';
 export {
+  getIcosphereTables,
+  type IcosphereLevel,
+  type IcosphereTables,
+} from 'engine/lod/icosphere';
+export {
+  buildDisplacedPositions,
+  buildLodGeometrySync,
+  GEOMETRY_CACHE_MAX,
+  GeometryCache,
+  GeometryJobQueue,
+  JOB_BUDGET_MS,
+  lodGeometryKey,
+  makeLodGeometry,
+  SLICE_VERTS,
+  type GeometryJobRequest,
+  type RadialField,
+} from 'engine/lod/geometry';
+export {
   clampDt,
   createStage,
   isPaused,
