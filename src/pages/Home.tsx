@@ -2,9 +2,10 @@ import { useEffect, useRef } from 'react';
 import { Box, Flex, Text } from '@chakra-ui/react';
 import Header from 'components/layout/Header';
 import { createDeepField } from 'components/deepfield/createDeepField';
+import { monoFont } from 'config/site';
 
 const mono = {
-  fontFamily: 'ui-monospace, "SF Mono", Menlo, monospace',
+  fontFamily: monoFont,
   color: 'white',
 } as const;
 

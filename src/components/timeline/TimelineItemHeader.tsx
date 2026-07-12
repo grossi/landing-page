@@ -2,8 +2,7 @@ import React from 'react';
 import { Badge, HStack, Heading, Text } from '@chakra-ui/react';
 import { TimelineItem } from 'components/timeline/types';
 import { timelineColors } from 'components/timeline/config';
-
-const mono = 'ui-monospace, "SF Mono", Menlo, monospace';
+import { monoFont as mono } from 'config/site';
 
 interface TimelineItemHeaderProps {
   type: TimelineItem['type'];

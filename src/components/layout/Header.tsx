@@ -12,11 +12,12 @@ import {
 import { Link as RouterLink, useLocation } from 'react-router';
 import { motion, AnimatePresence } from 'framer-motion';
 import { FaBars, FaTimes } from 'react-icons/fa';
+import { monoFont } from 'config/site';
 
 const MotionBox = motion(Box);
 
 const mono = {
-  fontFamily: 'ui-monospace, "SF Mono", Menlo, monospace',
+  fontFamily: monoFont,
   color: 'white',
 } as const;
 

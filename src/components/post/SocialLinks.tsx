@@ -2,9 +2,7 @@ import * as React from "react";
 import { Box, Flex, Text, Link, Icon } from "@chakra-ui/react";
 import { FaLinkedin, FaGithub, FaRegEnvelope } from "react-icons/fa";
 import { FaXTwitter } from "react-icons/fa6";
-import { SocialLinks as SocialLinksConfig } from "config/site";
-
-const mono = 'ui-monospace, "SF Mono", Menlo, monospace';
+import { monoFont as mono, SocialLinks as SocialLinksConfig } from 'config/site';
 
 export interface SocialLinksProps {
   links: SocialLinksConfig;

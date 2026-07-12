@@ -4,12 +4,11 @@ import { Light as SyntaxHighlighter } from 'react-syntax-highlighter';
 import typescript from 'react-syntax-highlighter/dist/esm/languages/hljs/typescript';
 import { atomOneDarkReasonable } from 'react-syntax-highlighter/dist/esm/styles/hljs';
 import { Box, Link, Text } from '@chakra-ui/react';
+import { monoFont as mono } from 'config/site';
 
 // Only the languages used by posts are registered — the full hljs build
 // is ~800 kB. Register more here as posts need them.
 SyntaxHighlighter.registerLanguage('typescript', typescript);
-
-const mono = 'ui-monospace, "SF Mono", Menlo, monospace';
 
 // Strip emoji/pictographs so markdown titles render in the site's
 // plain terminal style even when the source file decorates them.

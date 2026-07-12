@@ -180,12 +180,15 @@ export function createDeepField(container: HTMLElement): () => void {
     camera.updateProjectionMatrix();
     renderer.setSize(container.clientWidth, container.clientHeight);
   };
+  // observe the container, not the window — it tracks any layout change
+  // (same pattern as EPHEMERIS)
+  const resizeObserver = new ResizeObserver(onResize);
+  resizeObserver.observe(container);
   window.addEventListener('mousemove', onMouseMove);
   document.addEventListener('mouseleave', onMouseLeave);
   window.addEventListener('pointerdown', onPointerDown);
   window.addEventListener('pointerup', onPointerUp);
   window.addEventListener('pointercancel', onPointerUp);
-  window.addEventListener('resize', onResize);
 
   // ---- render loop ----
   let last = performance.now();
@@ -297,12 +300,12 @@ export function createDeepField(container: HTMLElement): () => void {
 
   return () => {
     renderer.setAnimationLoop(null);
+    resizeObserver.disconnect();
     window.removeEventListener('mousemove', onMouseMove);
     document.removeEventListener('mouseleave', onMouseLeave);
     window.removeEventListener('pointerdown', onPointerDown);
     window.removeEventListener('pointerup', onPointerUp);
     window.removeEventListener('pointercancel', onPointerUp);
-    window.removeEventListener('resize', onResize);
     scene.traverse((obj) => {
       if (obj instanceof THREE.Mesh || obj instanceof THREE.Points || obj instanceof THREE.LineSegments) {
         obj.geometry.dispose();

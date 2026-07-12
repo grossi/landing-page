@@ -1,8 +1,7 @@
 import { Box, Flex, Heading, SimpleGrid, Text } from '@chakra-ui/react';
 import { Link as RouterLink } from 'react-router';
 import PageLayout from 'components/layout/PageLayout';
-
-const mono = 'ui-monospace, "SF Mono", Menlo, monospace';
+import { monoFont as mono } from 'config/site';
 
 interface Demo {
   slug: string;

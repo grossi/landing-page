@@ -1,7 +1,6 @@
 import React from 'react';
 import { VStack, Heading, Text } from '@chakra-ui/react';
-
-const mono = 'ui-monospace, "SF Mono", Menlo, monospace';
+import { monoFont as mono } from 'config/site';
 
 interface ExperienceHeaderProps {
   title: string;

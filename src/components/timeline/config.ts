@@ -1,4 +1,4 @@
-import { TimelineColors, TimelineItem, TimelineParticleConfig } from 'components/timeline/types';
+import { TimelineColors, TimelineParticleConfig } from 'components/timeline/types';
 
 // Terminal wireframe palette: black surfaces, thin white-alpha strokes.
 export const timelineColors: TimelineColors = {
@@ -6,12 +6,6 @@ export const timelineColors: TimelineColors = {
   borderColor: 'rgba(255,255,255,0.25)',
   lineColor: 'rgba(255,255,255,0.2)',
   highlightColor: 'white',
-};
-
-export const typeColorPalettes: Record<TimelineItem['type'], string> = {
-  work: 'gray',
-  education: 'gray',
-  achievement: 'gray',
 };
 
 export const particleConfig: TimelineParticleConfig = {

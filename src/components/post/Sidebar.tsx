@@ -1,9 +1,7 @@
 import React from 'react';
 import { Box, Flex, Text } from '@chakra-ui/react';
 import SocialLinks from 'components/post/SocialLinks';
-import { socialLinks } from 'config/site';
-
-const mono = 'ui-monospace, "SF Mono", Menlo, monospace';
+import { monoFont as mono, socialLinks } from 'config/site';
 
 const Sidebar = () => {
   return (

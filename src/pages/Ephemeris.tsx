@@ -2,9 +2,10 @@ import { useEffect, useRef } from 'react';
 import { Box, Text } from '@chakra-ui/react';
 import Header from 'components/layout/Header';
 import { createEphemeris } from 'components/ephemeris/createEphemeris';
+import { monoFont } from 'config/site';
 
 const hudFont = {
-  fontFamily: 'ui-monospace, "SF Mono", Menlo, monospace',
+  fontFamily: monoFont,
   color: 'white',
 } as const;
 
