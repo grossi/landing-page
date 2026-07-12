@@ -195,18 +195,30 @@ export function createDeepField(container: HTMLElement): () => void {
   let t = 0;
   const heading = new THREE.Vector3(0, 0, -1);
   const FORWARD = new THREE.Vector3(0, 0, -1);
-  const UP = new THREE.Vector3(0, 1, 0);
+  const X_AXIS = new THREE.Vector3(1, 0, 0);
+  // camera up, parallel-transported to stay perpendicular to the heading
+  const camUp = new THREE.Vector3(0, 1, 0);
   const lookTarget = new THREE.Vector3();
   const side = new THREE.Vector3();
   const lift = new THREE.Vector3();
   const lateral = new THREE.Vector3();
   let roll = 0;
 
+  // O(1) modulo wrap onto [-DUST_RANGE, DUST_RANGE] — handles any
+  // single-frame overshoot on any axis (same pattern as EPHEMERIS)
+  const DUST_SPAN = DUST_RANGE * 2;
+  const wrapDust = (v: number) =>
+    v > DUST_RANGE || v < -DUST_RANGE
+      ? ((((v + DUST_RANGE) % DUST_SPAN) + DUST_SPAN) % DUST_SPAN) - DUST_RANGE
+      : v;
+
   // Bodies passing behind respawn ahead of the *current* heading, so the
   // view stays populated whichever way a long turn ends up pointing.
   const respawnAhead = (b: BodyState) => {
-    side.crossVectors(heading, UP).normalize(); // heading.z < 0 keeps this non-degenerate
-    lift.crossVectors(side, heading);
+    // camUp is re-transported perpendicular to the heading each frame before
+    // bodies recycle, so heading × camUp is already unit length
+    side.crossVectors(heading, camUp);
+    lift.copy(camUp);
     b.group.position
       .copy(heading)
       .multiplyScalar(SPAWN_NEAR + Math.random() * (SPAWN_FAR - SPAWN_NEAR))
@@ -244,19 +256,27 @@ export function createDeepField(container: HTMLElement): () => void {
     } else {
       heading.lerp(FORWARD, Math.min(1, dt * 0.08));
     }
-    heading.y = THREE.MathUtils.clamp(heading.y, -0.55, 0.55);
-    // Steering is a pursuit curve (the cursor ray is always offset from the
-    // heading), so an edge-held cursor turns forever; keep the flight
-    // meaningfully forward or the dust recycle (z > 30 below) stops firing
-    // and the drift loses its direction.
-    heading.z = Math.min(heading.z, -0.35);
     heading.normalize();
+
+    // parallel-transport the up basis: strip its heading component so the
+    // view rolls smoothly through vertical flight instead of snapping at the
+    // poles of lookAt's fixed world up
+    camUp.addScaledVector(heading, -camUp.dot(heading));
+    if (camUp.lengthSq() < 1e-6) {
+      camUp.crossVectors(heading, X_AXIS);
+      if (camUp.lengthSq() < 1e-6) camUp.crossVectors(heading, FORWARD);
+    }
+    camUp.normalize();
+    camera.up.copy(camUp);
 
     lookTarget.copy(camera.position).addScaledVector(heading, 520);
     lookTarget.x += Math.sin(t * 0.058) * 20;
     lookTarget.y += Math.cos(t * 0.049) * 12;
     camera.lookAt(lookTarget);
-    roll += (THREE.MathUtils.clamp(-heading.x * 0.45, -0.3, 0.3) - roll) * Math.min(1, dt * 2);
+    // bank with the commanded turn, not the world direction — cruising along
+    // any axis flies level
+    const rollTarget = mouseActive ? THREE.MathUtils.clamp(-ndc.x * 0.3, -0.3, 0.3) : 0;
+    roll += (rollTarget - roll) * Math.min(1, dt * 2);
     if (roll !== 0) camera.rotateZ(roll);
 
     // bodies: the world slides past, opposite the heading
@@ -275,23 +295,22 @@ export function createDeepField(container: HTMLElement): () => void {
       }
     }
 
-    // dust: streams past opposite the heading, recycled around the camera
+    // dust: streams past opposite the heading; the wrap cube is centered 60
+    // units ahead along it so most particles stay in front of the camera
     const dp = dustGeo.attributes.position as THREE.BufferAttribute;
     const dvx = -heading.x * speed * 2.4;
     const dvy = -heading.y * speed * 2.4;
     const dvz = -heading.z * speed * 2.4;
+    const cx = heading.x * 60;
+    const cy = heading.y * 60;
+    const cz = heading.z * 60;
     for (let i = 0; i < DUST_N; i++) {
-      let x = dp.getX(i) + dvx * dt;
-      let y = dp.getY(i) + dvy * dt;
-      let z = dp.getZ(i) + dvz * dt;
-      if (z > 30) {
-        z -= DUST_RANGE * 2;
-        x = (Math.random() - 0.5) * DUST_RANGE * 2;
-        y = (Math.random() - 0.5) * DUST_RANGE * 2;
-      }
-      if (Math.abs(x) > DUST_RANGE * 1.2) x -= Math.sign(x) * DUST_RANGE * 2.4;
-      if (Math.abs(y) > DUST_RANGE * 1.2) y -= Math.sign(y) * DUST_RANGE * 2.4;
-      dp.setXYZ(i, x, y, z);
+      dp.setXYZ(
+        i,
+        wrapDust(dp.getX(i) + dvx * dt - cx) + cx,
+        wrapDust(dp.getY(i) + dvy * dt - cy) + cy,
+        wrapDust(dp.getZ(i) + dvz * dt - cz) + cz,
+      );
     }
     dp.needsUpdate = true;
 
