@@ -79,6 +79,49 @@ describe('buildSectorContent', () => {
     }
   });
 
+  it('renders static swarms as instanced batches with covering bounds', () => {
+    const collectInstanced = (root: THREE.Object3D): THREE.InstancedMesh[] => {
+      const out: THREE.InstancedMesh[] = [];
+      root.traverse((obj) => {
+        if ((obj as THREE.InstancedMesh).isInstancedMesh) out.push(obj as THREE.InstancedMesh);
+      });
+      return out;
+    };
+    const matrix = new THREE.Matrix4();
+    const position = new THREE.Vector3();
+    const quaternion = new THREE.Quaternion();
+    const scale = new THREE.Vector3();
+    let batches = 0;
+    for (let i = 0; i < 60; i++) {
+      const a = buildAt(i, 9, -2 * i, 31337);
+      const b = buildAt(i, 9, -2 * i, 31337);
+      const instancedA = collectInstanced(a.group);
+      const instancedB = collectInstanced(b.group);
+      expect(instancedA.length).toBe(instancedB.length);
+      for (let m = 0; m < instancedA.length; m++) {
+        batches++;
+        const meshA = instancedA[m];
+        // a rebuilt sector places every instance identically (determinism)
+        expect(Array.from(meshA.instanceMatrix.array)).toEqual(
+          Array.from(instancedB[m].instanceMatrix.array),
+        );
+        // instanced frustum culling is whole-batch: the explicit bounding
+        // sphere must cover every instance or swarms clip while visible
+        const sphere = meshA.boundingSphere!;
+        expect(sphere).not.toBeNull();
+        for (let k = 0; k < meshA.count; k++) {
+          meshA.getMatrixAt(k, matrix);
+          matrix.decompose(position, quaternion, scale);
+          expect(position.distanceTo(sphere.center)).toBeLessThanOrEqual(sphere.radius + 1e-3);
+        }
+      }
+      a.dispose();
+      b.dispose();
+    }
+    // clusters/monoliths/garnish are common; 60 sectors must instance a few
+    expect(batches).toBeGreaterThan(0);
+  });
+
   it('scatters content off the sector centre but within the sector', () => {
     for (let i = 0; i < 40; i++) {
       const content = buildAt(i, 0, -i, 42);

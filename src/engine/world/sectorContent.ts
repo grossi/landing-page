@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { hashCoords, makeName, mulberry32, pickFrom } from 'engine/core/rng';
 import { sectorCenter } from 'engine/core/sectorGrid';
 import type { LodRegistration } from 'engine/lod/lodManager';
+import type { Disposable } from 'engine/render/resourceTracker';
 import {
   BEAM,
   BELT_MAT,
@@ -72,27 +73,56 @@ function updateOrbiters(orbiters: Orbiter[], t: number) {
 
 // ---- archetype builders ----
 // Each places content in sector-local coordinates around (0,0,0); the caller
-// positions the group at the sector centre. Geometries created here (points,
-// per-sector lines) are pushed to `own` and disposed with the sector.
+// positions the group at the sector centre. Per-sector resources (point
+// geometries, instanced batches) are pushed to `own` and disposed with the
+// sector; shared unit geometries/materials are never pushed.
 
 type Built = Omit<SectorContent, 'dispose' | 'name' | 'lodBodies'> & {
   lodBodies?: LodRegistration[];
 };
-type Builder = (rand: () => number, own: THREE.BufferGeometry[]) => Built;
+type Builder = (rand: () => number, own: Disposable[]) => Built;
 
 const gaussish = (rand: () => number) => (rand() + rand() + rand()) / 3 - 0.5;
 
-const asteroidCluster: Builder = (rand) => {
+// Static swarms (cluster rocks, monoliths, garnish debris) render as ONE
+// InstancedMesh per archetype instead of N meshes — an asteroid cluster was
+// up to 90 draw calls, now 1. They never move relative to their group, so
+// the spin animation stays on the parent and the matrices upload once.
+const scratchInstance = new THREE.Object3D();
+function buildInstanced(
+  geometry: THREE.BufferGeometry,
+  material: THREE.Material,
+  count: number,
+  place: (instance: THREE.Object3D, index: number) => void,
+): THREE.InstancedMesh {
+  const mesh = new THREE.InstancedMesh(geometry, material, count);
+  for (let i = 0; i < count; i++) {
+    scratchInstance.position.set(0, 0, 0);
+    scratchInstance.rotation.set(0, 0, 0);
+    scratchInstance.scale.set(1, 1, 1);
+    place(scratchInstance, i);
+    scratchInstance.updateMatrix();
+    mesh.setMatrixAt(i, scratchInstance.matrix);
+  }
+  mesh.instanceMatrix.needsUpdate = true;
+  // instanced culling is whole-batch: without an explicit bounding sphere
+  // the UNIT geometry's sphere would cull swarms still on screen
+  mesh.computeBoundingSphere();
+  return mesh;
+}
+
+const asteroidCluster: Builder = (rand, own) => {
   const group = new THREE.Group();
   const spread = 900 + rand() * 600;
   const count = 40 + Math.floor(rand() * 50);
-  for (let i = 0; i < count; i++) {
-    const rock = new THREE.Mesh(ICO_LOW, MAT_DIM);
+  // rand() draws per rock match the old per-mesh builder exactly
+  const rocks = buildInstanced(ICO_LOW, MAT_DIM, count, (rock) => {
     rock.position.set(gaussish(rand) * spread * 2, gaussish(rand) * spread, gaussish(rand) * spread * 2);
     rock.scale.setScalar(6 + rand() * 40);
     rock.rotation.set(rand() * Math.PI, rand() * Math.PI, rand() * Math.PI);
-    group.add(rock);
-  }
+  });
+  own.push(rocks);
+  group.add(rocks);
   const spin = (rand() - 0.5) * 0.02;
   return {
     group,
@@ -282,20 +312,20 @@ const pulsar: Builder = (rand) => {
   };
 };
 
-const monolithField: Builder = (rand) => {
+const monolithField: Builder = (rand, own) => {
   const group = new THREE.Group();
   const count = 6 + Math.floor(rand() * 9);
   const spread = 770 + rand() * 600;
-  for (let i = 0; i < count; i++) {
-    const monolith = new THREE.Mesh(BOX, MAT_DIM);
+  const monoliths = buildInstanced(BOX, MAT_DIM, count, (monolith) => {
     const h = 120 + rand() * 200;
     monolith.scale.set(17 + rand() * 21, h, 10 + rand() * 14);
     const a = rand() * Math.PI * 2;
     const r = rand() * spread;
     monolith.position.set(Math.cos(a) * r, (rand() - 0.5) * 260, Math.sin(a) * r);
     monolith.rotation.y = rand() * Math.PI;
-    group.add(monolith);
-  }
+  });
+  own.push(monoliths);
+  group.add(monoliths);
   const spin = (rand() - 0.5) * 0.01;
   return {
     group,
@@ -384,15 +414,15 @@ const SECTOR_SUFFIXES = ['EXPANSE', 'REACH', 'DRIFT', 'VERGE', 'DEEP'];
  * when its main content sits behind the camera: a knot of rocks or a wisp
  * of nebula dust.
  */
-function addGarnish(rand: () => number, group: THREE.Group, own: THREE.BufferGeometry[]) {
+function addGarnish(rand: () => number, group: THREE.Group, own: Disposable[]) {
   const offset = new THREE.Vector3(
     (rand() - 0.5) * 3400,
     (rand() - 0.5) * 2400,
     (rand() - 0.5) * 3400,
   );
   if (rand() < 0.5) {
-    for (let i = 0; i < 8 + Math.floor(rand() * 7); i++) {
-      const rock = new THREE.Mesh(ICO_LOW, MAT_DIM);
+    const count = 8 + Math.floor(rand() * 7);
+    const rocks = buildInstanced(ICO_LOW, MAT_DIM, count, (rock) => {
       rock.position.set(
         offset.x + gaussish(rand) * 560,
         offset.y + gaussish(rand) * 320,
@@ -400,8 +430,9 @@ function addGarnish(rand: () => number, group: THREE.Group, own: THREE.BufferGeo
       );
       rock.scale.setScalar(5 + rand() * 19);
       rock.rotation.set(rand() * Math.PI, rand() * Math.PI, rand() * Math.PI);
-      group.add(rock);
-    }
+    });
+    own.push(rocks);
+    group.add(rocks);
   } else {
     const n = 70 + Math.floor(rand() * 60);
     const positions = new Float32Array(n * 3);
@@ -495,7 +526,7 @@ export function buildSectorContent(
   sectorSize: number,
   center: THREE.Vector3,
 ): SectorContent {
-  const own: THREE.BufferGeometry[] = [];
+  const own: Disposable[] = [];
   const header = drawSectorHeader(rand);
   const content = BUILDERS[header.builderIndex][0](rand, own);
   if (rand() < 0.55) addGarnish(rand, content.group, own);

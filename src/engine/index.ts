@@ -105,6 +105,17 @@ export {
 } from 'engine/render/resourceTracker';
 export { createStarfield, type StarfieldOptions } from 'engine/render/starfield';
 export {
+  attachStatsOverlay,
+  formatCount,
+  formatStats,
+  statsOverlayEnabled,
+  type StatsOverlayHandle,
+  type StatsOverlayOptions,
+  type StatsRendererInfo,
+  type StatsSnapshot,
+  type StatsSource,
+} from 'engine/render/statsOverlay';
+export {
   createDustField,
   wrapAround,
   type DustField,

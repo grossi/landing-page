@@ -1,4 +1,10 @@
 import * as THREE from 'three';
+import {
+  createGovernorState,
+  pushFrameTime,
+  qualityForLevel,
+  type GovernorState,
+} from 'engine/core/governor';
 import { createResourceTracker, type ResourceTracker } from 'engine/render/resourceTracker';
 
 /**
@@ -46,6 +52,15 @@ export interface Stage {
    * (engine/render/assets) are never tracked, so they survive teardown.
    */
   tracker: ResourceTracker;
+  /**
+   * Adaptive-quality governor state. Fed one JS-cost sample (sim callback +
+   * draw submission, ms) per frame; a sustained overload sheds pixels via
+   * the DPR ladder, never frames — slow smooth motion is the aesthetic.
+   * Read-only for consumers (the stats overlay renders it).
+   */
+  governor: GovernorState;
+  /** Frames rendered since creation; the stats overlay derives FPS from it. */
+  frameCount(): number;
   /** Sets the per-frame callback and starts the loop; runs before render. */
   start(onFrame: (dt: number, t: number) => void): void;
   /** Explicit pause switch, on top of visibility/occlusion pausing. */
@@ -80,7 +95,14 @@ export function createStage(container: HTMLElement, opts: StageOptions = {}): St
     far,
   );
   const renderer = new THREE.WebGLRenderer({ antialias: true, logarithmicDepthBuffer: logDepth });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
+
+  // adaptive quality: the governor watches per-frame JS cost and steps the
+  // pixelRatio cap down (1.5 → 1.25 → 1.0) under sustained load. Its
+  // dustFraction/lodBias knobs are not consumed yet — DPR is the big lever.
+  const governor = createGovernorState();
+  const applyGovernorPixelRatio = () =>
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, qualityForLevel(governor.level).pixelRatio));
+  applyGovernorPixelRatio();
   renderer.setSize(container.clientWidth, container.clientHeight);
   container.appendChild(renderer.domElement);
 
@@ -92,14 +114,22 @@ export function createStage(container: HTMLElement, opts: StageOptions = {}): St
   let disposed = false;
   let last = 0;
   let t = 0;
+  let frames = 0;
   const pauseSources = new Set<PauseSource>();
 
   const frame = (now: number) => {
     const dt = clampDt(now, last);
     last = now;
     t += dt;
+    const jsStart = performance.now();
     onFrame?.(dt, t);
     renderer.render(scene, camera);
+    frames++;
+    // feed the JS cost (not the rAF interval — that only measures the
+    // display's refresh rate) and apply a level change immediately
+    const level = governor.level;
+    pushFrameTime(governor, performance.now() - jsStart);
+    if (governor.level !== level) applyGovernorPixelRatio();
   };
 
   const syncLoop = () => {
@@ -150,6 +180,8 @@ export function createStage(container: HTMLElement, opts: StageOptions = {}): St
     camera,
     renderer,
     tracker,
+    governor,
+    frameCount: () => frames,
     start(cb) {
       onFrame = cb;
       syncLoop();

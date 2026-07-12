@@ -70,6 +70,8 @@ export interface SectorField {
   updateContents(dt: number, t: number): void;
   /** Visit every POI in every built sector. */
   forEachPoi(fn: (poi: Poi) => void): void;
+  /** Number of built procedural sectors in the scene (stats overlay). */
+  activeCount(): number;
   /** The cell of the last `sync` position. */
   currentCell(): SectorFieldCell;
   /** Unloads every sector and clears the build queue. */
@@ -193,6 +195,12 @@ export function createSectorField(scene: THREE.Scene, opts: SectorFieldOptions):
       for (const content of activeSectors.values()) {
         if (content) for (const poi of content.pois) fn(poi);
       }
+    },
+
+    activeCount() {
+      let built = 0;
+      for (const content of activeSectors.values()) if (content) built++;
+      return built;
     },
 
     currentCell() {

@@ -174,6 +174,8 @@ export interface LodManager {
   unregister(handle: LodBodyHandle): void;
   /** Replace the beacon dot layer (peeked far sectors). */
   setBeacons(beacons: readonly LodBeacon[]): void;
+  /** Number of registered bodies (stats overlay). */
+  bodyCount(): number;
   /** Advance selection, dissolves, dots and geometry jobs. Once per frame. */
   update(camera: THREE.PerspectiveCamera, viewportHeightPx: number, dt: number): void;
   dispose(): void;
@@ -479,6 +481,10 @@ export function createLodManager(scene: THREE.Scene, opts: LodManagerOptions = {
       if (!body) return;
       states.delete(handle);
       unregisterState(body);
+    },
+
+    bodyCount() {
+      return bodies.size;
     },
 
     setBeacons(list) {

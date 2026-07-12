@@ -7,6 +7,7 @@ import { wireMat } from 'engine/render/assets';
 import { createDustField } from 'engine/render/dust';
 import { createStage } from 'engine/render/stage';
 import { createStarfield } from 'engine/render/starfield';
+import { attachStatsOverlay } from 'engine/render/statsOverlay';
 import {
   buildHomeSystem,
   peekSectorBeacon,
@@ -125,6 +126,11 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
   // the floating origin lives in the field; absolute = origin + render-local
   const origin = field.origin();
 
+  // dev-only perf panel (backquote toggles; `?stats` shows it immediately)
+  const stats = attachStatsOverlay(container, stage, {
+    getExtra: () => [`SECTORS ${field.activeCount()}`, `LOD BODIES ${lod.bodyCount()}`],
+  });
+
   // far-contact beacons: sectors outside the streamed window peeked as dots;
   // refreshed when the ship crosses a cell boundary (or the origin moves —
   // dot positions are render-local)
@@ -176,25 +182,25 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
 
   // ---- input ----
   const keys: Record<string, boolean> = {};
-  let pointer = { x: 0, y: 0 };
+  const pointer = { x: 0, y: 0 };
   let pointerDown = false;
 
+  // mutates the stable `pointer` — pointermove fires every frame while
+  // steering, and a fresh object per event is per-frame garbage
   const toLocal = (clientX: number, clientY: number) => {
     const rect = container.getBoundingClientRect();
-    return {
-      x: ((clientX - rect.left) / rect.width) * 2 - 1,
-      y: ((clientY - rect.top) / rect.height) * 2 - 1,
-    };
+    pointer.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+    pointer.y = ((clientY - rect.top) / rect.height) * 2 - 1;
   };
   const onKeyDown = (e: KeyboardEvent) => { keys[e.code] = true; };
   const onKeyUp = (e: KeyboardEvent) => { keys[e.code] = false; };
   // keyup never arrives for keys held across a focus loss (Cmd-Tab etc.),
   // which would leave the ship burning forever.
   const onBlur = () => { for (const code in keys) keys[code] = false; };
-  const onPointerMove = (e: PointerEvent) => { pointer = toLocal(e.clientX, e.clientY); };
+  const onPointerMove = (e: PointerEvent) => { toLocal(e.clientX, e.clientY); };
   const onPointerDown = () => { pointerDown = true; };
   const onPointerUp = () => { pointerDown = false; };
-  const onTouchMove = (e: TouchEvent) => { pointer = toLocal(e.touches[0].clientX, e.touches[0].clientY); };
+  const onTouchMove = (e: TouchEvent) => { toLocal(e.touches[0].clientX, e.touches[0].clientY); };
   window.addEventListener('keydown', onKeyDown);
   window.addEventListener('keyup', onKeyUp);
   window.addEventListener('blur', onBlur);
@@ -217,6 +223,9 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
   // (POI ids are deterministic per sector rebuild).
   const discoveredIds = new Set<string>();
   let pingTimer = 0;
+  // readout strings rebuild at 10 Hz, not per frame — template literals every
+  // frame are steady garbage, and a 60 Hz distance readout is unreadable
+  let hudTimer = 0;
   setHudText(hud.contacts, '0 CONTACTS LOGGED');
 
   // Nearest body of the last completed HUD pass. `dist`/`radius`/`center`
@@ -248,10 +257,12 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
   const scratch = new THREE.Vector3();
   const shipAbs = new THREE.Vector3();
   const rebase = new THREE.Vector3();
+  // scratch Euler for attitude → quaternion (a fresh one per frame is garbage)
+  const scratchEuler = new THREE.Euler(0, 0, 0, 'YXZ');
 
   // start the camera in the chase pose — at the new world scale a swoop-in
   // from the scene origin would cross the whole home system
-  ship.quaternion.setFromEuler(new THREE.Euler(attitude.pitch, attitude.yaw, 0, 'YXZ'));
+  ship.quaternion.setFromEuler(scratchEuler.set(attitude.pitch, attitude.yaw, 0));
   camera.position.copy(scratch.set(0, 2.6, 9).applyQuaternion(ship.quaternion).add(ship.position));
   camera.quaternion.copy(ship.quaternion);
 
@@ -267,7 +278,7 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
     attitude.yaw -= steerX * 2.2 * dt;
     attitude.pitch -= steerY * 1.7 * dt;
     attitude.pitch = Math.max(-1.35, Math.min(1.35, attitude.pitch));
-    ship.quaternion.setFromEuler(new THREE.Euler(attitude.pitch, attitude.yaw, 0, 'YXZ'));
+    ship.quaternion.setFromEuler(scratchEuler.set(attitude.pitch, attitude.yaw, 0));
     shipBody.rotation.z += (-steerX * 0.9 - shipBody.rotation.z) * Math.min(1, dt * 8);
 
     // distance-proportional speed law: time-to-contact stays roughly
@@ -312,21 +323,25 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
       pingTimer -= dt;
       hud.ping.style.opacity = String(Math.max(0, Math.min(1, pingTimer / 1.5)));
     }
-    setHudText(hud.body, nearest.name);
-    const surface = Math.max(0, nearest.dist);
-    const approach = nearest.dist < approachRange(nearest.radius) ? ' · APPROACH' : '';
-    setHudText(
-      hud.dist,
-      surface >= 10000 ? `${(surface / 1000).toFixed(2)} Mm${approach}` : `${Math.floor(surface)} km${approach}`,
-    );
-    setHudText(hud.speed, `${Math.floor(velocity.length())} km/s`);
-    const cell = field.currentCell();
-    setHudText(
-      hud.sector,
-      isHomeCell(cell.x, cell.y, cell.z)
-        ? 'HOME SYSTEM'
-        : `${cell.content ? `${cell.content.name} · ` : ''}${cell.x}.${cell.y}.${cell.z}`,
-    );
+    hudTimer -= dt;
+    if (hudTimer <= 0) {
+      hudTimer = 0.1;
+      setHudText(hud.body, nearest.name);
+      const surface = Math.max(0, nearest.dist);
+      const approach = nearest.dist < approachRange(nearest.radius) ? ' · APPROACH' : '';
+      setHudText(
+        hud.dist,
+        surface >= 10000 ? `${(surface / 1000).toFixed(2)} Mm${approach}` : `${Math.floor(surface)} km${approach}`,
+      );
+      setHudText(hud.speed, `${Math.floor(velocity.length())} km/s`);
+      const cell = field.currentCell();
+      setHudText(
+        hud.sector,
+        isHomeCell(cell.x, cell.y, cell.z)
+          ? 'HOME SYSTEM'
+          : `${cell.content ? `${cell.content.name} · ` : ''}${cell.x}.${cell.y}.${cell.z}`,
+      );
+    }
 
     // soft altitude floor: below 3% of the radius the ship is eased back out
     // to a 1.03r skim — no bounce, no damage, no fail state
@@ -380,7 +395,7 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
         const dir = scratch.set(lookX - x, lookY - y, lookZ - z).normalize();
         attitude.pitch = Math.asin(Math.max(-1, Math.min(1, dir.y)));
         attitude.yaw = Math.atan2(-dir.x, -dir.z);
-        ship.quaternion.setFromEuler(new THREE.Euler(attitude.pitch, attitude.yaw, 0, 'YXZ'));
+        ship.quaternion.setFromEuler(scratchEuler.set(attitude.pitch, attitude.yaw, 0));
         camera.position.copy(scratch.set(0, 2.6, 9).applyQuaternion(ship.quaternion).add(ship.position));
         camera.quaternion.copy(ship.quaternion);
       }
@@ -424,6 +439,7 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
     field.dispose(); // unregisters sector LOD bodies via onContentRemoved
     home.dispose();
     lod.dispose();
+    stats.dispose();
     // Stops the loop and frees this mount's tracked resources (ship, stars,
     // dust). Shared module-level assets are never tracked, so navigating
     // Home ↔ EPHEMERIS no longer forces GPU re-uploads of shared geometry.

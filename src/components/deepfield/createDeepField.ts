@@ -4,6 +4,7 @@ import { DODEC, ICO_MID, OCT, RING_THIN, wireMat } from 'engine/render/assets';
 import { createDustField } from 'engine/render/dust';
 import { createStage } from 'engine/render/stage';
 import { createStarfield } from 'engine/render/starfield';
+import { attachStatsOverlay } from 'engine/render/statsOverlay';
 
 /** Per-body drift state kept outside the scene graph for type safety. */
 interface BodyState {
@@ -91,6 +92,11 @@ export function createDeepField(container: HTMLElement): () => void {
   // displaced wireframe on approach (jobs budgeted low — it's a backdrop).
   // Capped at level 3: the landing page is mood, not close inspection.
   const lod = createLodManager(scene, { jobBudgetMs: 2 });
+
+  // dev-only perf panel (backquote toggles; `?stats` shows it immediately)
+  const stats = attachStatsOverlay(container, stage, {
+    getExtra: () => [`LOD BODIES ${lod.bodyCount()}`],
+  });
 
   // ---- distant stars (rotate with the view, never translate) ----
   {
@@ -400,6 +406,7 @@ export function createDeepField(container: HTMLElement): () => void {
     window.removeEventListener('pointerdown', onPointerDown);
     window.removeEventListener('pointerup', onPointerUp);
     window.removeEventListener('pointercancel', onPointerUp);
+    stats.dispose();
     lod.dispose();
     // stops the loop and frees every tracked geometry/material
     stage.dispose();
