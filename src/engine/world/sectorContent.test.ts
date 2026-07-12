@@ -2,7 +2,7 @@
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
 import { hashCoords, mulberry32 } from 'engine/core/rng';
-import { buildHomeSystem, buildSectorContent } from 'engine/world/sectorContent';
+import { buildHomeSystem, buildSectorContent, peekSectorBeacon } from 'engine/world/sectorContent';
 
 const SECTOR = 700;
 
@@ -24,8 +24,44 @@ describe('buildSectorContent', () => {
       expect(a.pois.map((p) => p.name)).toEqual(b.pois.map((p) => p.name));
       expect(a.pois.map((p) => p.radius)).toEqual(b.pois.map((p) => p.radius));
       expect(a.group.position.toArray()).toEqual(b.group.position.toArray());
+      // LOD bodies (seed, radius, kind) must regenerate identically too —
+      // a rebuilt sector's planets must keep their exact shapes
+      expect(a.lodBodies.map((l) => [l.seed, l.radius, l.kind])).toEqual(
+        b.lodBodies.map((l) => [l.seed, l.radius, l.kind]),
+      );
       a.dispose();
       b.dispose();
+    }
+  });
+
+  it('registers LOD bodies with anchors inside the sector group', () => {
+    let total = 0;
+    for (let i = 0; i < 40; i++) {
+      const content = buildAt(i, 1, -i, 99);
+      for (const body of content.lodBodies) {
+        expect(body.radius).toBeGreaterThan(0);
+        expect(Number.isInteger(body.seed)).toBe(true);
+        expect(['planet', 'asteroid', 'star']).toContain(body.kind);
+        let root = body.anchor;
+        while (root.parent) root = root.parent;
+        expect(root).toBe(content.group);
+      }
+      total += content.lodBodies.length;
+      content.dispose();
+    }
+    // planets/stars are common enough that 40 sectors must yield some
+    expect(total).toBeGreaterThan(0);
+  });
+
+  it('peekSectorBeacon lands exactly on the content group position', () => {
+    for (let i = 0; i < 50; i++) {
+      const [x, y, z] = [i - 25, 2 * i - 50, 7 - 3 * i];
+      const content = buildAt(x, y, z, 4242);
+      const beacon = peekSectorBeacon(x, y, z, 4242, SECTOR);
+      expect([beacon.x, beacon.y, beacon.z]).toEqual(content.group.position.toArray());
+      expect(beacon.brightness).toBeGreaterThan(0);
+      expect(beacon.brightness).toBeLessThanOrEqual(1);
+      content.dispose();
     }
   });
 
@@ -62,6 +98,11 @@ describe('buildHomeSystem', () => {
     expect(names).toContain('THE COMET');
     // sun + seven planets + comet
     expect(a.pois).toHaveLength(9);
+    // the sun and every planet render through the LOD ladder
+    expect(a.lodBodies).toHaveLength(8);
+    expect(a.lodBodies[0]).toMatchObject({ kind: 'star', radius: 26 });
+    expect(a.lodBodies.slice(1).every((l) => l.kind === 'planet')).toBe(true);
+    expect(a.lodBodies.map((l) => l.seed)).toEqual(b.lodBodies.map((l) => l.seed));
     a.dispose();
     b.dispose();
   });

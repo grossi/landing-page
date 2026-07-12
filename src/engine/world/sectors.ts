@@ -21,6 +21,13 @@ export interface SectorFieldOptions {
    * null content so the streaming diff needs no special casing.
    */
   reserved?: (x: number, y: number, z: number) => boolean;
+  /**
+   * Called after a sector's content is built and added to the scene —
+   * e.g. to register its `lodBodies` with a LodManager.
+   */
+  onContentAdded?: (content: SectorContent) => void;
+  /** Called just before a sector's content is removed and disposed. */
+  onContentRemoved?: (content: SectorContent) => void;
 }
 
 /** The cell the viewer currently occupies, plus its content (if built). */
@@ -93,11 +100,13 @@ export function createSectorField(scene: THREE.Scene, opts: SectorFieldOptions):
     // POI distances read matrixWorld, so make it valid before the next render
     content.group.updateMatrixWorld(true);
     activeSectors.set(key, content);
+    opts.onContentAdded?.(content);
   }
 
   function unloadSector(key: string) {
     const content = activeSectors.get(key);
     if (content) {
+      opts.onContentRemoved?.(content);
       scene.remove(content.group);
       content.dispose();
     }

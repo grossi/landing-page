@@ -65,6 +65,24 @@ export {
   type RadialField,
 } from 'engine/lod/geometry';
 export {
+  apparentScale,
+  ATMOSPHERE_FAR,
+  ATMOSPHERE_MAX_OPACITY,
+  ATMOSPHERE_NEAR,
+  atmosphereOpacity,
+  createLodManager,
+  LOD_FADE_S,
+  SCALE_RAMP_FAR,
+  SCALE_RAMP_FLOOR,
+  SCALE_RAMP_NEAR,
+  type LodBeacon,
+  type LodBodyHandle,
+  type LodBodyKind,
+  type LodManager,
+  type LodManagerOptions,
+  type LodRegistration,
+} from 'engine/lod/lodManager';
+export {
   clampDt,
   createStage,
   isPaused,
@@ -88,8 +106,12 @@ export {
 export {
   buildHomeSystem,
   buildSectorContent,
+  drawSectorHeader,
+  peekSectorBeacon,
   type Poi,
+  type SectorBeacon,
   type SectorContent,
+  type SectorHeader,
 } from 'engine/world/sectorContent';
 export {
   createSectorField,

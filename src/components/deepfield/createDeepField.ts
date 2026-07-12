@@ -1,5 +1,6 @@
 import * as THREE from 'three';
-import { DODEC, ICO_MID, OCT, RING_THIN, wireMat } from 'engine/render/assets';
+import { createLodManager } from 'engine/lod/lodManager';
+import { DODEC, OCT, RING_THIN, wireMat } from 'engine/render/assets';
 import { createDustField } from 'engine/render/dust';
 import { createStage } from 'engine/render/stage';
 import { createStarfield } from 'engine/render/starfield';
@@ -47,6 +48,11 @@ export function createDeepField(container: HTMLElement): () => void {
   // engine/render/assets are never tracked and never disposed.
   const wire = (opacity: number) => tracker.track(wireMat(opacity));
 
+  // LOD ladder for the drifting planets: they resolve from a dot to a
+  // displaced wireframe on approach (jobs budgeted low — it's a backdrop).
+  // Capped at level 3: the landing page is mood, not close inspection.
+  const lod = createLodManager(scene, { jobBudgetMs: 2 });
+
   // ---- distant stars (rotate with the view, never translate) ----
   {
     const stars = createStarfield({
@@ -77,17 +83,29 @@ export function createDeepField(container: HTMLElement): () => void {
       );
       group.add(rock);
     } else if (kind < 0.8) {
-      // planet, sometimes ringed
+      // planet, sometimes ringed — rendered through the LOD ladder. The
+      // registration lives as long as the body: recycled bodies keep their
+      // seed, so a respawned planet keeps its shape (cache hit, zero build).
       const r = 18 + Math.random() * 30;
-      const planet = new THREE.Mesh(ICO_MID, wire(0.45));
-      planet.scale.setScalar(r);
+      const planet = new THREE.Group(); // LOD anchor
       group.add(planet);
+      const scaleTargets: THREE.Object3D[] = [];
       if (Math.random() < 0.55) {
         const ring = new THREE.Mesh(RING_THIN, wire(0.6));
         ring.scale.setScalar(r);
         ring.rotation.x = Math.PI / 2 + (Math.random() - 0.5) * 0.7;
         group.add(ring);
+        scaleTargets.push(ring); // ring tracks the apparent-scale ramp
       }
+      lod.register({
+        seed: Math.floor(Math.random() * 2 ** 31),
+        radius: r,
+        kind: 'planet',
+        anchor: planet,
+        baseOpacity: 0.45,
+        maxLevel: 3,
+        scaleTargets,
+      });
     } else {
       // beacon / derelict — stacked octahedra
       const r = 8 + Math.random() * 8;
@@ -253,6 +271,9 @@ export function createDeepField(container: HTMLElement): () => void {
       dustCenter.copy(heading).multiplyScalar(60),
       dustVelocity.copy(heading).multiplyScalar(-speed * 2.4),
     );
+
+    // LOD: planets resolve (and swell) on approach; geometry jobs budgeted
+    lod.update(camera, container.clientHeight, dt);
   });
 
   return () => {
@@ -261,6 +282,7 @@ export function createDeepField(container: HTMLElement): () => void {
     window.removeEventListener('pointerdown', onPointerDown);
     window.removeEventListener('pointerup', onPointerUp);
     window.removeEventListener('pointercancel', onPointerUp);
+    lod.dispose();
     // stops the loop and frees every tracked geometry/material
     stage.dispose();
   };

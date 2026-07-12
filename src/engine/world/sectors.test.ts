@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
+import type { SectorContent } from 'engine/world/sectorContent';
 import { createSectorField, type SectorField } from 'engine/world/sectors';
 
 const SECTOR = 700;
@@ -92,6 +93,27 @@ describe('createSectorField', () => {
     expect(poiIds(field)).toEqual(before);
     field.forEachPoi((poi) => expect(poi.name).toBe(names.get(poi.id!)));
     field.dispose();
+  });
+
+  it('reports every content addition and removal through the hooks', () => {
+    const scene = new THREE.Scene();
+    const added: SectorContent[] = [];
+    const removed: SectorContent[] = [];
+    const field = makeField(scene, {
+      onContentAdded: (content) => added.push(content),
+      onContentRemoved: (content) => removed.push(content),
+    });
+    field.sync(at(0, 0, 0), true);
+    expect(added).toHaveLength(WINDOW);
+    expect(removed).toHaveLength(0);
+
+    field.sync(at(SECTOR * 40, 0, 0), true); // far away: everything evicted
+    expect(added).toHaveLength(2 * WINDOW);
+    expect(removed).toHaveLength(WINDOW);
+    for (const content of removed) expect(added).toContain(content);
+
+    field.dispose(); // disposal reports removals too
+    expect(removed).toHaveLength(2 * WINDOW);
   });
 
   it('dispose removes every sector group from the scene', () => {

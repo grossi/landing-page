@@ -1,10 +1,17 @@
 import * as THREE from 'three';
 import { mulberry32 } from 'engine/core/rng';
+import { createLodManager, type LodBodyHandle } from 'engine/lod/lodManager';
 import { wireMat } from 'engine/render/assets';
 import { createDustField } from 'engine/render/dust';
 import { createStage } from 'engine/render/stage';
 import { createStarfield } from 'engine/render/starfield';
-import { buildHomeSystem, type Poi } from 'engine/world/sectorContent';
+import {
+  buildHomeSystem,
+  peekSectorBeacon,
+  type Poi,
+  type SectorBeacon,
+  type SectorContent,
+} from 'engine/world/sectorContent';
 import { createSectorField } from 'engine/world/sectors';
 
 export interface EphemerisHudElements {
@@ -31,6 +38,11 @@ const DISCOVERY_RANGE = 60;
 /** The HUD flags "APPROACH" inside this surface distance. */
 const APPROACH_RANGE = 30;
 /**
+ * Sectors beyond the streamed window still show as far-contact beacon dots
+ * out to this Chebyshev cell range (peeked, zero geometry built).
+ */
+const BEACON_RANGE = 4;
+/**
  * Beyond this radius the ship is gently curved back toward charted space.
  * Not a gameplay wall — float32 world coordinates lose visible precision
  * (jitter) past ~10^5, so the playable universe is capped well below that.
@@ -52,16 +64,21 @@ const MAX_RANGE = 45000;
  * the caller controls layout/styling without re-rendering per frame.
  */
 export function createEphemeris(container: HTMLElement, hud: EphemerisHudElements): () => void {
-  const stage = createStage(container, { fov: 64, near: 0.5, far: 4000 });
+  // far covers the beacon-dot shell (BEACON_RANGE sectors on the diagonal)
+  const stage = createStage(container, { fov: 64, near: 0.5, far: 12000 });
   const { scene, camera, tracker } = stage;
 
   const worldSeed = Math.floor(Math.random() * 2 ** 31);
+
+  // ---- LOD ladder for planets/stars (screen-space rungs, cross-dissolve) ----
+  const lod = createLodManager(scene, { jobBudgetMs: 3 });
 
   // ---- the home system (permanent, at the origin) ----
   const home = buildHomeSystem(mulberry32(worldSeed ^ 0x5eed));
   home.pois.forEach((poi, i) => { poi.id = `home:${i}`; });
   scene.add(home.group);
   home.group.updateMatrixWorld(true);
+  home.lodBodies.forEach((body) => lod.register(body));
 
   // stars — attached to the ship's position each frame so the backdrop is
   // infinite (they only rotate with the camera, never translate past you)
@@ -80,12 +97,43 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
   const isHomeCell = (x: number, y: number, z: number) =>
     x >= -1 && x <= 1 && z >= -1 && z <= 1 && y >= -1 && y <= 0;
 
+  const lodHandles = new Map<SectorContent, LodBodyHandle[]>();
   const field = createSectorField(scene, {
     worldSeed,
     sectorSize: SECTOR,
     activeRange: ACTIVE_RANGE,
     reserved: isHomeCell,
+    onContentAdded: (content) => {
+      lodHandles.set(content, content.lodBodies.map((body) => lod.register(body)));
+    },
+    onContentRemoved: (content) => {
+      lodHandles.get(content)?.forEach((handle) => lod.unregister(handle));
+      lodHandles.delete(content);
+    },
   });
+
+  // far-contact beacons: sectors outside the streamed window peeked as dots;
+  // refreshed only when the ship crosses a cell boundary
+  let beaconCellKey = '';
+  const refreshBeacons = () => {
+    const cell = field.currentCell();
+    if (cell.key === beaconCellKey) return;
+    beaconCellKey = cell.key;
+    const beacons: SectorBeacon[] = [];
+    for (let dx = -BEACON_RANGE; dx <= BEACON_RANGE; dx++) {
+      for (let dy = -BEACON_RANGE; dy <= BEACON_RANGE; dy++) {
+        for (let dz = -BEACON_RANGE; dz <= BEACON_RANGE; dz++) {
+          if (Math.max(Math.abs(dx), Math.abs(dy), Math.abs(dz)) <= ACTIVE_RANGE) continue;
+          const x = cell.x + dx;
+          const y = cell.y + dy;
+          const z = cell.z + dz;
+          if (isHomeCell(x, y, z)) continue;
+          beacons.push(peekSectorBeacon(x, y, z, worldSeed, SECTOR));
+        }
+      }
+    }
+    lod.setBeacons(beacons);
+  };
 
   // ---- ship ----
   const ship = new THREE.Group();
@@ -201,6 +249,7 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
     // world updates
     home.update?.(dt, t);
     field.sync(ship.position);
+    refreshBeacons();
     field.updateContents(dt, t);
 
     // backdrop + dust follow the ship
@@ -234,6 +283,9 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
     const camTarget = scratch.set(0, 2.6, 9).applyQuaternion(ship.quaternion).add(ship.position);
     camera.position.lerp(camTarget, Math.min(1, dt * 5));
     camera.quaternion.slerp(ship.quaternion, Math.min(1, dt * 6));
+
+    // LOD after the camera settles: rung selection, dissolves, budgeted jobs
+    lod.update(camera, container.clientHeight, dt);
   });
 
   // debug/testing hook — lets tests (and the curious) jump across the universe
@@ -278,8 +330,9 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
     container.removeEventListener('pointerdown', onPointerDown);
     window.removeEventListener('pointerup', onPointerUp);
     container.removeEventListener('touchmove', onTouchMove);
-    field.dispose();
+    field.dispose(); // unregisters sector LOD bodies via onContentRemoved
     home.dispose();
+    lod.dispose();
     // Stops the loop and frees this mount's tracked resources (ship, stars,
     // dust). Shared module-level assets are never tracked, so navigating
     // Home ↔ EPHEMERIS no longer forces GPU re-uploads of shared geometry.
