@@ -434,7 +434,9 @@ export function buildSectorContent(
  * code path for updates, POIs, discovery, and disposal.
  */
 export function buildHomeSystem(rand: () => number): SectorContent {
-  const own: THREE.BufferGeometry[] = [];
+  // geometries AND the few per-mount materials created here; shared assets
+  // (MAT_*, UNIT_CIRCLE, …) are module-scope and never disposed
+  const own: Array<{ dispose(): void }> = [];
   const group = new THREE.Group();
   const pois: Poi[] = [];
 
@@ -450,7 +452,9 @@ export function buildHomeSystem(rand: () => number): SectorContent {
   for (let i = 0; i < 3; i++) {
     const haloGeo = new THREE.TorusGeometry(34 + i * 7, 0.12, 4, 64);
     own.push(haloGeo);
-    const halo = new THREE.Mesh(haloGeo, wireMat(0.22 - i * 0.06));
+    const haloMat = wireMat(0.22 - i * 0.06);
+    own.push(haloMat);
+    const halo = new THREE.Mesh(haloGeo, haloMat);
     halo.rotation.x = rand() * Math.PI;
     halo.rotation.y = rand() * Math.PI;
     haloSpins.push(0.05 + rand() * 0.1);

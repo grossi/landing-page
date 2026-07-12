@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { hashCoords, mulberry32 } from 'engine/core/rng';
+import { createStage } from 'engine/render/stage';
 import {
   buildHomeSystem,
   buildSectorContent,
@@ -54,17 +55,8 @@ const MAX_RANGE = 45000;
  * the caller controls layout/styling without re-rendering per frame.
  */
 export function createEphemeris(container: HTMLElement, hud: EphemerisHudElements): () => void {
-  const scene = new THREE.Scene();
-  const camera = new THREE.PerspectiveCamera(
-    64,
-    container.clientWidth / Math.max(1, container.clientHeight),
-    0.5,
-    4000,
-  );
-  const renderer = new THREE.WebGLRenderer({ antialias: true });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-  renderer.setSize(container.clientWidth, container.clientHeight);
-  container.appendChild(renderer.domElement);
+  const stage = createStage(container, { fov: 64, near: 0.5, far: 4000 });
+  const { scene, camera, tracker } = stage;
 
   const worldSeed = Math.floor(Math.random() * 2 ** 31);
 
@@ -85,9 +77,12 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
     }
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    tracker.track(geometry);
     const points = new THREE.Points(
       geometry,
-      new THREE.PointsMaterial({ color: 0xffffff, size: 1.8, transparent: true, opacity: 0.55 }),
+      tracker.track(
+        new THREE.PointsMaterial({ color: 0xffffff, size: 1.8, transparent: true, opacity: 0.55 }),
+      ),
     );
     points.frustumCulled = false;
     scene.add(points);
@@ -102,17 +97,20 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
   for (let i = 0; i < DUST_N * 3; i++) dustPositions[i] = (Math.random() - 0.5) * DUST_RANGE * 2;
   const dustGeo = new THREE.BufferGeometry();
   dustGeo.setAttribute('position', new THREE.BufferAttribute(dustPositions, 3));
+  tracker.track(dustGeo);
   const dust = new THREE.Points(
     dustGeo,
-    new THREE.PointsMaterial({
-      color: 0xffffff,
-      size: 1.6,
-      map: softSprite,
-      transparent: true,
-      opacity: 0.35,
-      depthWrite: false,
-      sizeAttenuation: true,
-    }),
+    tracker.track(
+      new THREE.PointsMaterial({
+        color: 0xffffff,
+        size: 1.6,
+        map: softSprite,
+        transparent: true,
+        opacity: 0.35,
+        depthWrite: false,
+        sizeAttenuation: true,
+      }),
+    ),
   );
   dust.frustumCulled = false;
   scene.add(dust);
@@ -198,16 +196,18 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
   // ---- ship ----
   const ship = new THREE.Group();
   const shipBody = new THREE.Group(); // banked visually; `ship` carries the control frame
-  const noseGeo = new THREE.ConeGeometry(0.8, 2.6, 4);
+  const noseGeo = tracker.track(new THREE.ConeGeometry(0.8, 2.6, 4));
   noseGeo.rotateX(-Math.PI / 2); // nose toward -z (camera forward)
-  shipBody.add(new THREE.Mesh(noseGeo, wireMat(1)));
-  const wingGeo = new THREE.BufferGeometry().setFromPoints([
-    new THREE.Vector3(-2, 0, 1),
-    new THREE.Vector3(0, 0, -1),
-    new THREE.Vector3(2, 0, 1),
-    new THREE.Vector3(-2, 0, 1),
-  ]);
-  shipBody.add(new THREE.Line(wingGeo, new THREE.LineBasicMaterial({ color: 0xffffff })));
+  shipBody.add(new THREE.Mesh(noseGeo, tracker.track(wireMat(1))));
+  const wingGeo = tracker.track(
+    new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(-2, 0, 1),
+      new THREE.Vector3(0, 0, -1),
+      new THREE.Vector3(2, 0, 1),
+      new THREE.Vector3(-2, 0, 1),
+    ]),
+  );
+  shipBody.add(new THREE.Line(wingGeo, tracker.track(new THREE.LineBasicMaterial({ color: 0xffffff }))));
   ship.add(shipBody);
   ship.position.set(0, 40, 900);
   scene.add(ship);
@@ -240,16 +240,6 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
   container.addEventListener('pointerdown', onPointerDown);
   window.addEventListener('pointerup', onPointerUp);
   container.addEventListener('touchmove', onTouchMove, { passive: true });
-
-  const onResize = () => {
-    const w = container.clientWidth;
-    const h = Math.max(1, container.clientHeight);
-    camera.aspect = w / h;
-    camera.updateProjectionMatrix();
-    renderer.setSize(w, h);
-  };
-  const resizeObserver = new ResizeObserver(onResize);
-  resizeObserver.observe(container);
 
   // ---- HUD (write only on change; per-frame DOM writes cause layout churn) ----
   const hudCache = new Map<HTMLElement, string>();
@@ -289,19 +279,10 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
   const attitude = { yaw: 0, pitch: -0.04 };
   const forward = new THREE.Vector3();
   const scratch = new THREE.Vector3();
-  let t = 0;
-  let rafId = 0;
-  let last = performance.now();
 
   syncSectors(true);
 
-  function tick(now: number) {
-    rafId = requestAnimationFrame(tick);
-    // rAF timestamps can predate `last` on the first frame — clamp to 0.
-    const dt = Math.max(0, Math.min((now - last) / 1000, 0.05));
-    last = now;
-    t += dt;
-
+  stage.start((dt, t) => {
     // steering
     let steerX = pointer.x;
     let steerY = pointer.y;
@@ -381,9 +362,7 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
     const camTarget = scratch.set(0, 2.6, 9).applyQuaternion(ship.quaternion).add(ship.position);
     camera.position.lerp(camTarget, Math.min(1, dt * 5));
     camera.quaternion.slerp(ship.quaternion, Math.min(1, dt * 6));
-    renderer.render(scene, camera);
-  }
-  rafId = requestAnimationFrame(tick);
+  });
 
   // debug/testing hook — lets tests (and the curious) jump across the universe
   interface EphemerisDebug {
@@ -419,8 +398,6 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
   globalHost.__EPHEMERIS = debugHandle;
 
   return () => {
-    cancelAnimationFrame(rafId);
-    resizeObserver.disconnect();
     if (globalHost.__EPHEMERIS === debugHandle) delete globalHost.__EPHEMERIS;
     window.removeEventListener('keydown', onKeyDown);
     window.removeEventListener('keyup', onKeyUp);
@@ -437,18 +414,9 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
     }
     activeSectors.clear();
     home.dispose();
-    // Frees what this mount created (ship, stars, dust, home meshes). Shared
-    // module-level assets from sectorContent get disposed too when reachable,
-    // which is safe: three.js re-uploads a disposed resource on next use.
-    scene.traverse((obj) => {
-      if (obj instanceof THREE.Mesh || obj instanceof THREE.Line || obj instanceof THREE.Points) {
-        obj.geometry.dispose();
-        const material = obj.material as THREE.Material | THREE.Material[];
-        if (Array.isArray(material)) material.forEach((m) => m.dispose());
-        else material.dispose();
-      }
-    });
-    renderer.dispose();
-    renderer.domElement.remove();
+    // Stops the loop and frees this mount's tracked resources (ship, stars,
+    // dust). Shared module-level assets are never tracked, so navigating
+    // Home ↔ EPHEMERIS no longer forces GPU re-uploads of shared geometry.
+    stage.dispose();
   };
 }

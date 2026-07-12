@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { DODEC, ICO_MID, OCT, RING_THIN, softSprite, wireMat } from 'engine/render/assets';
+import { createStage } from 'engine/render/stage';
 
 /** Per-body drift state kept outside the scene graph for type safety. */
 interface BodyState {
@@ -36,22 +37,13 @@ const DUST_RANGE = 150;
  * speed (the throttle); holding the button sustains a full burn.
  */
 export function createDeepField(container: HTMLElement): () => void {
-  const scene = new THREE.Scene();
-  scene.fog = new THREE.FogExp2(0x000000, 0.00115);
-  const camera = new THREE.PerspectiveCamera(
-    62,
-    container.clientWidth / Math.max(1, container.clientHeight),
-    0.1,
-    5000,
-  );
-  const renderer = new THREE.WebGLRenderer({ antialias: true });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-  renderer.setSize(container.clientWidth, container.clientHeight);
-  container.appendChild(renderer.domElement);
+  const stage = createStage(container, { fov: 62, near: 0.1, far: 5000, fogDensity: 0.00115 });
+  const { scene, camera, renderer, tracker } = stage;
 
-  // Geometries created here (star/dust point clouds); the shared unit
-  // geometries from engine/render/assets are intentionally never disposed.
-  const own: THREE.BufferGeometry[] = [];
+  // Mount-owned GPU resources (point clouds, fresh wireframe materials) are
+  // tracked so stage.dispose() frees them; the shared unit geometries from
+  // engine/render/assets are never tracked and never disposed.
+  const wire = (opacity: number) => tracker.track(wireMat(opacity));
 
   // ---- distant stars (rotate with the view, never translate) ----
   {
@@ -63,10 +55,12 @@ export function createDeepField(container: HTMLElement): () => void {
     }
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    own.push(geometry);
+    tracker.track(geometry);
     const stars = new THREE.Points(
       geometry,
-      new THREE.PointsMaterial({ color: 0xffffff, size: 1.7, transparent: true, opacity: 0.5, fog: false }),
+      tracker.track(
+        new THREE.PointsMaterial({ color: 0xffffff, size: 1.7, transparent: true, opacity: 0.5, fog: false }),
+      ),
     );
     stars.frustumCulled = false;
     scene.add(stars);
@@ -79,7 +73,7 @@ export function createDeepField(container: HTMLElement): () => void {
     if (kind < 0.45) {
       // asteroid — dodecahedron squashed a little differently on each axis
       const r = 6 + Math.random() * 14;
-      const rock = new THREE.Mesh(DODEC, wireMat(0.5));
+      const rock = new THREE.Mesh(DODEC, wire(0.5));
       rock.scale.set(
         r * (0.75 + Math.random() * 0.5),
         r * (0.75 + Math.random() * 0.5),
@@ -89,11 +83,11 @@ export function createDeepField(container: HTMLElement): () => void {
     } else if (kind < 0.8) {
       // planet, sometimes ringed
       const r = 18 + Math.random() * 30;
-      const planet = new THREE.Mesh(ICO_MID, wireMat(0.45));
+      const planet = new THREE.Mesh(ICO_MID, wire(0.45));
       planet.scale.setScalar(r);
       group.add(planet);
       if (Math.random() < 0.55) {
-        const ring = new THREE.Mesh(RING_THIN, wireMat(0.6));
+        const ring = new THREE.Mesh(RING_THIN, wire(0.6));
         ring.scale.setScalar(r);
         ring.rotation.x = Math.PI / 2 + (Math.random() - 0.5) * 0.7;
         group.add(ring);
@@ -101,9 +95,9 @@ export function createDeepField(container: HTMLElement): () => void {
     } else {
       // beacon / derelict — stacked octahedra
       const r = 8 + Math.random() * 8;
-      const outer = new THREE.Mesh(OCT, wireMat(0.7));
+      const outer = new THREE.Mesh(OCT, wire(0.7));
       outer.scale.setScalar(r);
-      const inner = new THREE.Mesh(OCT, wireMat(0.9));
+      const inner = new THREE.Mesh(OCT, wire(0.9));
       inner.scale.setScalar(r * 0.55);
       inner.rotation.z = Math.PI / 4;
       group.add(outer, inner);
@@ -130,17 +124,19 @@ export function createDeepField(container: HTMLElement): () => void {
   for (let i = 0; i < DUST_N * 3; i++) dustPositions[i] = (Math.random() - 0.5) * DUST_RANGE * 2;
   const dustGeo = new THREE.BufferGeometry();
   dustGeo.setAttribute('position', new THREE.BufferAttribute(dustPositions, 3));
-  own.push(dustGeo);
+  tracker.track(dustGeo);
   const dust = new THREE.Points(
     dustGeo,
-    new THREE.PointsMaterial({
-      color: 0xffffff,
-      size: 1.5,
-      map: softSprite,
-      transparent: true,
-      opacity: 0.34,
-      depthWrite: false,
-    }),
+    tracker.track(
+      new THREE.PointsMaterial({
+        color: 0xffffff,
+        size: 1.5,
+        map: softSprite,
+        transparent: true,
+        opacity: 0.34,
+        depthWrite: false,
+      }),
+    ),
   );
   dust.frustumCulled = false;
   scene.add(dust);
@@ -172,15 +168,6 @@ export function createDeepField(container: HTMLElement): () => void {
   const onPointerUp = () => {
     throttleDown = false;
   };
-  const onResize = () => {
-    camera.aspect = container.clientWidth / Math.max(1, container.clientHeight);
-    camera.updateProjectionMatrix();
-    renderer.setSize(container.clientWidth, container.clientHeight);
-  };
-  // observe the container, not the window — it tracks any layout change
-  // (same pattern as EPHEMERIS)
-  const resizeObserver = new ResizeObserver(onResize);
-  resizeObserver.observe(container);
   window.addEventListener('mousemove', onMouseMove);
   document.addEventListener('mouseleave', onMouseLeave);
   window.addEventListener('pointerdown', onPointerDown);
@@ -188,8 +175,6 @@ export function createDeepField(container: HTMLElement): () => void {
   window.addEventListener('pointercancel', onPointerUp);
 
   // ---- render loop ----
-  let last = performance.now();
-  let t = 0;
   const heading = new THREE.Vector3(0, 0, -1);
   const FORWARD = new THREE.Vector3(0, 0, -1);
   const X_AXIS = new THREE.Vector3(1, 0, 0);
@@ -223,12 +208,7 @@ export function createDeepField(container: HTMLElement): () => void {
       .addScaledVector(lift, (Math.random() - 0.5) * 2 * SPREAD_Y);
   };
 
-  renderer.setAnimationLoop((now) => {
-    // timestamps can predate `last` on the first frame — clamp to 0
-    const dt = Math.max(0, Math.min((now - last) / 1000, 0.05));
-    last = now;
-    t += dt;
-
+  stage.start((dt, t) => {
     // throttle: click kicks, hold burns, release coasts back to cruise
     if (throttleDown) boost += (8 - boost) * Math.min(1, dt * 1.6);
     else boost += (1 - boost) * Math.min(1, dt * 1.1);
@@ -310,27 +290,15 @@ export function createDeepField(container: HTMLElement): () => void {
       );
     }
     dp.needsUpdate = true;
-
-    renderer.render(scene, camera);
   });
 
   return () => {
-    renderer.setAnimationLoop(null);
-    resizeObserver.disconnect();
     window.removeEventListener('mousemove', onMouseMove);
     document.removeEventListener('mouseleave', onMouseLeave);
     window.removeEventListener('pointerdown', onPointerDown);
     window.removeEventListener('pointerup', onPointerUp);
     window.removeEventListener('pointercancel', onPointerUp);
-    // Materials are created per-mesh here so they're safe to dispose; the
-    // geometries are shared engine assets, so only our own point clouds go.
-    scene.traverse((obj) => {
-      if (obj instanceof THREE.Mesh || obj instanceof THREE.Points || obj instanceof THREE.LineSegments) {
-        (obj.material as THREE.Material).dispose();
-      }
-    });
-    own.forEach((g) => g.dispose());
-    renderer.dispose();
-    renderer.domElement.remove();
+    // stops the loop and frees every tracked geometry/material
+    stage.dispose();
   };
 }

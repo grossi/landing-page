@@ -5,6 +5,20 @@
 
 export { hashCoords, makeName, mulberry32, pickFrom, SYLLABLES } from 'engine/core/rng';
 export {
+  clampDt,
+  createStage,
+  isPaused,
+  MAX_DT,
+  type PauseSource,
+  type Stage,
+  type StageOptions,
+} from 'engine/render/stage';
+export {
+  createResourceTracker,
+  type Disposable,
+  type ResourceTracker,
+} from 'engine/render/resourceTracker';
+export {
   BEAM,
   BELT_MAT,
   BOX,

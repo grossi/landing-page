@@ -1,0 +1,164 @@
+import * as THREE from 'three';
+import { createResourceTracker, type ResourceTracker } from 'engine/render/resourceTracker';
+
+/**
+ * Longest simulation step (seconds) a single frame may take. Frames arriving
+ * late (background throttling, GC pause, resume from pause) are clamped so
+ * the world never jumps.
+ */
+export const MAX_DT = 0.05;
+
+/** Clamped frame delta in seconds from two millisecond timestamps. */
+export function clampDt(now: number, last: number): number {
+  return Math.max(0, Math.min((now - last) / 1000, MAX_DT));
+}
+
+/** Why the loop is (or isn't) running; any active source pauses it. */
+export type PauseSource = 'hidden' | 'offscreen' | 'explicit';
+
+/** Pure pause resolution: the loop runs only when no source is active. */
+export function isPaused(sources: ReadonlySet<PauseSource>): boolean {
+  return sources.size > 0;
+}
+
+export interface StageOptions {
+  fov?: number;
+  near?: number;
+  far?: number;
+  /** FogExp2 density (black fog); omit for no fog. */
+  fogDensity?: number;
+}
+
+export interface Stage {
+  scene: THREE.Scene;
+  camera: THREE.PerspectiveCamera;
+  renderer: THREE.WebGLRenderer;
+  /**
+   * Disposal registry for mount-owned GPU resources. Shared engine assets
+   * (engine/render/assets) are never tracked, so they survive teardown.
+   */
+  tracker: ResourceTracker;
+  /** Sets the per-frame callback and starts the loop; runs before render. */
+  start(onFrame: (dt: number, t: number) => void): void;
+  /** Explicit pause switch, on top of visibility/occlusion pausing. */
+  setPaused(paused: boolean): void;
+  /** Stops the loop, frees tracked resources, removes the canvas. */
+  dispose(): void;
+}
+
+/**
+ * Creates the shared render stage: scene + camera + renderer with the house
+ * policy, and a pausable, clamped frame loop.
+ *
+ * Renderer policy: MSAA stays on (1px white wireframes shimmer without it);
+ * pixels are shed via the DPR cap instead — DPR 2 + MSAA costs roughly 4×
+ * the fragment work of DPR 1 for no visible gain on this aesthetic.
+ *
+ * The loop pauses entirely (setAnimationLoop(null) — no half-rate idling)
+ * whenever the document is hidden, the container is scrolled out of view or
+ * occluded, or the caller asks; so the landing background costs ~zero when
+ * not being looked at. The clock resets on resume, so a pause never becomes
+ * a giant dt.
+ */
+export function createStage(container: HTMLElement, opts: StageOptions = {}): Stage {
+  const { fov = 60, near = 0.1, far = 5000, fogDensity } = opts;
+
+  const scene = new THREE.Scene();
+  if (fogDensity !== undefined) scene.fog = new THREE.FogExp2(0x000000, fogDensity);
+  const camera = new THREE.PerspectiveCamera(
+    fov,
+    container.clientWidth / Math.max(1, container.clientHeight),
+    near,
+    far,
+  );
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
+  renderer.setSize(container.clientWidth, container.clientHeight);
+  container.appendChild(renderer.domElement);
+
+  const tracker = createResourceTracker();
+
+  // ---- pausable clamped loop ----
+  let onFrame: ((dt: number, t: number) => void) | null = null;
+  let running = false;
+  let disposed = false;
+  let last = 0;
+  let t = 0;
+  const pauseSources = new Set<PauseSource>();
+
+  const frame = (now: number) => {
+    const dt = clampDt(now, last);
+    last = now;
+    t += dt;
+    onFrame?.(dt, t);
+    renderer.render(scene, camera);
+  };
+
+  const syncLoop = () => {
+    const shouldRun = !disposed && onFrame !== null && !isPaused(pauseSources);
+    if (shouldRun === running) return;
+    running = shouldRun;
+    if (shouldRun) {
+      // reset the clock so time spent paused never becomes a giant dt
+      last = performance.now();
+      renderer.setAnimationLoop(frame);
+    } else {
+      renderer.setAnimationLoop(null);
+    }
+  };
+
+  const setSource = (source: PauseSource, active: boolean) => {
+    if (active) pauseSources.add(source);
+    else pauseSources.delete(source);
+    syncLoop();
+  };
+
+  const onVisibilityChange = () => setSource('hidden', document.hidden);
+  document.addEventListener('visibilitychange', onVisibilityChange);
+  onVisibilityChange();
+
+  // browsers throttle rAF inconsistently for occluded-but-visible content;
+  // observing the container makes the pause deterministic
+  const intersectionObserver =
+    typeof IntersectionObserver === 'undefined'
+      ? null
+      : new IntersectionObserver(
+          (entries) => setSource('offscreen', !entries[entries.length - 1].isIntersecting),
+          { threshold: 0.01 },
+        );
+  intersectionObserver?.observe(container);
+
+  // observe the container, not the window — it tracks any layout change
+  const onResize = () => {
+    camera.aspect = container.clientWidth / Math.max(1, container.clientHeight);
+    camera.updateProjectionMatrix();
+    renderer.setSize(container.clientWidth, container.clientHeight);
+  };
+  const resizeObserver = new ResizeObserver(onResize);
+  resizeObserver.observe(container);
+
+  return {
+    scene,
+    camera,
+    renderer,
+    tracker,
+    start(cb) {
+      onFrame = cb;
+      syncLoop();
+    },
+    setPaused(paused) {
+      setSource('explicit', paused);
+    },
+    dispose() {
+      if (disposed) return;
+      disposed = true;
+      syncLoop();
+      resizeObserver.disconnect();
+      intersectionObserver?.disconnect();
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      tracker.dispose();
+      renderer.dispose();
+      renderer.domElement.remove();
+    },
+  };
+}
