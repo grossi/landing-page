@@ -97,8 +97,10 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
   scene.add(stars);
 
   // local dust — tiny soft points recycled around the ship so speed is
-  // visible even in the emptiest stretch of space
-  const dust = tracker.track(createDustField({ count: 260, range: 400, size: 3, opacity: 0.35 }));
+  // visible even in the emptiest stretch of space. The wrap span (2 × range)
+  // must divide SECTOR exactly, or a floating-origin rebase would teleport
+  // every particle by the remainder (6,000 % 800 = 400 — a visible pop).
+  const dust = tracker.track(createDustField({ count: 260, range: 500, size: 3, opacity: 0.35 }));
   scene.add(dust.points);
 
   // ---- procedural sectors ----
