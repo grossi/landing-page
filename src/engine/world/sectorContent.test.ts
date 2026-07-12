@@ -2,7 +2,7 @@
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
 import { hashCoords, mulberry32 } from 'engine/core/rng';
-import { buildHomeSystem, buildSectorContent } from 'components/ephemeris/sectorContent';
+import { buildHomeSystem, buildSectorContent } from 'engine/world/sectorContent';
 
 const SECTOR = 700;
 

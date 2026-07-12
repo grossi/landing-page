@@ -1,15 +1,11 @@
 import * as THREE from 'three';
-import { hashCoords, mulberry32 } from 'engine/core/rng';
+import { mulberry32 } from 'engine/core/rng';
+import { wireMat } from 'engine/render/assets';
 import { createDustField } from 'engine/render/dust';
 import { createStage } from 'engine/render/stage';
 import { createStarfield } from 'engine/render/starfield';
-import {
-  buildHomeSystem,
-  buildSectorContent,
-  wireMat,
-  type Poi,
-  type SectorContent,
-} from 'components/ephemeris/sectorContent';
+import { buildHomeSystem, type Poi } from 'engine/world/sectorContent';
+import { createSectorField } from 'engine/world/sectors';
 
 export interface EphemerisHudElements {
   /** Name of the nearest body, e.g. "VELORA-3". */
@@ -80,82 +76,16 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
   scene.add(dust.points);
 
   // ---- procedural sectors ----
-  // Value is null for cells reserved by the home system (no random content).
-  const activeSectors = new Map<string, SectorContent | null>();
-  const buildQueue = new Set<string>();
-  let cellX = NaN;
-  let cellY = NaN;
-  let cellZ = NaN;
-  let cellKey = '';
-
-  const keyOf = (x: number, y: number, z: number) => `${x},${y},${z}`;
-
   // The home system spans these cells; they get no random content.
   const isHomeCell = (x: number, y: number, z: number) =>
     x >= -1 && x <= 1 && z >= -1 && z <= 1 && y >= -1 && y <= 0;
 
-  function buildSector(key: string) {
-    if (activeSectors.has(key)) return;
-    const [x, y, z] = key.split(',').map(Number);
-    if (isHomeCell(x, y, z)) {
-      activeSectors.set(key, null);
-      return;
-    }
-    const rand = mulberry32(hashCoords(x, y, z, worldSeed));
-    const center = new THREE.Vector3((x + 0.5) * SECTOR, (y + 0.5) * SECTOR, (z + 0.5) * SECTOR);
-    const content = buildSectorContent(rand, SECTOR, center);
-    content.pois.forEach((poi, i) => { poi.id = `${key}:${i}`; });
-    scene.add(content.group);
-    // POI distances read matrixWorld, so make it valid before the next render
-    content.group.updateMatrixWorld(true);
-    activeSectors.set(key, content);
-  }
-
-  function syncSectors(immediate: boolean) {
-    const cx = Math.floor(ship.position.x / SECTOR);
-    const cy = Math.floor(ship.position.y / SECTOR);
-    const cz = Math.floor(ship.position.z / SECTOR);
-    const cellChanged = cx !== cellX || cy !== cellY || cz !== cellZ;
-    // most frames: same cell, nothing queued — skip all set/string work
-    if (!cellChanged && !immediate && buildQueue.size === 0) return;
-
-    if (cellChanged || immediate) {
-      cellX = cx; cellY = cy; cellZ = cz;
-      cellKey = keyOf(cx, cy, cz);
-      const needed = new Set<string>();
-      for (let dx = -ACTIVE_RANGE; dx <= ACTIVE_RANGE; dx++)
-        for (let dy = -ACTIVE_RANGE; dy <= ACTIVE_RANGE; dy++)
-          for (let dz = -ACTIVE_RANGE; dz <= ACTIVE_RANGE; dz++)
-            needed.add(keyOf(cx + dx, cy + dy, cz + dz));
-
-      for (const [key, content] of activeSectors) {
-        if (!needed.has(key)) {
-          if (content) {
-            scene.remove(content.group);
-            content.dispose();
-          }
-          activeSectors.delete(key);
-        }
-      }
-      for (const key of buildQueue) if (!needed.has(key)) buildQueue.delete(key);
-      for (const key of needed) {
-        if (activeSectors.has(key)) continue;
-        if (immediate) {
-          buildQueue.delete(key);
-          buildSector(key);
-        } else {
-          buildQueue.add(key);
-        }
-      }
-    }
-    // spread construction over frames to avoid hitches while flying
-    let built = 0;
-    for (const key of buildQueue) {
-      if (built++ >= 2) break;
-      buildQueue.delete(key);
-      buildSector(key);
-    }
-  }
+  const field = createSectorField(scene, {
+    worldSeed,
+    sectorSize: SECTOR,
+    activeRange: ACTIVE_RANGE,
+    reserved: isHomeCell,
+  });
 
   // ---- ship ----
   const ship = new THREE.Group();
@@ -244,7 +174,7 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
   const forward = new THREE.Vector3();
   const scratch = new THREE.Vector3();
 
-  syncSectors(true);
+  field.sync(ship.position, true);
 
   stage.start((dt, t) => {
     // steering
@@ -270,8 +200,8 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
 
     // world updates
     home.update?.(dt, t);
-    syncSectors(false);
-    for (const content of activeSectors.values()) content?.update?.(dt, t);
+    field.sync(ship.position);
+    field.updateContents(dt, t);
 
     // backdrop + dust follow the ship
     stars.position.copy(ship.position);
@@ -281,9 +211,7 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
     nearest.name = 'THE SUN';
     nearest.dist = ship.position.length() - 26;
     for (const poi of home.pois) considerPoi(poi);
-    for (const content of activeSectors.values()) {
-      if (content) for (const poi of content.pois) considerPoi(poi);
-    }
+    field.forEachPoi(considerPoi);
     if (pingTimer > 0) {
       pingTimer -= dt;
       hud.ping.style.opacity = String(Math.max(0, Math.min(1, pingTimer / 1.5)));
@@ -294,12 +222,12 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
       `${Math.max(0, Math.floor(nearest.dist))} km${nearest.dist < APPROACH_RANGE ? ' · APPROACH' : ''}`,
     );
     setHudText(hud.speed, `${Math.floor(velocity.length())} km/s`);
-    const cellContent = activeSectors.get(cellKey);
+    const cell = field.currentCell();
     setHudText(
       hud.sector,
-      isHomeCell(cellX, cellY, cellZ)
+      isHomeCell(cell.x, cell.y, cell.z)
         ? 'HOME SYSTEM'
-        : `${cellContent ? `${cellContent.name} · ` : ''}${cellX}.${cellY}.${cellZ}`,
+        : `${cell.content ? `${cell.content.name} · ` : ''}${cell.x}.${cell.y}.${cell.z}`,
     );
 
     // chase camera
@@ -325,7 +253,7 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
         camera.position.copy(scratch.set(0, 2.6, 9).applyQuaternion(ship.quaternion).add(ship.position));
         camera.quaternion.copy(ship.quaternion);
       }
-      syncSectors(true);
+      field.sync(ship.position, true);
     },
     pois: () => {
       const all: Array<{ name: string; x: number; y: number; z: number; radius: number }> = [];
@@ -334,7 +262,7 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
         all.push({ name: poi.name, x: poiPos.x, y: poiPos.y, z: poiPos.z, radius: poi.radius });
       };
       home.pois.forEach(collect);
-      for (const content of activeSectors.values()) content?.pois.forEach(collect);
+      field.forEachPoi(collect);
       return all;
     },
   };
@@ -350,13 +278,7 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
     container.removeEventListener('pointerdown', onPointerDown);
     window.removeEventListener('pointerup', onPointerUp);
     container.removeEventListener('touchmove', onTouchMove);
-    for (const content of activeSectors.values()) {
-      if (content) {
-        scene.remove(content.group);
-        content.dispose();
-      }
-    }
-    activeSectors.clear();
+    field.dispose();
     home.dispose();
     // Stops the loop and frees this mount's tracked resources (ship, stars,
     // dust). Shared module-level assets are never tracked, so navigating

@@ -68,6 +68,18 @@ export {
   type DustFieldOptions,
 } from 'engine/render/dust';
 export {
+  buildHomeSystem,
+  buildSectorContent,
+  type Poi,
+  type SectorContent,
+} from 'engine/world/sectorContent';
+export {
+  createSectorField,
+  type SectorField,
+  type SectorFieldCell,
+  type SectorFieldOptions,
+} from 'engine/world/sectors';
+export {
   BEAM,
   BELT_MAT,
   BOX,
