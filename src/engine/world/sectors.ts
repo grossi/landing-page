@@ -28,6 +28,15 @@ export interface SectorFieldOptions {
   onContentAdded?: (content: SectorContent) => void;
   /** Called just before a sector's content is removed and disposed. */
   onContentRemoved?: (content: SectorContent) => void;
+  /**
+   * Fade a freshly built sector's content in from black over this many
+   * seconds instead of popping it in (0/omitted = instant). The sector's
+   * shared materials are cloned per sector so the glide never touches other
+   * sectors or the other experience; clones are disposed on unload. LOD rung
+   * meshes are not involved — the LodManager's own dot→wireframe dissolve
+   * already covers bodies.
+   */
+  revealSeconds?: number;
 }
 
 /** The cell the viewer currently occupies, plus its content (if built). */
@@ -90,6 +99,7 @@ export function createSectorField(scene: THREE.Scene, opts: SectorFieldOptions):
   const activeRange = opts.activeRange ?? 1;
   const buildBudget = opts.buildBudgetPerFrame ?? 2;
   const reserved = opts.reserved ?? (() => false);
+  const revealSeconds = opts.revealSeconds ?? 0;
 
   // Render origin in absolute coordinates; grows by exact sector multiples
   // as the consumer rebases (floating origin). Built groups are positioned
@@ -104,6 +114,51 @@ export function createSectorField(scene: THREE.Scene, opts: SectorFieldOptions):
   let cellY = NaN;
   let cellZ = NaN;
   let cellKey = '';
+
+  // ---- spawn reveal (fade a new sector's content in from black) ----
+  // An entry lives as long as its sector: the clones it tracks stay assigned
+  // to the sector's meshes after the fade completes (`done`), and are only
+  // disposed on unload.
+  interface Reveal {
+    materials: { material: THREE.Material; baseOpacity: number }[];
+    t: number;
+    done: boolean;
+  }
+  const reveals = new Map<SectorContent, Reveal>();
+  const smooth = (t: number): number => t * t * (3 - 2 * t);
+
+  /**
+   * Re-materials every drawable in the group with per-sector clones at
+   * opacity 0 (deduped within the sector, so shared-asset draw batching is
+   * only split per sector, never per object). Content uses single materials
+   * throughout; material arrays are left untouched.
+   */
+  function startReveal(content: SectorContent) {
+    const clones = new Map<THREE.Material, THREE.Material>();
+    const reveal: Reveal = { materials: [], t: 0, done: false };
+    content.group.traverse((object) => {
+      const drawable = object as THREE.Mesh;
+      const material = drawable.material as THREE.Material | undefined;
+      if (!material || Array.isArray(material)) return;
+      let clone = clones.get(material);
+      if (!clone) {
+        clone = material.clone();
+        clone.transparent = true;
+        reveal.materials.push({ material: clone, baseOpacity: clone.opacity });
+        clone.opacity = 0;
+        clones.set(material, clone);
+      }
+      drawable.material = clone;
+    });
+    reveals.set(content, reveal);
+  }
+
+  function disposeReveal(content: SectorContent) {
+    const reveal = reveals.get(content);
+    if (!reveal) return;
+    for (const entry of reveal.materials) entry.material.dispose();
+    reveals.delete(content);
+  }
 
   function buildSector(key: string) {
     if (activeSectors.has(key)) return;
@@ -121,6 +176,7 @@ export function createSectorField(scene: THREE.Scene, opts: SectorFieldOptions):
       new THREE.Vector3(c.x - origin.x, c.y - origin.y, c.z - origin.z),
     );
     content.pois.forEach((poi, i) => { poi.id = `${key}:${i}`; });
+    if (revealSeconds > 0) startReveal(content);
     scene.add(content.group);
     // POI distances read matrixWorld, so make it valid before the next render
     content.group.updateMatrixWorld(true);
@@ -133,6 +189,7 @@ export function createSectorField(scene: THREE.Scene, opts: SectorFieldOptions):
     if (content) {
       opts.onContentRemoved?.(content);
       scene.remove(content.group);
+      disposeReveal(content);
       content.dispose();
     }
     activeSectors.delete(key);
@@ -189,6 +246,13 @@ export function createSectorField(scene: THREE.Scene, opts: SectorFieldOptions):
 
     updateContents(dt, t) {
       for (const content of activeSectors.values()) content?.update?.(dt, t);
+      for (const reveal of reveals.values()) {
+        if (reveal.done) continue;
+        reveal.t += dt;
+        const k = smooth(Math.min(1, reveal.t / revealSeconds));
+        for (const entry of reveal.materials) entry.material.opacity = entry.baseOpacity * k;
+        if (reveal.t >= revealSeconds) reveal.done = true;
+      }
     },
 
     forEachPoi(fn) {

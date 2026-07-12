@@ -175,6 +175,72 @@ describe('createSectorField', () => {
     fieldB.dispose();
   });
 
+  describe('revealSeconds (spawn fade-in)', () => {
+    /** Every drawable material under `scene`, deduped. */
+    const materialsOf = (scene: THREE.Scene) => {
+      const materials = new Set<THREE.Material>();
+      scene.traverse((object) => {
+        const material = (object as THREE.Mesh).material as THREE.Material | undefined;
+        if (material && !Array.isArray(material)) materials.add(material);
+      });
+      return [...materials];
+    };
+
+    it('builds sectors fully transparent and fades them in over the window', () => {
+      const scene = new THREE.Scene();
+      const field = makeField(scene, { revealSeconds: 1 });
+      field.sync(at(0, 0, 0), true);
+      const materials = materialsOf(scene);
+      expect(materials.length).toBeGreaterThan(0);
+      for (const material of materials) expect(material.opacity).toBe(0);
+
+      field.updateContents(0.5, 0.5); // halfway: strictly between 0 and base
+      for (const material of materials) {
+        expect(material.opacity).toBeGreaterThan(0);
+      }
+
+      field.updateContents(0.6, 1.1); // past the window: back to base opacity
+      const halfway = materialsOf(scene).map((m) => m.opacity);
+      field.updateContents(1, 2.1); // done reveals are settled — no drift
+      materialsOf(scene).forEach((material, i) => expect(material.opacity).toBe(halfway[i]));
+      for (const material of materials) expect(material.opacity).toBeGreaterThan(0.05);
+      field.dispose();
+    });
+
+    it('clones materials per sector so shared assets are never dimmed', () => {
+      const sceneA = new THREE.Scene();
+      const fieldA = makeField(sceneA, { revealSeconds: 1 });
+      fieldA.sync(at(0, 0, 0), true); // opacity 0 everywhere in A
+
+      const sceneB = new THREE.Scene();
+      const fieldB = makeField(sceneB); // no reveal: shared assets as-authored
+      fieldB.sync(at(0, 0, 0), true);
+      for (const material of materialsOf(sceneB)) {
+        expect(material.opacity).toBeGreaterThan(0);
+      }
+      // and no material instance is shared across the two fields
+      const cloned = new Set(materialsOf(sceneA));
+      for (const material of materialsOf(sceneB)) expect(cloned.has(material)).toBe(false);
+      fieldA.dispose();
+      fieldB.dispose();
+    });
+
+    it('without the option, materials are the shared assets (no clones)', () => {
+      const sceneA = new THREE.Scene();
+      const fieldA = makeField(sceneA);
+      fieldA.sync(at(0, 0, 0), true);
+      const sceneB = new THREE.Scene();
+      const fieldB = makeField(sceneB);
+      fieldB.sync(at(0, 0, 0), true);
+      // identical content in both scenes reuses the exact same material objects
+      const shared = new Set(materialsOf(sceneA));
+      const overlap = materialsOf(sceneB).filter((material) => shared.has(material));
+      expect(overlap.length).toBeGreaterThan(0);
+      fieldA.dispose();
+      fieldB.dispose();
+    });
+  });
+
   it('dispose removes every sector group from the scene', () => {
     const scene = new THREE.Scene();
     const field = makeField(scene);

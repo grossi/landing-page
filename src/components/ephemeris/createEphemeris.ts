@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { computeRebase } from 'engine/core/floatingOrigin';
-import { speedLimit } from 'engine/core/motion';
+import { BOOST_LIMIT_FACTOR, speedLimit } from 'engine/core/motion';
 import { mulberry32 } from 'engine/core/rng';
 import { createLodManager, type LodBeacon, type LodBodyHandle } from 'engine/lod/lodManager';
 import { wireMat } from 'engine/render/assets';
@@ -40,9 +40,16 @@ const ACTIVE_RANGE = 1;
  * out to this Chebyshev cell range (peeked, zero geometry built).
  */
 const BEACON_RANGE = 4;
-/** Open-space cruise speed; boost triples it (both capped by `speedLimit`). */
+/** Open-space cruise speed; boost quadruples it (see the speed-law block). */
 const CRUISE_SPEED = 1000;
-const BOOST_FACTOR = 3;
+const BOOST_FACTOR = 4;
+/** Camera FOV at cruise / under boost (the DEEP FIELD throttle-widen cue). */
+const CRUISE_FOV = 64;
+const BOOST_FOV = 71;
+/** Velocity response rates (1/s): a boost kicks, a slowdown eases. */
+const ACCEL_RATE = 2.2;
+const ACCEL_RATE_BOOST = 3.4;
+const DECEL_RATE = 1.4;
 /** First close approach inside this surface distance logs a POI. */
 const discoveryRange = (radius: number) => Math.max(150, radius * 1.2);
 /** The HUD flags "APPROACH" inside this surface distance. */
@@ -66,6 +73,8 @@ const approachRange = (radius: number) => Math.max(60, radius * 0.5);
  * (engine/core/motion), so deep-space hops stay quick while planetary
  * approaches decelerate into a controlled, seamless surface skim — and a
  * soft altitude floor pushes the ship out gently instead of ever crashing.
+ * The cap is direction-aware (pointing away from a body lifts it, so
+ * leaving is never a grind) and boosting punches through it.
  *
  * The sim owns its canvas; HUD text is written into the provided elements so
  * the caller controls layout/styling without re-rendering per frame.
@@ -74,7 +83,17 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
   // log depth: near 0.5 / far 60,000 spans five distance decades with nested
   // LOD shells + atmosphere rings — a linear z-buffer would z-fight them.
   // far covers the beacon-dot shell (BEACON_RANGE sectors on the diagonal).
-  const stage = createStage(container, { fov: 64, near: 0.5, far: 60000, logDepth: true });
+  // Gentle exp2 fog gives far content the DEEP FIELD emergence — geometry
+  // fades up from black over the ~12k → 3k approach band instead of popping.
+  // Far *contacts* stay visible regardless: the LOD dot/beacon layers and
+  // the starfield are fog-free, so fog shapes emergence, not awareness.
+  const stage = createStage(container, {
+    fov: CRUISE_FOV,
+    near: 0.5,
+    far: 60000,
+    logDepth: true,
+    fogDensity: 0.00011,
+  });
   const { scene, camera, tracker } = stage;
 
   const worldSeed = Math.floor(Math.random() * 2 ** 31);
@@ -92,7 +111,7 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
   // stars — attached to the ship's position each frame so the backdrop is
   // infinite (they only rotate with the camera, never translate past you);
   // the shell sits beyond the beacon range but inside the far plane
-  const stars = createStarfield({ count: 800, minRadius: 20000, spread: 20000, size: 26, opacity: 0.55 });
+  const stars = createStarfield({ count: 800, minRadius: 20000, spread: 20000, size: 26, opacity: 0.55, fog: false });
   tracker.track(stars.geometry);
   tracker.track(stars.material);
   scene.add(stars);
@@ -115,6 +134,9 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
     sectorSize: SECTOR,
     activeRange: ACTIVE_RANGE,
     reserved: isHomeCell,
+    // new sectors emerge from black (fog covers the distance ramp; this
+    // covers builds that land inside the visible band)
+    revealSeconds: 1.4,
     onContentAdded: (content) => {
       lodHandles.set(content, content.lodBodies.map((body) => lod.register(body)));
     },
@@ -282,11 +304,26 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
     shipBody.rotation.z += (-steerX * 0.9 - shipBody.rotation.z) * Math.min(1, dt * 8);
 
     // distance-proportional speed law: time-to-contact stays roughly
-    // constant, so approaches decelerate into a skim automatically
+    // constant, so approaches decelerate into a skim automatically. The cap
+    // is direction-aware (pointing away from the body relaxes it — leaving
+    // is never a grind) and a boost burn punches through it.
     forward.set(0, 0, -1).applyQuaternion(ship.quaternion);
-    const targetSpeed = Math.min(boost ? CRUISE_SPEED * BOOST_FACTOR : CRUISE_SPEED, speedLimit(nearest.dist));
-    velocity.lerp(scratch.copy(forward).multiplyScalar(targetSpeed), Math.min(1, dt * 2.2));
+    const approach = nearest.dist === Infinity
+      ? -1
+      : forward.dot(scratch.copy(nearest.center).sub(ship.position).normalize());
+    const limit = speedLimit(nearest.dist, approach) * (boost ? BOOST_LIMIT_FACTOR : 1);
+    const targetSpeed = Math.min(boost ? CRUISE_SPEED * BOOST_FACTOR : CRUISE_SPEED, limit);
+    // asymmetric response: the boost kick is felt, the slowdown never slams
+    const rate = velocity.length() < targetSpeed ? (boost ? ACCEL_RATE_BOOST : ACCEL_RATE) : DECEL_RATE;
+    velocity.lerp(scratch.copy(forward).multiplyScalar(targetSpeed), Math.min(1, dt * rate));
     ship.position.addScaledVector(velocity, dt);
+
+    // boost widens the FOV a touch (same cue as the Home throttle burn)
+    const targetFov = boost ? BOOST_FOV : CRUISE_FOV;
+    if (Math.abs(camera.fov - targetFov) > 0.01) {
+      camera.fov += (targetFov - camera.fov) * Math.min(1, dt * 5);
+      camera.updateProjectionMatrix();
+    }
 
     // floating origin: once the ship strays a sector from the render origin,
     // shift the whole render-local scene by an exact sector multiple — same
