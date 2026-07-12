@@ -1,3 +1,6 @@
+/** The terminal design language's one typeface, shared by every page. */
+export const monoFont = 'ui-monospace, "SF Mono", Menlo, monospace';
+
 export const socialLinks = {
   linkedin: 'https://www.linkedin.com/in/gabriel-r-rossi/',
   github: 'https://github.com/grossi',

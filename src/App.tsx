@@ -2,9 +2,14 @@ import React from 'react';
 import { BrowserRouter, Route, Routes } from 'react-router';
 import Experience from 'pages/Experience';
 
-// Blog is lazy so the markdown/syntax-highlighter chunk loads only on /blog;
-// Experience is the landing route and renders without a chunk round-trip.
+// Blog and the three.js pages are lazy so their chunks (markdown/syntax
+// highlighting, three.js) load only on their routes. Home is the landing
+// route but still lazy — it needs the three.js chunk either way, and its
+// Suspense fallback below is a plain black screen so the swap is invisible.
+const Home = React.lazy(() => import('pages/Home'));
 const Blog = React.lazy(() => import('pages/Blog'));
+const Arcade = React.lazy(() => import('pages/Arcade'));
+const Ephemeris = React.lazy(() => import('pages/Ephemeris'));
 
 interface ErrorBoundaryState {
   hasError: boolean;
@@ -40,7 +45,16 @@ function App() {
         <React.Suspense fallback={null}>
           <Routes>
             <Route path="/blog" element={<Blog />} />
-            <Route path="/" element={<Experience />} />
+            <Route path="/arcade" element={<Arcade />} />
+            <Route path="/ephemeris" element={<Ephemeris />} />
+            <Route
+              path="/"
+              element={
+                <React.Suspense fallback={<div style={{ height: '100vh', background: '#000' }} />}>
+                  <Home />
+                </React.Suspense>
+              }
+            />
             <Route path="/experience" element={<Experience />} />
           </Routes>
         </React.Suspense>

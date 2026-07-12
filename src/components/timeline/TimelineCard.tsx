@@ -51,11 +51,10 @@ const TimelineCard: React.FC<TimelineCardProps> = ({ item, isLeft }) => {
       <MotionBox
         bg={timelineColors.cardBg}
         p={6}
-        borderRadius="xl"
+        borderRadius={0}
         borderWidth={1}
-        borderColor={item.highlight ? timelineColors.highlightColor : timelineColors.borderColor}
-        shadow={item.highlight ? 'lg' : 'md'}
-        whileHover={{ scale: 1.02, boxShadow: 'var(--chakra-shadows-xl)' }}
+        borderColor={item.highlight ? 'rgba(255,255,255,0.6)' : timelineColors.borderColor}
+        whileHover={{ scale: 1.02 }}
         transition={{ duration: 0.2 }}
         cursor="pointer"
         onClick={handleClick}
@@ -73,7 +72,7 @@ const TimelineCard: React.FC<TimelineCardProps> = ({ item, isLeft }) => {
           isLeft={isLeft}
         />
 
-        <Text fontSize="sm" color={{ base: 'gray.600', _dark: 'gray.400' }} mb={4}>
+        <Text fontSize="sm" color="whiteAlpha.700" mb={4}>
           {item.description}
         </Text>
 

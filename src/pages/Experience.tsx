@@ -12,10 +12,7 @@ const Experience: React.FC = () => {
   return (
     <PageLayout maxW="container.lg">
       <VStack gap={16}>
-        <ExperienceHeader
-          title="Professional Journey"
-          subtitle="A decade of growth, learning, and building impactful solutions"
-        />
+        <ExperienceHeader title="Professional Journey" />
 
         <Timeline items={timelineItems} />
       </VStack>

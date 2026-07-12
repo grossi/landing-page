@@ -1,18 +1,11 @@
-import { TimelineColors, TimelineItem, TimelineParticleConfig } from 'components/timeline/types';
+import { TimelineColors, TimelineParticleConfig } from 'components/timeline/types';
 
-// Chakra conditional tokens resolve per color mode, so no useColorMode needed.
-// Black-and-white palette: neutral grays only.
+// Terminal wireframe palette: black surfaces, thin white-alpha strokes.
 export const timelineColors: TimelineColors = {
-  cardBg: { base: 'white', _dark: 'gray.800' },
-  borderColor: { base: 'gray.200', _dark: 'gray.700' },
-  lineColor: { base: 'gray.300', _dark: 'gray.600' },
-  highlightColor: { base: 'gray.900', _dark: 'gray.100' },
-};
-
-export const typeColorPalettes: Record<TimelineItem['type'], string> = {
-  work: 'gray',
-  education: 'gray',
-  achievement: 'gray',
+  cardBg: 'black',
+  borderColor: 'rgba(255,255,255,0.25)',
+  lineColor: 'rgba(255,255,255,0.2)',
+  highlightColor: 'white',
 };
 
 export const particleConfig: TimelineParticleConfig = {

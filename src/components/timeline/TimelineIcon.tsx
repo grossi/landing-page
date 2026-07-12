@@ -35,9 +35,9 @@ const TimelineIcon: React.FC<TimelineIconProps> = ({
   return (
     <MotionCircle
       size="60px"
-      bg={timelineColors.cardBg}
-      borderWidth={3}
-      borderColor={isHighlighted ? timelineColors.highlightColor : timelineColors.lineColor}
+      bg="black"
+      borderWidth={1}
+      borderColor={isHighlighted ? 'rgba(255,255,255,0.8)' : 'rgba(255,255,255,0.35)'}
       zIndex={50}
       whileHover={{ scale: 1.2 }}
       transition={{ duration: 0.2 }}

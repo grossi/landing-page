@@ -1,0 +1,277 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<link rel="icon" href="/logo98.png">
+<title>DRIFT BELT</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+  canvas { display: block; }
+  .hud {
+    position: fixed; inset: 0; pointer-events: none; color: #fff;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    user-select: none; -webkit-user-select: none;
+  }
+  .score { position: absolute; top: 18px; left: 20px; font-size: 15px; letter-spacing: .18em; }
+  .timer { position: absolute; top: 18px; right: 20px; font-size: 15px; letter-spacing: .18em; }
+  .dist  { position: absolute; top: 42px; right: 20px; font-size: 12px; letter-spacing: .18em; opacity: .5; }
+  .marker { position: absolute; font-size: 18px; transform: translate(-50%, -50%); text-shadow: 0 0 6px #000; }
+  .reticle {
+    position: absolute; left: 50%; top: 50%; width: 14px; height: 14px;
+    transform: translate(-50%, -50%); border: 1px solid rgba(255,255,255,.4); border-radius: 50%;
+  }
+  .center {
+    position: absolute; inset: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; text-align: center; gap: 14px;
+  }
+  .title { font-size: clamp(28px, 6vw, 54px); letter-spacing: .32em; font-weight: 700; }
+  .sub   { font-size: 13px; letter-spacing: .22em; opacity: .6; line-height: 2; }
+  .blink { animation: blink 1.2s steps(2) infinite; font-size: 13px; letter-spacing: .3em; }
+  @keyframes blink { 50% { opacity: 0; } }
+  .hidden { display: none; }
+</style>
+<div class="hud">
+  <div class="score" id="score"></div>
+  <div class="timer" id="timer"></div>
+  <div class="dist" id="dist"></div>
+  <div class="reticle" id="reticle"></div>
+  <div class="marker hidden" id="marker">◇</div>
+  <div class="center" id="menu">
+    <div class="title">DRIFT BELT</div>
+    <div class="sub">FREE FLIGHT &middot; CHASE THE BEACONS THROUGH THE BELT<br>MOUSE STEERS &middot; HOLD / W = BOOST &middot; DON'T HIT THE ROCKS</div>
+    <div class="blink">PRESS ANY KEY TO START</div>
+  </div>
+  <div class="center hidden" id="over">
+    <div class="title" id="overTitle">ADRIFT</div>
+    <div class="sub" id="finalScore"></div>
+    <div class="blink">PRESS ANY KEY TO RETRY</div>
+  </div>
+</div>
+<script type="importmap">
+  { "imports": { "three": "/arcade/vendor/three.module.min.js" } }
+</script>
+<script type="module">
+import * as THREE from 'three';
+
+const DEMO = new URLSearchParams(location.search).has('demo');
+const scene = new THREE.Scene();
+scene.fog = new THREE.Fog(0x000000, 100, 320);
+const camera = new THREE.PerspectiveCamera(66, innerWidth / innerHeight, 0.5, 900);
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+document.body.appendChild(renderer.domElement);
+
+const wireMat = new THREE.MeshBasicMaterial({ color: 0xffffff, wireframe: true });
+
+// ship (visible in chase cam)
+const ship = new THREE.Group();
+const body = new THREE.Group(); // banked visually; ship carries the control frame
+const shipGeo = new THREE.ConeGeometry(0.8, 2.6, 4);
+shipGeo.rotateX(-Math.PI / 2); // nose toward -z (camera forward)
+body.add(new THREE.Mesh(shipGeo, wireMat));
+const wingGeo = new THREE.BufferGeometry().setFromPoints([
+  new THREE.Vector3(-2, 0, 1), new THREE.Vector3(0, 0, -1), new THREE.Vector3(2, 0, 1), new THREE.Vector3(-2, 0, 1)
+]);
+body.add(new THREE.Line(wingGeo, new THREE.LineBasicMaterial({ color: 0xffffff })));
+ship.add(body);
+scene.add(ship);
+
+// starfield (attached to ship so it reads as infinite backdrop)
+{
+  const n = 500, pos = new Float32Array(n * 3);
+  for (let i = 0; i < n; i++) {
+    const v = new THREE.Vector3().randomDirection().multiplyScalar(500 + Math.random() * 200);
+    pos.set([v.x, v.y, v.z], i * 3);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  const stars = new THREE.Points(g, new THREE.PointsMaterial({ color: 0xffffff, size: 1.6, transparent: true, opacity: 0.6, fog: false }));
+  ship.add(stars);
+}
+
+// asteroid belt — pool recycled around the ship
+const AST_N = 110, asteroids = [];
+const astGeos = [new THREE.IcosahedronGeometry(2, 0), new THREE.IcosahedronGeometry(3.6, 0), new THREE.IcosahedronGeometry(6, 1)];
+const AST_R = [2, 3.6, 6];
+for (let i = 0; i < AST_N; i++) {
+  const k = Math.floor(Math.random() * 3);
+  const m = new THREE.Mesh(astGeos[k], wireMat);
+  m.userData = { r: AST_R[k], rx: (Math.random() - 0.5), ry: (Math.random() - 0.5) };
+  asteroids.push(m); scene.add(m);
+}
+function placeAsteroid(m, nearShip) {
+  const dir = new THREE.Vector3().randomDirection();
+  const d = nearShip ? 60 + Math.random() * 240 : 140 + Math.random() * 160;
+  m.position.copy(ship.position).addScaledVector(dir, d);
+  // never spawn right in front of the nose
+  const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(ship.quaternion);
+  if (m.position.clone().sub(ship.position).normalize().dot(fwd) > 0.92 && d < 120)
+    m.position.addScaledVector(fwd.clone().cross(new THREE.Vector3(0, 1, 0)).normalize(), 30);
+}
+
+// beacon
+const beacon = new THREE.Mesh(new THREE.OctahedronGeometry(4, 0), wireMat);
+const beaconRing = new THREE.Mesh(new THREE.TorusGeometry(7, 0.15, 6, 24), wireMat);
+beacon.add(beaconRing);
+scene.add(beacon);
+function placeBeacon() {
+  const dir = new THREE.Vector3().randomDirection();
+  beacon.position.copy(ship.position).addScaledVector(dir, 170 + Math.random() * 90);
+}
+
+const scoreEl = document.getElementById('score'), timerEl = document.getElementById('timer'),
+      distEl = document.getElementById('dist'), markerEl = document.getElementById('marker'),
+      menuEl = document.getElementById('menu'), overEl = document.getElementById('over'),
+      overTitle = document.getElementById('overTitle'), finalEl = document.getElementById('finalScore');
+
+let state = 'menu', score = 0, timeLeft = 35, boost = false, lockUntil = 0;
+const vel = new THREE.Vector3();
+const yawPitch = { yaw: 0, pitch: 0 };
+
+function reset() {
+  score = 0; timeLeft = 35;
+  ship.position.set(0, 0, 0);
+  ship.quaternion.identity();
+  yawPitch.yaw = 0; yawPitch.pitch = 0;
+  vel.set(0, 0, 0);
+  for (const a of asteroids) placeAsteroid(a, true);
+  placeBeacon();
+  state = 'play';
+  menuEl.classList.add('hidden'); overEl.classList.add('hidden');
+}
+function gameOver(title) {
+  state = 'over';
+  overTitle.textContent = title;
+  finalEl.textContent = 'BEACONS ' + score;
+  overEl.classList.remove('hidden');
+  lockUntil = performance.now() + 600;
+}
+
+const keys = {};
+let pointer = { x: 0, y: 0 }, pointerDown = false;
+function press() {
+  if (performance.now() < lockUntil) return;
+  if (state !== 'play') reset();
+}
+addEventListener('keydown', e => { keys[e.code] = true; press(); });
+addEventListener('keyup', e => { keys[e.code] = false; });
+addEventListener('pointermove', e => { pointer = { x: e.clientX / innerWidth * 2 - 1, y: e.clientY / innerHeight * 2 - 1 }; });
+addEventListener('pointerdown', e => { pointerDown = true; press(); });
+addEventListener('pointerup', () => { pointerDown = false; });
+addEventListener('touchmove', e => {
+  pointer = { x: e.touches[0].clientX / innerWidth * 2 - 1, y: e.touches[0].clientY / innerHeight * 2 - 1 };
+}, { passive: true });
+
+const fwd = new THREE.Vector3(), toB = new THREE.Vector3(), tmp = new THREE.Vector3();
+
+let last = performance.now();
+function tick(now) {
+  requestAnimationFrame(tick);
+  const dt = Math.max(0, Math.min((now - last) / 1000, 0.05));
+  last = now;
+
+  if (state === 'play') {
+    // steering input
+    let sx = pointer.x, sy = pointer.y;
+    boost = pointerDown || keys.KeyW || keys.ArrowUp || keys.Space;
+    if (keys.ArrowLeft || keys.KeyA) sx = -0.7;
+    if (keys.ArrowRight || keys.KeyD) sx = 0.7;
+    if (DEMO) {
+      toB.copy(beacon.position).sub(ship.position);
+      const local = tmp.copy(toB).applyQuaternion(ship.quaternion.clone().invert()).normalize();
+      if (local.z > 0) { // beacon behind — commit to a hard turn
+        sx = local.x >= 0 ? 0.85 : -0.85;
+        sy = Math.max(-0.6, Math.min(0.6, -local.y * 2));
+        boost = false;
+      } else {
+        sx = Math.max(-0.85, Math.min(0.85, local.x * 2.2));
+        sy = Math.max(-0.85, Math.min(0.85, -local.y * 2.2));
+        boost = local.z < -0.6;
+      }
+      // rock avoidance: any asteroid close & ahead → steer away
+      for (const a of asteroids) {
+        tmp.copy(a.position).sub(ship.position);
+        const d = tmp.length();
+        if (d < 34) {
+          const l = tmp.applyQuaternion(ship.quaternion.clone().invert());
+          if (l.z < 0 && Math.hypot(l.x, l.y) < a.userData.r + 9) {
+            sx = l.x > 0 ? -0.9 : 0.9;
+            sy = l.y > 0 ? 0.9 : -0.9;
+            boost = false;
+            break;
+          }
+        }
+      }
+    }
+    // turn
+    yawPitch.yaw -= sx * 2.7 * dt;
+    yawPitch.pitch -= sy * 2.1 * dt;
+    yawPitch.pitch = Math.max(-1.35, Math.min(1.35, yawPitch.pitch));
+    ship.quaternion.setFromEuler(new THREE.Euler(yawPitch.pitch, yawPitch.yaw, 0, 'YXZ'));
+    body.rotation.z += ((-sx * 0.9) - body.rotation.z) * Math.min(1, dt * 8); // visual bank only
+
+    // momentum flight
+    fwd.set(0, 0, -1).applyQuaternion(ship.quaternion);
+    const targetSpeed = boost ? 95 : 48;
+    vel.lerp(tmp.copy(fwd).multiplyScalar(targetSpeed), Math.min(1, dt * 2.6));
+    ship.position.addScaledVector(vel, dt);
+
+    // recycle far asteroids, spin near ones, collide
+    for (const a of asteroids) {
+      a.rotation.x += a.userData.rx * dt; a.rotation.y += a.userData.ry * dt;
+      const d = a.position.distanceTo(ship.position);
+      if (d > 340) placeAsteroid(a, false);
+      else if (d < a.userData.r + 1.4) return gameOver('WRECKED');
+    }
+
+    // beacon
+    beacon.rotation.y += dt * 1.5;
+    beaconRing.rotation.x += dt * 0.9;
+    const bs = 1 + Math.sin(now / 180) * 0.12;
+    beacon.scale.set(bs, bs, bs);
+    const bd = beacon.position.distanceTo(ship.position);
+    if (bd < 13) {
+      score++; timeLeft = Math.min(60, timeLeft + 9);
+      placeBeacon();
+    }
+    distEl.textContent = 'BEACON ' + Math.floor(bd) + 'm';
+
+    timeLeft -= dt;
+    if (timeLeft <= 0) { timeLeft = 0; gameOver('OUT OF TIME'); }
+    scoreEl.textContent = 'BEACONS ' + score;
+    timerEl.textContent = timeLeft.toFixed(1);
+    timerEl.style.opacity = timeLeft < 8 && Math.floor(now / 250) % 2 ? 0.25 : 1;
+
+    // beacon screen marker
+    tmp.copy(beacon.position).project(camera);
+    const behind = tmp.z > 1;
+    let mx = (tmp.x * 0.5 + 0.5) * innerWidth, my = (-tmp.y * 0.5 + 0.5) * innerHeight;
+    if (behind || mx < 0 || mx > innerWidth || my < 0 || my > innerHeight) {
+      if (behind) { mx = innerWidth - mx; my = innerHeight; }
+      mx = Math.max(24, Math.min(innerWidth - 24, mx));
+      my = Math.max(24, Math.min(innerHeight - 24, my));
+    }
+    markerEl.classList.remove('hidden');
+    markerEl.style.left = mx + 'px';
+    markerEl.style.top = my + 'px';
+    markerEl.textContent = bd < 40 ? '◆' : '◇';
+  } else {
+    markerEl.classList.add('hidden');
+  }
+
+  // chase camera
+  const camTarget = tmp.copy(new THREE.Vector3(0, 2.6, 9)).applyQuaternion(ship.quaternion).add(ship.position);
+  camera.position.lerp(camTarget, Math.min(1, 0.016 * 60 * dt * 5));
+  camera.quaternion.slerp(ship.quaternion, Math.min(1, dt * 6));
+  renderer.render(scene, camera);
+}
+for (const a of asteroids) placeAsteroid(a, true); // menu backdrop
+placeBeacon();
+requestAnimationFrame(tick);
+
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+if (DEMO) setTimeout(reset, 400);
+</script>

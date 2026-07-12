@@ -26,6 +26,7 @@ export default defineConfig({
           react: ['react', 'react-dom', 'react-router'],
           chakra: ['@chakra-ui/react', '@emotion/react', '@emotion/styled', 'next-themes'],
           motion: ['framer-motion'],
+          three: ['three'],
         },
       },
     },

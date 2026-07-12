@@ -16,7 +16,9 @@ const Timeline: React.FC<TimelineProps> = ({ items }) => {
   const lineHeight = useTransform(scrollYProgress, [0, 1], ['0%', '100%']);
 
   return (
-    <Box position="relative" w="full" overflow="visible">
+    // x-axis clipped: below-the-fold items wait at x ±50 for their
+    // slide-in, which otherwise widens the page on narrow screens
+    <Box position="relative" w="full" overflowX="clip">
       {/* Background timeline line */}
       <Box
         position="absolute"

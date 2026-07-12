@@ -1,0 +1,263 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<link rel="icon" href="/logo98.png">
+<title>EPHEMERIS</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+  canvas { display: block; }
+  .hud {
+    position: fixed; inset: 0; pointer-events: none; color: #fff;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    user-select: none; -webkit-user-select: none;
+  }
+  .body  { position: absolute; top: 18px; left: 20px; font-size: 15px; letter-spacing: .18em; }
+  .dist  { position: absolute; top: 42px; left: 20px; font-size: 12px; letter-spacing: .18em; opacity: .5; }
+  .speed { position: absolute; top: 18px; right: 20px; font-size: 12px; letter-spacing: .18em; opacity: .5; }
+  .hint  {
+    position: absolute; bottom: 26px; left: 0; right: 0; text-align: center;
+    font-size: 12px; letter-spacing: .28em; opacity: .45;
+  }
+  .title-line {
+    position: absolute; top: 26px; left: 0; right: 0; text-align: center;
+    font-size: 13px; letter-spacing: .5em; opacity: .8;
+  }
+</style>
+<div class="hud">
+  <div class="title-line">EPHEMERIS</div>
+  <div class="body" id="body"></div>
+  <div class="dist" id="dist"></div>
+  <div class="speed" id="speed"></div>
+  <div class="hint" id="hint">MOUSE STEERS &middot; HOLD / W = BURN &middot; NOTHING HERE CAN HURT YOU</div>
+</div>
+<script type="importmap">
+  { "imports": { "three": "/arcade/vendor/three.module.min.js" } }
+</script>
+<script type="module">
+import * as THREE from 'three';
+
+const DEMO = new URLSearchParams(location.search).has('demo');
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(64, innerWidth / innerHeight, 0.5, 4000);
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+document.body.appendChild(renderer.domElement);
+
+const wire = o => new THREE.MeshBasicMaterial({ color: 0xffffff, wireframe: true, transparent: true, opacity: o });
+
+// ---- the system ----
+const SYLL = ['KHE', 'VEL', 'ORA', 'TAU', 'MIR', 'SEN', 'DUV', 'ALK', 'RHO', 'ZEPH', 'CAL', 'IMB'];
+const pick = a => a[Math.floor(Math.random() * a.length)];
+const nameOf = i => pick(SYLL) + pick(SYLL).toLowerCase() + '-' + (i + 1);
+
+// sun
+const sun = new THREE.Mesh(new THREE.IcosahedronGeometry(26, 2), wire(0.9));
+scene.add(sun);
+for (let i = 0; i < 3; i++) { // halo rings
+  const h = new THREE.Mesh(new THREE.TorusGeometry(34 + i * 7, 0.12, 4, 64), wire(0.22 - i * 0.06));
+  h.rotation.x = Math.random() * Math.PI; h.rotation.y = Math.random() * Math.PI;
+  h.userData.spin = 0.05 + Math.random() * 0.1;
+  sun.add(h);
+}
+
+const planets = [];
+const orbitMat = new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.1 });
+const R = [95, 150, 215, 300, 400, 520, 660];
+for (let i = 0; i < R.length; i++) {
+  const radius = 3.5 + Math.random() * 10;
+  const geo = new THREE.IcosahedronGeometry(radius, radius > 9 ? 1 : 0);
+  const m = new THREE.Mesh(geo, wire(0.85));
+  m.userData = {
+    name: nameOf(i).toUpperCase(), r: R[i], radius,
+    speed: 0.5 / Math.pow(R[i] / 95, 1.5) * 0.06,
+    phase: Math.random() * Math.PI * 2,
+    spin: 0.1 + Math.random() * 0.4, moons: []
+  };
+  // orbit line
+  const pts = [];
+  for (let a = 0; a <= 96; a++) pts.push(new THREE.Vector3(Math.cos(a / 96 * Math.PI * 2) * R[i], 0, Math.sin(a / 96 * Math.PI * 2) * R[i]));
+  scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), orbitMat));
+  // rings on some
+  if (Math.random() < 0.4) {
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(radius * 1.9, 0.15, 4, 42), wire(0.5));
+    ring.rotation.x = Math.PI / 2 + (Math.random() - 0.5) * 0.6;
+    m.add(ring);
+  }
+  // moons
+  const nm = Math.random() < 0.5 ? 1 + Math.floor(Math.random() * 2) : 0;
+  for (let k = 0; k < nm; k++) {
+    const moon = new THREE.Mesh(new THREE.IcosahedronGeometry(radius * 0.22, 0), wire(0.7));
+    moon.userData = { r: radius * (2.6 + k * 1.4), speed: 0.5 + Math.random(), phase: Math.random() * Math.PI * 2 };
+    m.add(moon);
+    m.userData.moons.push(moon);
+  }
+  planets.push(m); scene.add(m);
+}
+
+// asteroid belt between orbits 3 and 4
+const beltGroup = new THREE.Group();
+{
+  const n = 500, pos = new Float32Array(n * 3);
+  for (let i = 0; i < n; i++) {
+    const a = Math.random() * Math.PI * 2, r = 340 + Math.random() * 34;
+    pos[i * 3] = Math.cos(a) * r;
+    pos[i * 3 + 1] = (Math.random() - 0.5) * 9;
+    pos[i * 3 + 2] = Math.sin(a) * r;
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  beltGroup.add(new THREE.Points(g, new THREE.PointsMaterial({ color: 0xffffff, size: 0.9, transparent: true, opacity: 0.55 })));
+  scene.add(beltGroup);
+}
+// comet on eccentric orbit with trail
+const comet = new THREE.Mesh(new THREE.IcosahedronGeometry(1.6, 0), wire(0.9));
+scene.add(comet);
+const TRAIL_N = 70;
+const trailPos = new Float32Array(TRAIL_N * 3);
+const trailGeo = new THREE.BufferGeometry();
+trailGeo.setAttribute('position', new THREE.BufferAttribute(trailPos, 3));
+const trail = new THREE.Line(trailGeo, new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.35 }));
+scene.add(trail);
+
+// stars
+{
+  const n = 800, pos = new Float32Array(n * 3);
+  for (let i = 0; i < n; i++) {
+    const v = new THREE.Vector3().randomDirection().multiplyScalar(1600 + Math.random() * 900);
+    pos.set([v.x, v.y, v.z], i * 3);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  scene.add(new THREE.Points(g, new THREE.PointsMaterial({ color: 0xffffff, size: 1.8, transparent: true, opacity: 0.55 })));
+}
+
+// ---- ship ----
+const ship = new THREE.Group();
+const body = new THREE.Group();
+const shipGeo = new THREE.ConeGeometry(0.8, 2.6, 4);
+shipGeo.rotateX(-Math.PI / 2);
+body.add(new THREE.Mesh(shipGeo, wire(1)));
+const wingGeo = new THREE.BufferGeometry().setFromPoints([
+  new THREE.Vector3(-2, 0, 1), new THREE.Vector3(0, 0, -1), new THREE.Vector3(2, 0, 1), new THREE.Vector3(-2, 0, 1)
+]);
+body.add(new THREE.Line(wingGeo, new THREE.LineBasicMaterial({ color: 0xffffff })));
+ship.add(body);
+ship.position.set(0, 40, 900);
+scene.add(ship);
+
+const bodyEl = document.getElementById('body'), distEl = document.getElementById('dist'),
+      speedEl = document.getElementById('speed');
+
+const keys = {};
+let pointer = { x: 0, y: 0 }, pointerDown = false;
+addEventListener('keydown', e => { keys[e.code] = true; });
+addEventListener('keyup', e => { keys[e.code] = false; });
+addEventListener('pointermove', e => { pointer = { x: e.clientX / innerWidth * 2 - 1, y: e.clientY / innerHeight * 2 - 1 }; });
+addEventListener('pointerdown', () => { pointerDown = true; });
+addEventListener('pointerup', () => { pointerDown = false; });
+addEventListener('touchmove', e => {
+  pointer = { x: e.touches[0].clientX / innerWidth * 2 - 1, y: e.touches[0].clientY / innerHeight * 2 - 1 };
+}, { passive: true });
+
+const vel = new THREE.Vector3(), yawPitch = { yaw: 0, pitch: -0.04 };
+const fwd = new THREE.Vector3(), tmp = new THREE.Vector3();
+let demoTarget = 0, t = 0;
+
+let last = performance.now();
+function tick(now) {
+  requestAnimationFrame(tick);
+  const dt = Math.max(0, Math.min((now - last) / 1000, 0.05));
+  last = now;
+  t += dt;
+
+  // orbits
+  sun.rotation.y += dt * 0.06;
+  const ps = 1 + Math.sin(t * 1.3) * 0.025;
+  sun.scale.set(ps, ps, ps);
+  for (const h of sun.children) h.rotation.z += h.userData.spin * dt;
+  for (const p of planets) {
+    const u = p.userData;
+    const a = u.phase + t * u.speed;
+    p.position.set(Math.cos(a) * u.r, 0, Math.sin(a) * u.r);
+    p.rotation.y += u.spin * dt;
+    for (const moon of u.moons) {
+      const ma = moon.userData.phase + t * moon.userData.speed;
+      moon.position.set(Math.cos(ma) * moon.userData.r, 0, Math.sin(ma) * moon.userData.r);
+    }
+  }
+  beltGroup.rotation.y += dt * 0.012;
+  // comet: ellipse
+  {
+    const a = t * 0.045 + 2;
+    const ex = 620, ez = 260;
+    comet.position.set(Math.cos(a) * ex, Math.sin(a * 2) * 18, Math.sin(a) * ez);
+    for (let i = TRAIL_N - 1; i > 0; i--) {
+      trailPos[i * 3] = trailPos[(i - 1) * 3];
+      trailPos[i * 3 + 1] = trailPos[(i - 1) * 3 + 1];
+      trailPos[i * 3 + 2] = trailPos[(i - 1) * 3 + 2];
+    }
+    trailPos[0] = comet.position.x; trailPos[1] = comet.position.y; trailPos[2] = comet.position.z;
+    trailGeo.attributes.position.needsUpdate = true;
+  }
+
+  // steering
+  let sx = pointer.x, sy = pointer.y;
+  let boost = pointerDown || keys.KeyW || keys.ArrowUp || keys.Space;
+  if (keys.ArrowLeft || keys.KeyA) sx = -0.7;
+  if (keys.ArrowRight || keys.KeyD) sx = 0.7;
+  if (DEMO) {
+    const target = planets[demoTarget % planets.length];
+    tmp.copy(target.position).sub(ship.position);
+    const d = tmp.length();
+    if (d < target.userData.radius * 4 + 14) demoTarget++;
+    const local = tmp.applyQuaternion(ship.quaternion.clone().invert()).normalize();
+    if (local.z > 0) { sx = local.x >= 0 ? 0.8 : -0.8; sy = 0; boost = false; }
+    else {
+      sx = Math.max(-0.8, Math.min(0.8, local.x * 2));
+      sy = Math.max(-0.8, Math.min(0.8, -local.y * 2));
+      boost = local.z < -0.7 && d > 90;
+    }
+  }
+  yawPitch.yaw -= sx * 2.2 * dt;
+  yawPitch.pitch -= sy * 1.7 * dt;
+  yawPitch.pitch = Math.max(-1.35, Math.min(1.35, yawPitch.pitch));
+  ship.quaternion.setFromEuler(new THREE.Euler(yawPitch.pitch, yawPitch.yaw, 0, 'YXZ'));
+  body.rotation.z += ((-sx * 0.9) - body.rotation.z) * Math.min(1, dt * 8);
+
+  fwd.set(0, 0, -1).applyQuaternion(ship.quaternion);
+  const targetSpeed = boost ? 170 : 55;
+  vel.lerp(tmp.copy(fwd).multiplyScalar(targetSpeed), Math.min(1, dt * 2.2));
+  ship.position.addScaledVector(vel, dt);
+  // soft leash: far beyond the system, curve back
+  const rr = ship.position.length();
+  if (rr > 1300) ship.position.multiplyScalar(1 - (rr - 1300) / rr * Math.min(1, dt * 2));
+
+  // nearest body HUD
+  let nearest = null, nd = 1e9;
+  const sunD = ship.position.length() - 26;
+  nearest = { name: 'THE SUN', d: sunD };
+  nd = sunD;
+  for (const p of planets) {
+    const d = ship.position.distanceTo(p.position) - p.userData.radius;
+    if (d < nd) { nd = d; nearest = { name: p.userData.name, d }; }
+  }
+  const cd = ship.position.distanceTo(comet.position);
+  if (cd < nd) { nd = cd; nearest = { name: 'THE COMET', d: cd }; }
+  bodyEl.textContent = nearest.name;
+  distEl.textContent = Math.max(0, Math.floor(nearest.d)) + ' km' + (nd < 30 ? ' · APPROACH' : '');
+  speedEl.textContent = Math.floor(vel.length()) + ' km/s';
+
+  // chase camera
+  const camTarget = tmp.copy(new THREE.Vector3(0, 2.6, 9)).applyQuaternion(ship.quaternion).add(ship.position);
+  camera.position.lerp(camTarget, Math.min(1, dt * 5));
+  camera.quaternion.slerp(ship.quaternion, Math.min(1, dt * 6));
+  renderer.render(scene, camera);
+}
+requestAnimationFrame(tick);
+
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+</script>
