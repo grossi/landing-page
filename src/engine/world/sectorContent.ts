@@ -21,10 +21,6 @@ import {
   wireMat,
 } from 'engine/render/assets';
 
-// Shared GPU assets live in engine/render/assets; re-exported so existing
-// consumers (createEphemeris) keep compiling from this module.
-export { softSprite, wireMat } from 'engine/render/assets';
-
 /** A named place the HUD can point at (and, later, "discover"). */
 export interface Poi {
   name: string;
