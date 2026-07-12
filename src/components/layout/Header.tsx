@@ -18,7 +18,7 @@ import { FaBars, FaTimes } from 'react-icons/fa';
 const MotionBox = motion(Box);
 
 const navItems = [
-  { name: 'Experience', path: '/' },
+  { name: 'Experience', path: '/experience' },
   { name: 'Blog', path: '/blog' },
   { name: 'Arcade', path: '/arcade' },
 ];
