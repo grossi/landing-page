@@ -1,24 +1,39 @@
 import React from 'react';
 import { VStack, Heading, Text } from '@chakra-ui/react';
 
+const mono = 'ui-monospace, "SF Mono", Menlo, monospace';
+
 interface ExperienceHeaderProps {
   title: string;
-  subtitle: string;
+  subtitle?: string;
 }
 
 const ExperienceHeader: React.FC<ExperienceHeaderProps> = ({ title, subtitle }) => {
   return (
     <VStack gap={4} textAlign="center">
       <Heading
-        size="4xl"
+        size="3xl"
+        fontFamily={mono}
         fontWeight="bold"
-        color={{ base: 'gray.900', _dark: 'white' }}
+        textTransform="uppercase"
+        letterSpacing=".22em"
+        color="white"
       >
         {title}
       </Heading>
-      <Text fontSize="lg" color={{ base: 'gray.600', _dark: 'gray.400' }} maxW="2xl">
-        {subtitle}
-      </Text>
+      {subtitle && (
+        <Text
+          fontFamily={mono}
+          fontSize="12px"
+          textTransform="uppercase"
+          letterSpacing=".26em"
+          color="white"
+          opacity={0.5}
+          maxW="2xl"
+        >
+          {subtitle}
+        </Text>
+      )}
     </VStack>
   );
 };

@@ -2,6 +2,8 @@ import { Box, Flex, Heading, SimpleGrid, Text } from '@chakra-ui/react';
 import { Link as RouterLink } from 'react-router';
 import PageLayout from 'components/layout/PageLayout';
 
+const mono = 'ui-monospace, "SF Mono", Menlo, monospace';
+
 interface Demo {
   slug: string;
   title: string;
@@ -108,36 +110,36 @@ const CardShell = ({ demo }: { demo: Demo }) => (
     height="100%"
     p={5}
     borderWidth="1px"
-    borderColor={{ base: 'gray.300', _dark: 'gray.700' }}
-    bg={{ base: 'white', _dark: 'black' }}
+    borderColor="#3f3f46"
+    bg="black"
     transition="border-color 0.15s ease, transform 0.15s ease"
     _hover={{
-      borderColor: { base: 'gray.900', _dark: 'white' },
+      borderColor: 'white',
       transform: 'translateY(-2px)',
     }}
   >
     <Flex align="baseline" justify="space-between" gap={2}>
-      <Heading as="h3" size="md" fontFamily="mono" letterSpacing="0.15em">
+      <Heading as="h3" size="md" fontFamily={mono} fontWeight="bold" letterSpacing="0.15em">
         {demo.title}
       </Heading>
       <Text
         fontSize="xs"
-        fontFamily="mono"
+        fontFamily={mono}
         letterSpacing="0.1em"
-        color={{ base: 'gray.500', _dark: 'gray.400' }}
+        color="#a1a1aa"
         flexShrink={0}
       >
         {demo.featured ? '★ featured' : demo.kind}
       </Text>
     </Flex>
-    <Text mt={1} fontSize="sm" fontStyle="italic" color={{ base: 'gray.600', _dark: 'gray.400' }}>
+    <Text mt={1} fontSize="sm" fontStyle="italic" color="#a1a1aa">
       {demo.tagline}
     </Text>
-    <Text mt={3} fontSize="sm" flex="1">
+    <Text mt={3} fontSize="sm" flex="1" lineHeight="1.5">
       {demo.description}
     </Text>
-    <Flex mt={4} align="center" justify="space-between" fontFamily="mono" fontSize="xs">
-      <Text color={{ base: 'gray.500', _dark: 'gray.500' }} letterSpacing="0.08em">
+    <Flex mt={4} align="center" justify="space-between" fontFamily={mono} fontSize="xs">
+      <Text color="#71717a" letterSpacing="0.08em">
         {demo.controls}
       </Text>
       <Text fontWeight="bold" letterSpacing="0.25em">
@@ -149,12 +151,11 @@ const CardShell = ({ demo }: { demo: Demo }) => (
 
 const Arcade = () => (
   <PageLayout>
-    <Heading as="h1" size="2xl" fontFamily="mono" letterSpacing="0.1em">
-      ARCADE
+    <Heading as="h1" size="2xl" fontFamily={mono} fontWeight="bold" letterSpacing="0.1em">
+      PROJECTS
     </Heading>
-    <Text mt={3} maxW="2xl" color={{ base: 'gray.600', _dark: 'gray.400' }}>
-      Nine little three.js experiments in black and white — arcade games and ambient simulations.
-      Each one is a single small file; nothing to install, nothing to lose.
+    <Text mt={3} maxW="2xl" color="#a1a1aa" lineHeight="1.5">
+      Demos and personal experiments
     </Text>
     <SimpleGrid columns={{ base: 1, md: 2, lg: 3 }} gap={5} mt={10}>
       {demos.map((demo) =>

@@ -11,8 +11,9 @@ export function ColorModeProvider({ children }: ColorModeProviderProps) {
   return (
     <NextThemesProvider
       attribute="class"
-      defaultTheme="system"
-      enableSystem={true}
+      defaultTheme="dark"
+      forcedTheme="dark"
+      enableSystem={false}
       disableTransitionOnChange
     >
       {children}

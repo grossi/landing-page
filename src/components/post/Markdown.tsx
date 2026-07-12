@@ -9,6 +9,26 @@ import { Box, Link, Text } from '@chakra-ui/react';
 // is ~800 kB. Register more here as posts need them.
 SyntaxHighlighter.registerLanguage('typescript', typescript);
 
+const mono = 'ui-monospace, "SF Mono", Menlo, monospace';
+
+// Strip emoji/pictographs so markdown titles render in the site's
+// plain terminal style even when the source file decorates them.
+const stripEmoji = (node: React.ReactNode): React.ReactNode => {
+  if (typeof node === 'string') {
+    return node.replace(/[\p{Extended_Pictographic}️]/gu, '').replace(/^\s+/, '');
+  }
+  if (Array.isArray(node)) return node.map(stripEmoji);
+  return node;
+};
+
+function MarkdownH1({ children, ...props }: any) {
+  return (
+    <Text {...props}>
+      {stripEmoji(children)}
+    </Text>
+  );
+}
+
 function MarkdownListItem(props: any) {
   return (
     <Box pl={16} py={1}>
@@ -32,7 +52,12 @@ function MarkdownCode(props: any) {
       <SyntaxHighlighter
         language={language}
         style={atomOneDarkReasonable}
-        customStyle={{ borderRadius: 6 }}
+        customStyle={{
+          borderRadius: 0,
+          border: '1px solid rgba(255,255,255,.2)',
+          background: '#050505',
+          fontFamily: mono,
+        }}
       >
         {code}
       </SyntaxHighlighter>
@@ -43,27 +68,51 @@ function MarkdownCode(props: any) {
 const options = {
   overrides: {
     h1: {
-      component: Text,
+      component: MarkdownH1,
       props: {
-        fontSize: '6xl',
-        my: 4,
+        fontSize: '3xl',
+        my: 6,
+        fontFamily: mono,
+        fontWeight: 'bold',
+        textTransform: 'uppercase',
+        letterSpacing: '.18em',
+        color: 'white',
       },
     },
     h2: {
       component: Text,
       props: {
-        fontSize: '4xl',
-        my: 2,
+        fontSize: 'xl',
+        my: 4,
+        fontFamily: mono,
+        fontWeight: 'bold',
+        textTransform: 'uppercase',
+        letterSpacing: '.16em',
+        color: 'white',
       },
     },
     h3: {
       component: Text,
-      props: { fontSize: '2xl', ml: 2, my: 2 },
+      props: {
+        fontSize: 'md',
+        ml: 2,
+        my: 3,
+        fontFamily: mono,
+        fontWeight: 'bold',
+        textTransform: 'uppercase',
+        letterSpacing: '.14em',
+        color: 'white',
+      },
     },
     h4: {
       component: Text,
       props: {
-        fontSize: 'lg',
+        fontSize: 'sm',
+        fontFamily: mono,
+        fontWeight: 'bold',
+        letterSpacing: '.12em',
+        textTransform: 'uppercase',
+        color: 'white',
       },
     },
     h5: {
@@ -71,6 +120,9 @@ const options = {
       props: {
         fontSize: 'xs',
         mx: [null, 2, 4, 6],
+        fontFamily: mono,
+        letterSpacing: '.12em',
+        color: 'whiteAlpha.700',
       },
     },
     p: {
@@ -79,9 +131,10 @@ const options = {
         fontSize: 'md',
         mx: [0, 0, 2, 4],
         mb: 4,
+        color: 'whiteAlpha.900',
       },
     },
-    a: { component: Link, props: { target: '_blank', rel: 'noopener noreferrer' } },
+    a: { component: Link, props: { target: '_blank', rel: 'noopener noreferrer', color: 'white', textDecoration: 'underline' } },
     li: {
       component: MarkdownListItem,
     },
