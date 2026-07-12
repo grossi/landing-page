@@ -5,6 +5,38 @@
 
 export { hashCoords, makeName, mulberry32, pickFrom, SYLLABLES } from 'engine/core/rng';
 export {
+  createGovernorState,
+  DEGRADE_FRAMES,
+  DEGRADE_MS,
+  FRAME_HISTORY,
+  framePercentile,
+  GOVERNOR_LEVELS,
+  pushFrameTime,
+  qualityForLevel,
+  UPGRADE_FRAMES,
+  UPGRADE_MS,
+  type GovernorState,
+  type QualityLevel,
+} from 'engine/core/governor';
+export {
+  LOD_DEMOTE_RATIO,
+  LOD_MAX_LEVEL,
+  LOD_MIN_DWELL_S,
+  LOD_PROMOTE_PX,
+  projectedPixelRadius,
+  selectLod,
+} from 'engine/core/selectLod';
+export {
+  cellOf,
+  diffSectors,
+  parseSectorKey,
+  sectorCenter,
+  sectorKey,
+  type SectorCell,
+  type SectorDiff,
+} from 'engine/core/sectorGrid';
+export { runBudgeted, type BuildStep } from 'engine/core/scheduler';
+export {
   clampDt,
   createStage,
   isPaused,
