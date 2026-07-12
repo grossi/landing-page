@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { hashCoords, makeName, mulberry32, pickFrom, SYLLABLES } from 'components/ephemeris/rng';
+import { hashCoords, makeName, mulberry32, pickFrom, SYLLABLES } from 'engine/core/rng';
 
 describe('mulberry32', () => {
   it('is deterministic for a given seed', () => {

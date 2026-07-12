@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { hashCoords, mulberry32 } from 'components/ephemeris/rng';
+import { hashCoords, mulberry32 } from 'engine/core/rng';
 import {
   buildHomeSystem,
   buildSectorContent,

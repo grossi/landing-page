@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { makeName, pickFrom } from 'components/ephemeris/rng';
+import { makeName, pickFrom } from 'engine/core/rng';
 
 /** A named place the HUD can point at (and, later, "discover"). */
 export interface Poi {
