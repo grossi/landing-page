@@ -27,6 +27,14 @@ export interface StageOptions {
   far?: number;
   /** FogExp2 density (black fog); omit for no fog. */
   fogDensity?: number;
+  /**
+   * Logarithmic depth buffer for scenes spanning many distance decades with
+   * coplanar/nested surfaces (EPHEMERIS: LOD shells, atmosphere rings,
+   * near 0.5 / far 60,000). A linear 24-bit z-buffer z-fights those cases;
+   * the log-depth cost (broken early-z) is negligible on a low-overdraw
+   * wireframe scene. Scenes without nesting should keep the default.
+   */
+  logDepth?: boolean;
 }
 
 export interface Stage {
@@ -61,7 +69,7 @@ export interface Stage {
  * a giant dt.
  */
 export function createStage(container: HTMLElement, opts: StageOptions = {}): Stage {
-  const { fov = 60, near = 0.1, far = 5000, fogDensity } = opts;
+  const { fov = 60, near = 0.1, far = 5000, fogDensity, logDepth = false } = opts;
 
   const scene = new THREE.Scene();
   if (fogDensity !== undefined) scene.fog = new THREE.FogExp2(0x000000, fogDensity);
@@ -71,7 +79,7 @@ export function createStage(container: HTMLElement, opts: StageOptions = {}): St
     near,
     far,
   );
-  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  const renderer = new THREE.WebGLRenderer({ antialias: true, logarithmicDepthBuffer: logDepth });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
   renderer.setSize(container.clientWidth, container.clientHeight);
   container.appendChild(renderer.domElement);

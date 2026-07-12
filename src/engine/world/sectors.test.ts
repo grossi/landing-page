@@ -116,6 +116,65 @@ describe('createSectorField', () => {
     expect(removed).toHaveLength(2 * WINDOW);
   });
 
+  it('applyOriginShift moves groups render-local while cells stay absolute', () => {
+    const scene = new THREE.Scene();
+    const field = makeField(scene);
+    field.sync(at(0, 0, 0), true);
+    const ids = poiIds(field);
+    const groups = [...scene.children];
+    const before = groups.map((g) => g.position.clone());
+
+    const delta = at(SECTOR * 3, -SECTOR, SECTOR * 2);
+    field.applyOriginShift(delta);
+    expect(field.origin().toArray()).toEqual(delta.toArray());
+    // every built group shifted by exactly -delta…
+    groups.forEach((group, i) => {
+      expect(group.position.toArray()).toEqual(before[i].clone().sub(delta).toArray());
+    });
+    // …and the same ABSOLUTE viewer position rebuilds nothing
+    field.sync(at(0, 0, 0));
+    expect(scene.children.length).toBe(groups.length);
+    groups.forEach((group, i) => expect(scene.children[i]).toBe(group));
+    expect(poiIds(field)).toEqual(ids);
+    expect(field.currentCell().key).toBe('0,0,0');
+    field.dispose();
+  });
+
+  it('builds far sectors render-local to the shifted origin', () => {
+    const scene = new THREE.Scene();
+    const field = makeField(scene);
+    // origin re-anchored a million sectors out (a deep-space warp)
+    field.applyOriginShift(at(SECTOR * 1_000_000, 0, 0));
+    field.sync(at(SECTOR * 1_000_000.5, 0, 0), true);
+    expect(field.currentCell().key).toBe('1000000,0,0');
+    // absolute cell keys are huge, render coordinates stay float32-small
+    for (const child of scene.children) {
+      expect(Math.abs(child.position.x)).toBeLessThan(SECTOR * 3);
+      expect(Math.abs(child.position.y)).toBeLessThan(SECTOR * 3);
+      expect(Math.abs(child.position.z)).toBeLessThan(SECTOR * 3);
+    }
+    field.dispose();
+  });
+
+  it('rebuilds a sector identically whether or not the origin has shifted', () => {
+    const sceneA = new THREE.Scene();
+    const fieldA = makeField(sceneA);
+    fieldA.sync(at(SECTOR * 7.5, 0, 0), true);
+    const namesA = new Map<string, string>();
+    fieldA.forEachPoi((poi) => namesA.set(poi.id!, poi.name));
+
+    const sceneB = new THREE.Scene();
+    const fieldB = makeField(sceneB);
+    fieldB.applyOriginShift(at(SECTOR * 7, 0, 0));
+    fieldB.sync(at(SECTOR * 7.5, 0, 0), true); // same absolute position
+    const namesB = new Map<string, string>();
+    fieldB.forEachPoi((poi) => namesB.set(poi.id!, poi.name));
+
+    expect([...namesB.entries()].sort()).toEqual([...namesA.entries()].sort());
+    fieldA.dispose();
+    fieldB.dispose();
+  });
+
   it('dispose removes every sector group from the scene', () => {
     const scene = new THREE.Scene();
     const field = makeField(scene);

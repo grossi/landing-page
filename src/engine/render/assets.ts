@@ -35,7 +35,7 @@ export const MAT_RING = wireMat(0.5);
 export const MAT_BEAM = wireMat(0.16);
 export const ORBIT_MAT = new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.1 });
 export const TRAIL_MAT = new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.35 });
-export const BELT_MAT = new THREE.PointsMaterial({ color: 0xffffff, size: 0.9, transparent: true, opacity: 0.55 });
+export const BELT_MAT = new THREE.PointsMaterial({ color: 0xffffff, size: 8, transparent: true, opacity: 0.55 });
 
 // unit circle for orbit lines, scaled per orbit
 export const UNIT_CIRCLE = (() => {
@@ -65,7 +65,7 @@ export const softSprite = (() => {
 
 export const NEBULA_MAT = new THREE.PointsMaterial({
   color: 0xffffff,
-  size: 7,
+  size: 40,
   map: softSprite,
   transparent: true,
   opacity: 0.28,

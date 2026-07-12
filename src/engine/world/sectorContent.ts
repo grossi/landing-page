@@ -84,12 +84,12 @@ const gaussish = (rand: () => number) => (rand() + rand() + rand()) / 3 - 0.5;
 
 const asteroidCluster: Builder = (rand) => {
   const group = new THREE.Group();
-  const spread = 130 + rand() * 90;
+  const spread = 900 + rand() * 600;
   const count = 40 + Math.floor(rand() * 50);
   for (let i = 0; i < count; i++) {
     const rock = new THREE.Mesh(ICO_LOW, MAT_DIM);
     rock.position.set(gaussish(rand) * spread * 2, gaussish(rand) * spread, gaussish(rand) * spread * 2);
-    rock.scale.setScalar(0.8 + rand() * 5);
+    rock.scale.setScalar(6 + rand() * 40);
     rock.rotation.set(rand() * Math.PI, rand() * Math.PI, rand() * Math.PI);
     group.add(rock);
   }
@@ -106,7 +106,7 @@ const nebula: Builder = (rand, own) => {
   const blobs = 2 + Math.floor(rand() * 3);
   const total = 380 + Math.floor(rand() * 280);
   const positions = new Float32Array(total * 3);
-  const reach = 150 + rand() * 110;
+  const reach = 1200 + rand() * 900;
   let i = 0;
   for (let b = 0; b < blobs; b++) {
     const cx = (rand() - 0.5) * reach * 1.4;
@@ -130,7 +130,7 @@ const nebula: Builder = (rand, own) => {
   for (let s = 0; s < stars; s++) {
     const star = new THREE.Mesh(ICO_MID, MAT_BRIGHT);
     star.position.set((rand() - 0.5) * reach, (rand() - 0.5) * reach * 0.5, (rand() - 0.5) * reach);
-    star.scale.setScalar(2 + rand() * 3);
+    star.scale.setScalar(16 + rand() * 26);
     group.add(star);
   }
   const spin = (rand() - 0.5) * 0.014;
@@ -143,7 +143,7 @@ const nebula: Builder = (rand, own) => {
 
 const roguePlanet: Builder = (rand) => {
   const group = new THREE.Group();
-  const radius = 8 + rand() * 9;
+  const radius = 60 + rand() * 100;
   // per-body LOD seed draws immediately after the radius — the rand() stream
   // order is load-bearing (determinism tests + peekSectorBeacon parity)
   const seed = Math.floor(rand() * 2 ** 31);
@@ -181,7 +181,7 @@ const roguePlanet: Builder = (rand) => {
 const miniSystem: Builder = (rand) => {
   const group = new THREE.Group();
   const starName = makeName(rand);
-  const starRadius = 9 + rand() * 7;
+  const starRadius = 100 + rand() * 80;
   const starSeed = Math.floor(rand() * 2 ** 31); // seed right after the radius
   const star = new THREE.Group(); // LOD anchor
   group.add(star);
@@ -197,15 +197,15 @@ const miniSystem: Builder = (rand) => {
   const planets: Orbiter[] = [];
   const count = 2 + Math.floor(rand() * 3);
   for (let i = 0; i < count; i++) {
-    const orbitR = starRadius * 3 + 34 * (i + 1) + rand() * 20;
-    const radius = 2 + rand() * 5;
+    const orbitR = starRadius * 3 + 300 * (i + 1) + rand() * 200;
+    const radius = 25 + rand() * 65;
     const planetSeed = Math.floor(rand() * 2 ** 31); // seed right after the radius
     const planet = new THREE.Group(); // LOD anchor, positioned by its orbiter
     group.add(planet);
     const orbit = new THREE.Line(UNIT_CIRCLE, ORBIT_MAT);
     orbit.scale.setScalar(orbitR);
     group.add(orbit);
-    planets.push({ mesh: planet, r: orbitR, speed: (0.5 / Math.pow(orbitR / 40, 1.5)) * 0.5, phase: rand() * Math.PI * 2 });
+    planets.push({ mesh: planet, r: orbitR, speed: (0.5 / Math.pow(orbitR / 340, 1.5)) * 0.5, phase: rand() * Math.PI * 2 });
     pois.push({ name: `${starName}-${i + 1}`, object: planet, radius });
     lodBodies.push({ seed: planetSeed, radius, kind: 'planet', anchor: planet, baseOpacity: 0.85 });
   }
@@ -225,12 +225,12 @@ const miniSystem: Builder = (rand) => {
 const binaryStars: Builder = (rand) => {
   const group = new THREE.Group();
   const name = makeName(rand);
-  const separation = 20 + rand() * 16;
+  const separation = 170 + rand() * 140;
   const speed = 0.22 + rand() * 0.2; // shared — the pair stays opposed
   const stars: Orbiter[] = [];
   const lodBodies: LodRegistration[] = [];
   for (let i = 0; i < 2; i++) {
-    const radius = 6 + rand() * 5;
+    const radius = 50 + rand() * 45;
     const seed = Math.floor(rand() * 2 ** 31); // seed right after the radius
     const star = new THREE.Group(); // LOD anchor, positioned by its orbiter
     group.add(star);
@@ -247,7 +247,7 @@ const binaryStars: Builder = (rand) => {
   group.add(orbit);
   return {
     group,
-    pois: [{ name: `${name} BINARY`, object: group, radius: separation + 14 }],
+    pois: [{ name: `${name} BINARY`, object: group, radius: separation + 120 }],
     lodBodies,
     update: (_dt, t) => { updateOrbiters(stars, t); },
   };
@@ -256,15 +256,15 @@ const binaryStars: Builder = (rand) => {
 const pulsar: Builder = (rand) => {
   const group = new THREE.Group();
   const core = new THREE.Mesh(ICO_MID, MAT_BRIGHT);
-  const coreSize = 3.5 + rand() * 2;
+  const coreSize = 30 + rand() * 17;
   core.scale.setScalar(coreSize);
   group.add(core);
   // two opposed lighthouse beams, tilted off the spin axis
   const beams = new THREE.Group();
   for (const dir of [1, -1]) {
     const beam = new THREE.Mesh(BEAM, MAT_BEAM);
-    beam.scale.set(7, 150, 7);
-    beam.position.y = dir * 75;
+    beam.scale.set(60, 1300, 60);
+    beam.position.y = dir * 650;
     if (dir === 1) beam.rotation.z = Math.PI;
     beams.add(beam);
   }
@@ -274,7 +274,7 @@ const pulsar: Builder = (rand) => {
   const phase = rand() * Math.PI * 2;
   return {
     group,
-    pois: [{ name: `PULSAR ${makeName(rand)}`, object: core, radius: 8 }],
+    pois: [{ name: `PULSAR ${makeName(rand)}`, object: core, radius: 70 }],
     update: (dt, t) => {
       beams.rotation.y += spin * dt;
       core.scale.setScalar(coreSize * (1 + Math.sin(phase + t * 6) * 0.16));
@@ -285,14 +285,14 @@ const pulsar: Builder = (rand) => {
 const monolithField: Builder = (rand) => {
   const group = new THREE.Group();
   const count = 6 + Math.floor(rand() * 9);
-  const spread = 90 + rand() * 70;
+  const spread = 770 + rand() * 600;
   for (let i = 0; i < count; i++) {
     const monolith = new THREE.Mesh(BOX, MAT_DIM);
-    const h = 18 + rand() * 30;
-    monolith.scale.set(2 + rand() * 2.5, h, 1.2 + rand() * 1.6);
+    const h = 120 + rand() * 200;
+    monolith.scale.set(17 + rand() * 21, h, 10 + rand() * 14);
     const a = rand() * Math.PI * 2;
     const r = rand() * spread;
-    monolith.position.set(Math.cos(a) * r, (rand() - 0.5) * 30, Math.sin(a) * r);
+    monolith.position.set(Math.cos(a) * r, (rand() - 0.5) * 260, Math.sin(a) * r);
     monolith.rotation.y = rand() * Math.PI;
     group.add(monolith);
   }
@@ -307,31 +307,31 @@ const monolithField: Builder = (rand) => {
 const derelictStation: Builder = (rand) => {
   const group = new THREE.Group();
   const hull = new THREE.Mesh(CYL, MAT_DIM);
-  hull.scale.set(6, 34, 6);
+  hull.scale.set(42, 238, 42);
   group.add(hull);
   const ring = new THREE.Mesh(RING, MAT_RING);
-  ring.scale.setScalar(11);
+  ring.scale.setScalar(77);
   ring.rotation.x = Math.PI / 2;
   group.add(ring);
   const pods = 2 + Math.floor(rand() * 4);
   for (let i = 0; i < pods; i++) {
     const pod = new THREE.Mesh(BOX, MAT_DIM);
-    pod.scale.set(4 + rand() * 5, 3 + rand() * 3, 3 + rand() * 3);
-    pod.position.set((rand() - 0.5) * 14, (rand() - 0.5) * 26, (rand() - 0.5) * 14);
+    pod.scale.set(28 + rand() * 35, 21 + rand() * 21, 21 + rand() * 21);
+    pod.position.set((rand() - 0.5) * 98, (rand() - 0.5) * 182, (rand() - 0.5) * 98);
     pod.rotation.y = rand() * Math.PI;
     group.add(pod);
   }
   // a broken-off spar drifting nearby
   const spar = new THREE.Mesh(CYL, MAT_DIM);
-  spar.scale.set(1, 18, 1);
-  spar.position.set(30 + rand() * 25, (rand() - 0.5) * 20, (rand() - 0.5) * 30);
+  spar.scale.set(7, 126, 7);
+  spar.position.set(210 + rand() * 175, (rand() - 0.5) * 140, (rand() - 0.5) * 210);
   spar.rotation.set(rand() * Math.PI, 0, rand() * Math.PI);
   group.add(spar);
   const tumbleX = (rand() - 0.5) * 0.08;
   const tumbleY = (rand() - 0.5) * 0.12;
   return {
     group,
-    pois: [{ name: `${makeName(rand)} STATION (DERELICT)`, object: group, radius: 26 }],
+    pois: [{ name: `${makeName(rand)} STATION (DERELICT)`, object: group, radius: 182 }],
     update: (dt) => {
       group.rotation.x += tumbleX * dt;
       group.rotation.y += tumbleY * dt;
@@ -347,11 +347,11 @@ const cometSwarm: Builder = (rand) => {
   const swarm: Orbiter[] = [];
   for (let i = 0; i < count; i++) {
     const comet = new THREE.Mesh(ICO_LOW, MAT_BODY);
-    comet.scale.setScalar(1 + rand() * 1.6);
+    comet.scale.setScalar(8 + rand() * 14);
     group.add(comet);
     swarm.push({
       mesh: comet,
-      r: 30 + rand() * 110,
+      r: 260 + rand() * 940,
       speed: 0.1 + rand() * 0.25,
       phase: rand() * Math.PI * 2,
       tilt: (rand() - 0.5) * 1.2,
@@ -359,7 +359,7 @@ const cometSwarm: Builder = (rand) => {
   }
   return {
     group,
-    pois: [{ name: `${name} SWARM`, object: group, radius: 140 }],
+    pois: [{ name: `${name} SWARM`, object: group, radius: 1200 }],
     update: (_dt, t) => { updateOrbiters(swarm, t); },
   };
 };
@@ -386,19 +386,19 @@ const SECTOR_SUFFIXES = ['EXPANSE', 'REACH', 'DRIFT', 'VERGE', 'DEEP'];
  */
 function addGarnish(rand: () => number, group: THREE.Group, own: THREE.BufferGeometry[]) {
   const offset = new THREE.Vector3(
-    (rand() - 0.5) * 420,
-    (rand() - 0.5) * 300,
-    (rand() - 0.5) * 420,
+    (rand() - 0.5) * 3400,
+    (rand() - 0.5) * 2400,
+    (rand() - 0.5) * 3400,
   );
   if (rand() < 0.5) {
     for (let i = 0; i < 8 + Math.floor(rand() * 7); i++) {
       const rock = new THREE.Mesh(ICO_LOW, MAT_DIM);
       rock.position.set(
-        offset.x + gaussish(rand) * 70,
-        offset.y + gaussish(rand) * 40,
-        offset.z + gaussish(rand) * 70,
+        offset.x + gaussish(rand) * 560,
+        offset.y + gaussish(rand) * 320,
+        offset.z + gaussish(rand) * 560,
       );
-      rock.scale.setScalar(0.6 + rand() * 2.4);
+      rock.scale.setScalar(5 + rand() * 19);
       rock.rotation.set(rand() * Math.PI, rand() * Math.PI, rand() * Math.PI);
       group.add(rock);
     }
@@ -406,9 +406,9 @@ function addGarnish(rand: () => number, group: THREE.Group, own: THREE.BufferGeo
     const n = 70 + Math.floor(rand() * 60);
     const positions = new Float32Array(n * 3);
     for (let i = 0; i < n; i++) {
-      positions[i * 3] = offset.x + gaussish(rand) * 130;
-      positions[i * 3 + 1] = offset.y + gaussish(rand) * 60;
-      positions[i * 3 + 2] = offset.z + gaussish(rand) * 130;
+      positions[i * 3] = offset.x + gaussish(rand) * 1040;
+      positions[i * 3 + 1] = offset.y + gaussish(rand) * 480;
+      positions[i * 3 + 2] = offset.z + gaussish(rand) * 1040;
     }
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
@@ -525,7 +525,7 @@ export function buildHomeSystem(rand: () => number): SectorContent {
   const pois: Poi[] = [];
   const lodBodies: LodRegistration[] = [];
 
-  const SUN_RADIUS = 26;
+  const SUN_RADIUS = 400;
   const sunSeed = Math.floor(rand() * 2 ** 31);
   // the pulse animates this wrapper, so the LOD manager (which drives the
   // scale of its own rung meshes under the anchor) never fights it
@@ -540,7 +540,7 @@ export function buildHomeSystem(rand: () => number): SectorContent {
   group.add(halos);
   const haloSpins: number[] = [];
   for (let i = 0; i < 3; i++) {
-    const haloGeo = new THREE.TorusGeometry(34 + i * 7, 0.12, 4, 64);
+    const haloGeo = new THREE.TorusGeometry(520 + i * 110, 1.8, 4, 64);
     own.push(haloGeo);
     const haloMat = wireMat(0.22 - i * 0.06);
     own.push(haloMat);
@@ -559,12 +559,13 @@ export function buildHomeSystem(rand: () => number): SectorContent {
     scaleTargets: [halos],
   });
 
-  const ORBIT_RADII = [95, 150, 215, 300, 400, 520, 660];
+  // all inside 2 home cells of the 6,000-unit sector grid (< 12,000)
+  const ORBIT_RADII = [1300, 2100, 3000, 4200, 5600, 7300, 9000];
   const planetOrbiters: Orbiter[] = [];
   const moonOrbiters: Orbiter[] = [];
   const planetSpins: Array<{ mesh: THREE.Object3D; spin: number }> = [];
   for (let i = 0; i < ORBIT_RADII.length; i++) {
-    const radius = 3.5 + rand() * 10;
+    const radius = 40 + rand() * 100;
     const planetSeed = Math.floor(rand() * 2 ** 31); // seed right after the radius
     const planet = new THREE.Group(); // LOD anchor, positioned by its orbiter
     group.add(planet);
@@ -572,7 +573,7 @@ export function buildHomeSystem(rand: () => number): SectorContent {
     planetOrbiters.push({
       mesh: planet,
       r: ORBIT_RADII[i],
-      speed: (0.5 / Math.pow(ORBIT_RADII[i] / 95, 1.5)) * 0.06,
+      speed: (0.5 / Math.pow(ORBIT_RADII[i] / 1300, 1.5)) * 0.06,
       phase: rand() * Math.PI * 2,
     });
     planetSpins.push({ mesh: planet, spin: 0.1 + rand() * 0.4 });
@@ -620,9 +621,9 @@ export function buildHomeSystem(rand: () => number): SectorContent {
     const positions = new Float32Array(n * 3);
     for (let i = 0; i < n; i++) {
       const a = rand() * Math.PI * 2;
-      const r = 340 + rand() * 34;
+      const r = 4450 + rand() * 500;
       positions[i * 3] = Math.cos(a) * r;
-      positions[i * 3 + 1] = (rand() - 0.5) * 9;
+      positions[i * 3 + 1] = (rand() - 0.5) * 120;
       positions[i * 3 + 2] = Math.sin(a) * r;
     }
     const geometry = new THREE.BufferGeometry();
@@ -634,18 +635,18 @@ export function buildHomeSystem(rand: () => number): SectorContent {
 
   // comet on an eccentric orbit, dragging a trail
   const comet = new THREE.Mesh(ICO_LOW, MAT_BRIGHT);
-  comet.scale.setScalar(1.6);
+  comet.scale.setScalar(22);
   group.add(comet);
-  pois.push({ name: 'THE COMET', object: comet, radius: 2 });
+  pois.push({ name: 'THE COMET', object: comet, radius: 27 });
   const TRAIL_LENGTH = 70;
   const trailPositions = new Float32Array(TRAIL_LENGTH * 3);
   // Start the whole trail at the comet's t=0 position (same formula as
   // update below); zeros would draw a line to the origin for the first
   // TRAIL_LENGTH frames.
   for (let i = 0; i < TRAIL_LENGTH; i++) {
-    trailPositions[i * 3] = Math.cos(2) * 620;
-    trailPositions[i * 3 + 1] = Math.sin(4) * 18;
-    trailPositions[i * 3 + 2] = Math.sin(2) * 260;
+    trailPositions[i * 3] = Math.cos(2) * 8500;
+    trailPositions[i * 3 + 1] = Math.sin(4) * 250;
+    trailPositions[i * 3 + 2] = Math.sin(2) * 3600;
   }
   const trailGeo = new THREE.BufferGeometry();
   trailGeo.setAttribute('position', new THREE.BufferAttribute(trailPositions, 3));
@@ -667,7 +668,7 @@ export function buildHomeSystem(rand: () => number): SectorContent {
       belt.rotation.y += dt * 0.012;
 
       const cometAngle = t * 0.045 + 2;
-      comet.position.set(Math.cos(cometAngle) * 620, Math.sin(cometAngle * 2) * 18, Math.sin(cometAngle) * 260);
+      comet.position.set(Math.cos(cometAngle) * 8500, Math.sin(cometAngle * 2) * 250, Math.sin(cometAngle) * 3600);
       for (let i = TRAIL_LENGTH - 1; i > 0; i--) {
         trailPositions[i * 3] = trailPositions[(i - 1) * 3];
         trailPositions[i * 3 + 1] = trailPositions[(i - 1) * 3 + 1];

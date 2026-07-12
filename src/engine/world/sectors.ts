@@ -47,11 +47,25 @@ export interface SectorFieldCell {
  */
 export interface SectorField {
   /**
-   * Keep the active window centred on `position`. Cheap no-op on the common
-   * frame (same cell, empty build queue). `immediate` builds every needed
-   * sector synchronously — use for spawn/warp so space is never empty.
+   * Keep the active window centred on the viewer's ABSOLUTE position
+   * (render-local position + origin). Cells are keyed absolutely, so content
+   * stays deterministic across floating-origin rebases. Cheap no-op on the
+   * common frame (same cell, empty build queue). `immediate` builds every
+   * needed sector synchronously — use for spawn/warp so space is never empty.
    */
-  sync(position: THREE.Vector3, immediate?: boolean): void;
+  sync(absolutePosition: THREE.Vector3, immediate?: boolean): void;
+  /**
+   * Floating-origin rebase: adds `delta` (an exact multiple of `sectorSize`
+   * per axis, see engine/core/floatingOrigin) to the field's origin and
+   * subtracts it from every built sector group, keeping render coordinates
+   * small while absolute cells — and therefore content — never change.
+   */
+  applyOriginShift(delta: THREE.Vector3): void;
+  /**
+   * The current render origin in absolute coordinates (a live, read-only
+   * view). Render-local = absolute − origin.
+   */
+  origin(): Readonly<THREE.Vector3>;
   /** Advance the animations of every built sector. */
   updateContents(dt: number, t: number): void;
   /** Visit every POI in every built sector. */
@@ -75,6 +89,11 @@ export function createSectorField(scene: THREE.Scene, opts: SectorFieldOptions):
   const buildBudget = opts.buildBudgetPerFrame ?? 2;
   const reserved = opts.reserved ?? (() => false);
 
+  // Render origin in absolute coordinates; grows by exact sector multiples
+  // as the consumer rebases (floating origin). Built groups are positioned
+  // at absoluteCenter − origin so render coordinates stay float32-small.
+  const origin = new THREE.Vector3();
+
   // Null marks reserved cells (tracked, but the caller owns their content).
   const activeSectors = new Map<string, SectorContent | null>();
   const activeKeys = new Set<string>();
@@ -94,7 +113,11 @@ export function createSectorField(scene: THREE.Scene, opts: SectorFieldOptions):
     }
     const rand = mulberry32(hashCoords(x, y, z, worldSeed));
     const c = sectorCenter(x, y, z, sectorSize);
-    const content = buildSectorContent(rand, sectorSize, new THREE.Vector3(c.x, c.y, c.z));
+    const content = buildSectorContent(
+      rand,
+      sectorSize,
+      new THREE.Vector3(c.x - origin.x, c.y - origin.y, c.z - origin.z),
+    );
     content.pois.forEach((poi, i) => { poi.id = `${key}:${i}`; });
     scene.add(content.group);
     // POI distances read matrixWorld, so make it valid before the next render
@@ -115,7 +138,8 @@ export function createSectorField(scene: THREE.Scene, opts: SectorFieldOptions):
   }
 
   return {
-    sync(position, immediate = false) {
+    sync(absolutePosition, immediate = false) {
+      const position = absolutePosition;
       const cx = Math.floor(position.x / sectorSize);
       const cy = Math.floor(position.y / sectorSize);
       const cz = Math.floor(position.z / sectorSize);
@@ -145,6 +169,20 @@ export function createSectorField(scene: THREE.Scene, opts: SectorFieldOptions):
         buildQueue.delete(key);
         buildSector(key);
       }
+    },
+
+    applyOriginShift(delta) {
+      origin.add(delta);
+      for (const content of activeSectors.values()) {
+        if (!content) continue;
+        content.group.position.sub(delta);
+        // POI distances read matrixWorld before the next render pass
+        content.group.updateMatrixWorld(true);
+      }
+    },
+
+    origin() {
+      return origin;
     },
 
     updateContents(dt, t) {

@@ -1,6 +1,8 @@
 import * as THREE from 'three';
+import { computeRebase } from 'engine/core/floatingOrigin';
+import { speedLimit } from 'engine/core/motion';
 import { mulberry32 } from 'engine/core/rng';
-import { createLodManager, type LodBodyHandle } from 'engine/lod/lodManager';
+import { createLodManager, type LodBeacon, type LodBodyHandle } from 'engine/lod/lodManager';
 import { wireMat } from 'engine/render/assets';
 import { createDustField } from 'engine/render/dust';
 import { createStage } from 'engine/render/stage';
@@ -9,7 +11,6 @@ import {
   buildHomeSystem,
   peekSectorBeacon,
   type Poi,
-  type SectorBeacon,
   type SectorContent,
 } from 'engine/world/sectorContent';
 import { createSectorField } from 'engine/world/sectors';
@@ -19,7 +20,7 @@ export interface EphemerisHudElements {
   body: HTMLElement;
   /** Distance line, e.g. "142 km · APPROACH". */
   dist: HTMLElement;
-  /** Ship speed, e.g. "55 km/s". */
+  /** Ship speed, e.g. "550 km/s". */
   speed: HTMLElement;
   /** Current sector, e.g. "KHEVEL EXPANSE · 2.0.-1". */
   sector: HTMLElement;
@@ -29,43 +30,50 @@ export interface EphemerisHudElements {
   ping: HTMLElement;
 }
 
-/** Edge length of one cubic sector of procedural space. */
-const SECTOR = 700;
+/** Edge length of one cubic sector of procedural space (1 unit = 1 km). */
+const SECTOR = 6000;
 /** Sectors are kept alive within this many cells of the ship (1 → 3×3×3). */
 const ACTIVE_RANGE = 1;
-/** First close approach within this many units of a POI's surface logs it. */
-const DISCOVERY_RANGE = 60;
-/** The HUD flags "APPROACH" inside this surface distance. */
-const APPROACH_RANGE = 30;
 /**
  * Sectors beyond the streamed window still show as far-contact beacon dots
  * out to this Chebyshev cell range (peeked, zero geometry built).
  */
 const BEACON_RANGE = 4;
-/**
- * Beyond this radius the ship is gently curved back toward charted space.
- * Not a gameplay wall — float32 world coordinates lose visible precision
- * (jitter) past ~10^5, so the playable universe is capped well below that.
- * ~64 sectors of travel in any direction ≈ minutes of sustained boost.
- */
-const MAX_RANGE = 45000;
+/** Open-space cruise speed; boost triples it (both capped by `speedLimit`). */
+const CRUISE_SPEED = 1000;
+const BOOST_FACTOR = 3;
+/** First close approach inside this surface distance logs a POI. */
+const discoveryRange = (radius: number) => Math.max(150, radius * 1.2);
+/** The HUD flags "APPROACH" inside this surface distance. */
+const approachRange = (radius: number) => Math.max(60, radius * 0.5);
 
 /**
  * Mounts the EPHEMERIS solar-system simulation into `container` and starts
  * its render loop. Returns a dispose function that stops the loop, removes
  * listeners and frees all GPU resources.
  *
- * Space is effectively infinite: beyond the hand-authored home system, every
- * sector of the universe deterministically generates its own content
- * (asteroid clusters, nebulae, rogue planets, minor star systems, pulsars,
- * derelicts…) from its coordinates.
+ * Space is truly unbounded: ship physics run in JS doubles as absolute
+ * position = floating origin + render-local position, and the whole scene is
+ * rebased by exact sector multiples whenever the ship strays more than a
+ * sector from the render origin (engine/core/floatingOrigin) — render
+ * coordinates stay float32-small forever, with no 45,000-unit range cap.
+ * Beyond the hand-authored home system, every sector deterministically
+ * generates its own content (asteroid clusters, nebulae, rogue planets,
+ * minor star systems, pulsars, derelicts…) from its absolute coordinates.
+ *
+ * Max speed is proportional to the distance to the nearest surface
+ * (engine/core/motion), so deep-space hops stay quick while planetary
+ * approaches decelerate into a controlled, seamless surface skim — and a
+ * soft altitude floor pushes the ship out gently instead of ever crashing.
  *
  * The sim owns its canvas; HUD text is written into the provided elements so
  * the caller controls layout/styling without re-rendering per frame.
  */
 export function createEphemeris(container: HTMLElement, hud: EphemerisHudElements): () => void {
-  // far covers the beacon-dot shell (BEACON_RANGE sectors on the diagonal)
-  const stage = createStage(container, { fov: 64, near: 0.5, far: 12000 });
+  // log depth: near 0.5 / far 60,000 spans five distance decades with nested
+  // LOD shells + atmosphere rings — a linear z-buffer would z-fight them.
+  // far covers the beacon-dot shell (BEACON_RANGE sectors on the diagonal).
+  const stage = createStage(container, { fov: 64, near: 0.5, far: 60000, logDepth: true });
   const { scene, camera, tracker } = stage;
 
   const worldSeed = Math.floor(Math.random() * 2 ** 31);
@@ -73,7 +81,7 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
   // ---- LOD ladder for planets/stars (screen-space rungs, cross-dissolve) ----
   const lod = createLodManager(scene, { jobBudgetMs: 3 });
 
-  // ---- the home system (permanent, at the origin) ----
+  // ---- the home system (permanent, at absolute (0,0,0)) ----
   const home = buildHomeSystem(mulberry32(worldSeed ^ 0x5eed));
   home.pois.forEach((poi, i) => { poi.id = `home:${i}`; });
   scene.add(home.group);
@@ -81,21 +89,22 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
   home.lodBodies.forEach((body) => lod.register(body));
 
   // stars — attached to the ship's position each frame so the backdrop is
-  // infinite (they only rotate with the camera, never translate past you)
-  const stars = createStarfield({ count: 800, minRadius: 1600, spread: 900, size: 1.8, opacity: 0.55 });
+  // infinite (they only rotate with the camera, never translate past you);
+  // the shell sits beyond the beacon range but inside the far plane
+  const stars = createStarfield({ count: 800, minRadius: 20000, spread: 20000, size: 26, opacity: 0.55 });
   tracker.track(stars.geometry);
   tracker.track(stars.material);
   scene.add(stars);
 
   // local dust — tiny soft points recycled around the ship so speed is
   // visible even in the emptiest stretch of space
-  const dust = tracker.track(createDustField({ count: 260, range: 130, size: 1.6, opacity: 0.35 }));
+  const dust = tracker.track(createDustField({ count: 260, range: 400, size: 3, opacity: 0.35 }));
   scene.add(dust.points);
 
   // ---- procedural sectors ----
   // The home system spans these cells; they get no random content.
   const isHomeCell = (x: number, y: number, z: number) =>
-    x >= -1 && x <= 1 && z >= -1 && z <= 1 && y >= -1 && y <= 0;
+    x >= -2 && x <= 2 && z >= -2 && z <= 2 && y >= -1 && y <= 1;
 
   const lodHandles = new Map<SectorContent, LodBodyHandle[]>();
   const field = createSectorField(scene, {
@@ -111,15 +120,18 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
       lodHandles.delete(content);
     },
   });
+  // the floating origin lives in the field; absolute = origin + render-local
+  const origin = field.origin();
 
   // far-contact beacons: sectors outside the streamed window peeked as dots;
-  // refreshed only when the ship crosses a cell boundary
+  // refreshed when the ship crosses a cell boundary (or the origin moves —
+  // dot positions are render-local)
   let beaconCellKey = '';
   const refreshBeacons = () => {
     const cell = field.currentCell();
     if (cell.key === beaconCellKey) return;
     beaconCellKey = cell.key;
-    const beacons: SectorBeacon[] = [];
+    const beacons: LodBeacon[] = [];
     for (let dx = -BEACON_RANGE; dx <= BEACON_RANGE; dx++) {
       for (let dy = -BEACON_RANGE; dy <= BEACON_RANGE; dy++) {
         for (let dz = -BEACON_RANGE; dz <= BEACON_RANGE; dz++) {
@@ -128,7 +140,13 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
           const y = cell.y + dy;
           const z = cell.z + dz;
           if (isHomeCell(x, y, z)) continue;
-          beacons.push(peekSectorBeacon(x, y, z, worldSeed, SECTOR));
+          const beacon = peekSectorBeacon(x, y, z, worldSeed, SECTOR);
+          beacons.push({
+            x: beacon.x - origin.x,
+            y: beacon.y - origin.y,
+            z: beacon.z - origin.z,
+            brightness: beacon.brightness,
+          });
         }
       }
     }
@@ -151,7 +169,7 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
   );
   shipBody.add(new THREE.Line(wingGeo, tracker.track(new THREE.LineBasicMaterial({ color: 0xffffff }))));
   ship.add(shipBody);
-  ship.position.set(0, 40, 900);
+  ship.position.set(0, 340, 12000); // just outside the outermost home orbit
   scene.add(ship);
 
   // ---- input ----
@@ -199,7 +217,10 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
   let pingTimer = 0;
   setHudText(hud.contacts, '0 CONTACTS LOGGED');
 
-  const nearest = { name: '', dist: 0 };
+  // Nearest body of the last completed HUD pass. `dist`/`radius`/`center`
+  // also feed the speed law (one frame stale — <50 units at max speed) and
+  // the soft altitude floor.
+  const nearest = { name: '', dist: Infinity, radius: 0, center: new THREE.Vector3() };
   const poiPos = new THREE.Vector3();
   const considerPoi = (poi: Poi) => {
     poiPos.setFromMatrixPosition(poi.object.matrixWorld);
@@ -207,8 +228,10 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
     if (d < nearest.dist) {
       nearest.dist = d;
       nearest.name = poi.name;
+      nearest.radius = poi.radius;
+      nearest.center.copy(poiPos);
     }
-    if (d < DISCOVERY_RANGE && poi.id && !discoveredIds.has(poi.id)) {
+    if (d < discoveryRange(poi.radius) && poi.id && !discoveredIds.has(poi.id)) {
       discoveredIds.add(poi.id);
       pingTimer = 4;
       setHudText(hud.ping, `NEW CONTACT · ${poi.name}`);
@@ -221,8 +244,16 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
   const attitude = { yaw: 0, pitch: -0.04 };
   const forward = new THREE.Vector3();
   const scratch = new THREE.Vector3();
+  const shipAbs = new THREE.Vector3();
+  const rebase = new THREE.Vector3();
 
-  field.sync(ship.position, true);
+  // start the camera in the chase pose — at the new world scale a swoop-in
+  // from the scene origin would cross the whole home system
+  ship.quaternion.setFromEuler(new THREE.Euler(attitude.pitch, attitude.yaw, 0, 'YXZ'));
+  camera.position.copy(scratch.set(0, 2.6, 9).applyQuaternion(ship.quaternion).add(ship.position));
+  camera.quaternion.copy(ship.quaternion);
+
+  field.sync(shipAbs.copy(ship.position).add(origin), true);
 
   stage.start((dt, t) => {
     // steering
@@ -237,28 +268,42 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
     ship.quaternion.setFromEuler(new THREE.Euler(attitude.pitch, attitude.yaw, 0, 'YXZ'));
     shipBody.rotation.z += (-steerX * 0.9 - shipBody.rotation.z) * Math.min(1, dt * 8);
 
+    // distance-proportional speed law: time-to-contact stays roughly
+    // constant, so approaches decelerate into a skim automatically
     forward.set(0, 0, -1).applyQuaternion(ship.quaternion);
-    velocity.lerp(scratch.copy(forward).multiplyScalar(boost ? 170 : 55), Math.min(1, dt * 2.2));
+    const targetSpeed = Math.min(boost ? CRUISE_SPEED * BOOST_FACTOR : CRUISE_SPEED, speedLimit(nearest.dist));
+    velocity.lerp(scratch.copy(forward).multiplyScalar(targetSpeed), Math.min(1, dt * 2.2));
     ship.position.addScaledVector(velocity, dt);
-    // precision guard — see MAX_RANGE
-    const range = ship.position.length();
-    if (range > MAX_RANGE) {
-      ship.position.multiplyScalar(1 - ((range - MAX_RANGE) / range) * Math.min(1, dt * 2));
+
+    // floating origin: once the ship strays a sector from the render origin,
+    // shift the whole render-local scene by an exact sector multiple — same
+    // frame, before sync and render, so it is visually invisible
+    const delta = computeRebase(ship.position, SECTOR);
+    if (delta) {
+      rebase.set(delta.x, delta.y, delta.z);
+      ship.position.sub(rebase);
+      camera.position.sub(rebase);
+      home.group.position.sub(rebase);
+      home.group.updateMatrixWorld(true);
+      field.applyOriginShift(rebase);
+      beaconCellKey = ''; // beacon dots are render-local — re-derive them
     }
 
     // world updates
     home.update?.(dt, t);
-    field.sync(ship.position);
+    field.sync(shipAbs.copy(ship.position).add(origin));
     refreshBeacons();
     field.updateContents(dt, t);
 
-    // backdrop + dust follow the ship
+    // backdrop + dust follow the ship (render-local; a rebase wraps the dust
+    // by whole sector multiples, which the modulo wrap absorbs in one step)
     stars.position.copy(ship.position);
     dust.update(dt, ship.position);
 
     // nearest-body HUD across home + all active sector POIs, plus discovery
-    nearest.name = 'THE SUN';
-    nearest.dist = ship.position.length() - 26;
+    nearest.name = 'DEEP SPACE';
+    nearest.dist = Infinity;
+    nearest.radius = 0;
     for (const poi of home.pois) considerPoi(poi);
     field.forEachPoi(considerPoi);
     if (pingTimer > 0) {
@@ -266,9 +311,11 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
       hud.ping.style.opacity = String(Math.max(0, Math.min(1, pingTimer / 1.5)));
     }
     setHudText(hud.body, nearest.name);
+    const surface = Math.max(0, nearest.dist);
+    const approach = nearest.dist < approachRange(nearest.radius) ? ' · APPROACH' : '';
     setHudText(
       hud.dist,
-      `${Math.max(0, Math.floor(nearest.dist))} km${nearest.dist < APPROACH_RANGE ? ' · APPROACH' : ''}`,
+      surface >= 10000 ? `${(surface / 1000).toFixed(2)} Mm${approach}` : `${Math.floor(surface)} km${approach}`,
     );
     setHudText(hud.speed, `${Math.floor(velocity.length())} km/s`);
     const cell = field.currentCell();
@@ -278,6 +325,17 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
         ? 'HOME SYSTEM'
         : `${cell.content ? `${cell.content.name} · ` : ''}${cell.x}.${cell.y}.${cell.z}`,
     );
+
+    // soft altitude floor: below 3% of the radius the ship is eased back out
+    // to a 1.03r skim — no bounce, no damage, no fail state
+    if (nearest.dist < nearest.radius * 0.03) {
+      scratch.copy(ship.position).sub(nearest.center);
+      const len = scratch.length();
+      if (len > 1e-6) {
+        scratch.multiplyScalar((nearest.radius * 1.03) / len).add(nearest.center);
+        ship.position.lerp(scratch, Math.min(1, dt * 3));
+      }
+    }
 
     // chase camera
     const camTarget = scratch.set(0, 2.6, 9).applyQuaternion(ship.quaternion).add(ship.position);
@@ -290,12 +348,31 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
 
   // debug/testing hook — lets tests (and the curious) jump across the universe
   interface EphemerisDebug {
+    /** Teleport to ABSOLUTE coordinates (the origin re-anchors under you). */
     warp: (x: number, y: number, z: number, lookX?: number, lookY?: number, lookZ?: number) => void;
+    /** POIs of the home system + active sectors, in absolute coordinates. */
     pois: () => Array<{ name: string; x: number; y: number; z: number; radius: number }>;
+    /** Current floating-origin offset (absolute doubles). */
+    origin: () => { x: number; y: number; z: number };
+    /** The ship's absolute position (origin + render-local). */
+    shipAbs: () => { x: number; y: number; z: number };
   }
   const debugHandle: EphemerisDebug = {
     warp: (x, y, z, lookX, lookY, lookZ) => {
-      ship.position.set(x, y, z);
+      // re-anchor the origin at the containing cell corner, keep the ship at
+      // the render-local remainder, and shift every render-local root
+      rebase.set(
+        Math.floor(x / SECTOR) * SECTOR - origin.x,
+        Math.floor(y / SECTOR) * SECTOR - origin.y,
+        Math.floor(z / SECTOR) * SECTOR - origin.z,
+      );
+      if (rebase.lengthSq() > 0) {
+        home.group.position.sub(rebase);
+        home.group.updateMatrixWorld(true);
+        field.applyOriginShift(rebase);
+        beaconCellKey = '';
+      }
+      ship.position.set(x - origin.x, y - origin.y, z - origin.z);
       velocity.set(0, 0, 0);
       if (lookX !== undefined && lookY !== undefined && lookZ !== undefined) {
         const dir = scratch.set(lookX - x, lookY - y, lookZ - z).normalize();
@@ -305,18 +382,30 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
         camera.position.copy(scratch.set(0, 2.6, 9).applyQuaternion(ship.quaternion).add(ship.position));
         camera.quaternion.copy(ship.quaternion);
       }
-      field.sync(ship.position, true);
+      field.sync(shipAbs.copy(ship.position).add(origin), true);
     },
     pois: () => {
       const all: Array<{ name: string; x: number; y: number; z: number; radius: number }> = [];
       const collect = (poi: Poi) => {
         poi.object.getWorldPosition(poiPos);
-        all.push({ name: poi.name, x: poiPos.x, y: poiPos.y, z: poiPos.z, radius: poi.radius });
+        all.push({
+          name: poi.name,
+          x: poiPos.x + origin.x,
+          y: poiPos.y + origin.y,
+          z: poiPos.z + origin.z,
+          radius: poi.radius,
+        });
       };
       home.pois.forEach(collect);
       field.forEachPoi(collect);
       return all;
     },
+    origin: () => ({ x: origin.x, y: origin.y, z: origin.z }),
+    shipAbs: () => ({
+      x: ship.position.x + origin.x,
+      y: ship.position.y + origin.y,
+      z: ship.position.z + origin.z,
+    }),
   };
   const globalHost = window as unknown as { __EPHEMERIS?: EphemerisDebug };
   globalHost.__EPHEMERIS = debugHandle;

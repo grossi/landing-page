@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { hashCoords, mulberry32 } from 'engine/core/rng';
 import { buildHomeSystem, buildSectorContent, peekSectorBeacon } from 'engine/world/sectorContent';
 
-const SECTOR = 700;
+const SECTOR = 6000;
 
 const buildAt = (x: number, y: number, z: number, worldSeed: number) =>
   buildSectorContent(
@@ -72,6 +72,8 @@ describe('buildSectorContent', () => {
       for (const poi of content.pois) {
         expect(poi.name).toBeTruthy();
         expect(poi.radius).toBeGreaterThan(0);
+        // scaled-up archetypes must still fit their sector comfortably
+        expect(poi.radius).toBeLessThanOrEqual(SECTOR / 2);
       }
       content.dispose();
     }
@@ -100,7 +102,7 @@ describe('buildHomeSystem', () => {
     expect(a.pois).toHaveLength(9);
     // the sun and every planet render through the LOD ladder
     expect(a.lodBodies).toHaveLength(8);
-    expect(a.lodBodies[0]).toMatchObject({ kind: 'star', radius: 26 });
+    expect(a.lodBodies[0]).toMatchObject({ kind: 'star', radius: 400 });
     expect(a.lodBodies.slice(1).every((l) => l.kind === 'planet')).toBe(true);
     expect(a.lodBodies.map((l) => l.seed)).toEqual(b.lodBodies.map((l) => l.seed));
     a.dispose();
@@ -118,7 +120,21 @@ describe('buildHomeSystem', () => {
     for (let i = 0; i < positions.count; i++) {
       const d = comet.position.distanceTo(new THREE.Vector3().fromBufferAttribute(positions, i));
       // every trail point sits near the comet's spawn, none at (0,0,0)
-      expect(d).toBeLessThan(60);
+      expect(d).toBeLessThan(800);
+    }
+    home.dispose();
+  });
+
+  it('keeps every body inside the reserved home cells (< 2 sectors of 6,000)', () => {
+    const home = buildHomeSystem(mulberry32(5));
+    // sample a few orbit phases; positions are pure functions of t
+    for (const t of [0, 60, 500, 3600]) {
+      home.update?.(1 / 60, t);
+      home.group.updateMatrixWorld(true);
+      for (const poi of home.pois) {
+        const p = new THREE.Vector3().setFromMatrixPosition(poi.object.matrixWorld);
+        expect(p.length() + poi.radius).toBeLessThan(12000);
+      }
     }
     home.dispose();
   });

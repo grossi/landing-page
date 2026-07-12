@@ -4,6 +4,13 @@
  */
 
 export { hashCoords, makeName, mulberry32, pickFrom, SYLLABLES } from 'engine/core/rng';
+export { computeRebase, type Vec3Like } from 'engine/core/floatingOrigin';
+export {
+  SPEED_CEIL,
+  SPEED_FLOOR,
+  SPEED_PER_SURFACE_DISTANCE,
+  speedLimit,
+} from 'engine/core/motion';
 export {
   createGovernorState,
   DEGRADE_FRAMES,
