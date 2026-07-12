@@ -12,12 +12,19 @@ export function mulberry32(seed: number): () => number {
   };
 }
 
-/** Mixes integer sector coordinates and a world seed into one 32-bit seed. */
+/**
+ * Mixes integer sector coordinates and a world seed into one 32-bit seed.
+ * The shift-xors between rounds matter: without them the single-multiply
+ * rounds preserve a sign symmetry and (x, -y, z) collides with (x, y, -z),
+ * giving mirrored sectors identical content.
+ */
 export function hashCoords(x: number, y: number, z: number, worldSeed: number): number {
   let h = worldSeed >>> 0;
-  h = Math.imul(h ^ (x * 0x9e3779b1), 0x85ebca6b);
-  h = Math.imul(h ^ (y * 0xc2b2ae35), 0x27d4eb2f);
-  h = Math.imul(h ^ (z * 0x165667b1), 0x9e3779b1);
+  h = Math.imul(h ^ Math.imul(x, 0x9e3779b1), 0x85ebca6b);
+  h ^= h >>> 13;
+  h = Math.imul(h ^ Math.imul(y, 0xc2b2ae35), 0x27d4eb2f);
+  h ^= h >>> 13;
+  h = Math.imul(h ^ Math.imul(z, 0x165667b1), 0x9e3779b1);
   h ^= h >>> 16;
   return h >>> 0;
 }
