@@ -60,6 +60,13 @@ export {
   type Disposable,
   type ResourceTracker,
 } from 'engine/render/resourceTracker';
+export { createStarfield, type StarfieldOptions } from 'engine/render/starfield';
+export {
+  createDustField,
+  wrapAround,
+  type DustField,
+  type DustFieldOptions,
+} from 'engine/render/dust';
 export {
   BEAM,
   BELT_MAT,

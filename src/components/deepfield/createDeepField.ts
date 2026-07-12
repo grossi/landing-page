@@ -1,6 +1,8 @@
 import * as THREE from 'three';
-import { DODEC, ICO_MID, OCT, RING_THIN, softSprite, wireMat } from 'engine/render/assets';
+import { DODEC, ICO_MID, OCT, RING_THIN, wireMat } from 'engine/render/assets';
+import { createDustField } from 'engine/render/dust';
 import { createStage } from 'engine/render/stage';
+import { createStarfield } from 'engine/render/starfield';
 
 /** Per-body drift state kept outside the scene graph for type safety. */
 interface BodyState {
@@ -47,22 +49,16 @@ export function createDeepField(container: HTMLElement): () => void {
 
   // ---- distant stars (rotate with the view, never translate) ----
   {
-    const n = 900;
-    const positions = new Float32Array(n * 3);
-    for (let i = 0; i < n; i++) {
-      const v = new THREE.Vector3().randomDirection().multiplyScalar(1800 + Math.random() * 1400);
-      positions.set([v.x, v.y, v.z], i * 3);
-    }
-    const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    tracker.track(geometry);
-    const stars = new THREE.Points(
-      geometry,
-      tracker.track(
-        new THREE.PointsMaterial({ color: 0xffffff, size: 1.7, transparent: true, opacity: 0.5, fog: false }),
-      ),
-    );
-    stars.frustumCulled = false;
+    const stars = createStarfield({
+      count: 900,
+      minRadius: 1800,
+      spread: 1400,
+      size: 1.7,
+      opacity: 0.5,
+      fog: false,
+    });
+    tracker.track(stars.geometry);
+    tracker.track(stars.material);
     scene.add(stars);
   }
 
@@ -120,26 +116,10 @@ export function createDeepField(container: HTMLElement): () => void {
   const bodies = Array.from({ length: 26 }, makeBody);
 
   // ---- dust for speed perception ----
-  const dustPositions = new Float32Array(DUST_N * 3);
-  for (let i = 0; i < DUST_N * 3; i++) dustPositions[i] = (Math.random() - 0.5) * DUST_RANGE * 2;
-  const dustGeo = new THREE.BufferGeometry();
-  dustGeo.setAttribute('position', new THREE.BufferAttribute(dustPositions, 3));
-  tracker.track(dustGeo);
-  const dust = new THREE.Points(
-    dustGeo,
-    tracker.track(
-      new THREE.PointsMaterial({
-        color: 0xffffff,
-        size: 1.5,
-        map: softSprite,
-        transparent: true,
-        opacity: 0.34,
-        depthWrite: false,
-      }),
-    ),
+  const dust = tracker.track(
+    createDustField({ count: DUST_N, range: DUST_RANGE, size: 1.5, opacity: 0.34 }),
   );
-  dust.frustumCulled = false;
-  scene.add(dust);
+  scene.add(dust.points);
 
   // ---- input ----
   const raycaster = new THREE.Raycaster();
@@ -184,15 +164,9 @@ export function createDeepField(container: HTMLElement): () => void {
   const side = new THREE.Vector3();
   const lift = new THREE.Vector3();
   const lateral = new THREE.Vector3();
+  const dustCenter = new THREE.Vector3();
+  const dustVelocity = new THREE.Vector3();
   let roll = 0;
-
-  // O(1) modulo wrap onto [-DUST_RANGE, DUST_RANGE] — handles any
-  // single-frame overshoot on any axis (same pattern as EPHEMERIS)
-  const DUST_SPAN = DUST_RANGE * 2;
-  const wrapDust = (v: number) =>
-    v > DUST_RANGE || v < -DUST_RANGE
-      ? ((((v + DUST_RANGE) % DUST_SPAN) + DUST_SPAN) % DUST_SPAN) - DUST_RANGE
-      : v;
 
   // Bodies passing behind respawn ahead of the *current* heading, so the
   // view stays populated whichever way a long turn ends up pointing.
@@ -274,22 +248,11 @@ export function createDeepField(container: HTMLElement): () => void {
 
     // dust: streams past opposite the heading; the wrap cube is centered 60
     // units ahead along it so most particles stay in front of the camera
-    const dp = dustGeo.attributes.position as THREE.BufferAttribute;
-    const dvx = -heading.x * speed * 2.4;
-    const dvy = -heading.y * speed * 2.4;
-    const dvz = -heading.z * speed * 2.4;
-    const cx = heading.x * 60;
-    const cy = heading.y * 60;
-    const cz = heading.z * 60;
-    for (let i = 0; i < DUST_N; i++) {
-      dp.setXYZ(
-        i,
-        wrapDust(dp.getX(i) + dvx * dt - cx) + cx,
-        wrapDust(dp.getY(i) + dvy * dt - cy) + cy,
-        wrapDust(dp.getZ(i) + dvz * dt - cz) + cz,
-      );
-    }
-    dp.needsUpdate = true;
+    dust.update(
+      dt,
+      dustCenter.copy(heading).multiplyScalar(60),
+      dustVelocity.copy(heading).multiplyScalar(-speed * 2.4),
+    );
   });
 
   return () => {

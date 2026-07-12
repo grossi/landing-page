@@ -1,10 +1,11 @@
 import * as THREE from 'three';
 import { hashCoords, mulberry32 } from 'engine/core/rng';
+import { createDustField } from 'engine/render/dust';
 import { createStage } from 'engine/render/stage';
+import { createStarfield } from 'engine/render/starfield';
 import {
   buildHomeSystem,
   buildSectorContent,
-  softSprite,
   wireMat,
   type Poi,
   type SectorContent,
@@ -68,52 +69,15 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
 
   // stars — attached to the ship's position each frame so the backdrop is
   // infinite (they only rotate with the camera, never translate past you)
-  const stars = (() => {
-    const n = 800;
-    const positions = new Float32Array(n * 3);
-    for (let i = 0; i < n; i++) {
-      const v = new THREE.Vector3().randomDirection().multiplyScalar(1600 + Math.random() * 900);
-      positions.set([v.x, v.y, v.z], i * 3);
-    }
-    const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    tracker.track(geometry);
-    const points = new THREE.Points(
-      geometry,
-      tracker.track(
-        new THREE.PointsMaterial({ color: 0xffffff, size: 1.8, transparent: true, opacity: 0.55 }),
-      ),
-    );
-    points.frustumCulled = false;
-    scene.add(points);
-    return points;
-  })();
+  const stars = createStarfield({ count: 800, minRadius: 1600, spread: 900, size: 1.8, opacity: 0.55 });
+  tracker.track(stars.geometry);
+  tracker.track(stars.material);
+  scene.add(stars);
 
   // local dust — tiny soft points recycled around the ship so speed is
   // visible even in the emptiest stretch of space
-  const DUST_N = 260;
-  const DUST_RANGE = 130;
-  const dustPositions = new Float32Array(DUST_N * 3);
-  for (let i = 0; i < DUST_N * 3; i++) dustPositions[i] = (Math.random() - 0.5) * DUST_RANGE * 2;
-  const dustGeo = new THREE.BufferGeometry();
-  dustGeo.setAttribute('position', new THREE.BufferAttribute(dustPositions, 3));
-  tracker.track(dustGeo);
-  const dust = new THREE.Points(
-    dustGeo,
-    tracker.track(
-      new THREE.PointsMaterial({
-        color: 0xffffff,
-        size: 1.6,
-        map: softSprite,
-        transparent: true,
-        opacity: 0.35,
-        depthWrite: false,
-        sizeAttenuation: true,
-      }),
-    ),
-  );
-  dust.frustumCulled = false;
-  scene.add(dust);
+  const dust = tracker.track(createDustField({ count: 260, range: 130, size: 1.6, opacity: 0.35 }));
+  scene.add(dust.points);
 
   // ---- procedural sectors ----
   // Value is null for cells reserved by the home system (no random content).
@@ -311,27 +275,7 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
 
     // backdrop + dust follow the ship
     stars.position.copy(ship.position);
-    {
-      const sx = ship.position.x;
-      const sy = ship.position.y;
-      const sz = ship.position.z;
-      const span = DUST_RANGE * 2;
-      let moved = false;
-      // O(1) modulo wrap per component — safe even across huge warp jumps
-      const wrap = (idx: number, center: number) => {
-        const d = dustPositions[idx] - center;
-        if (d > DUST_RANGE || d < -DUST_RANGE) {
-          dustPositions[idx] = center + ((((d + DUST_RANGE) % span) + span) % span) - DUST_RANGE;
-          moved = true;
-        }
-      };
-      for (let i = 0; i < DUST_N; i++) {
-        wrap(i * 3, sx);
-        wrap(i * 3 + 1, sy);
-        wrap(i * 3 + 2, sz);
-      }
-      if (moved) dustGeo.attributes.position.needsUpdate = true;
-    }
+    dust.update(dt, ship.position);
 
     // nearest-body HUD across home + all active sector POIs, plus discovery
     nearest.name = 'THE SUN';
