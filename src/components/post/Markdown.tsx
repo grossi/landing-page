@@ -12,9 +12,10 @@ SyntaxHighlighter.registerLanguage('typescript', typescript);
 
 // Strip emoji/pictographs so markdown titles render in the site's
 // plain terminal style even when the source file decorates them.
+// ©/®/™ are Extended_Pictographic too but belong in a title, so keep them.
 const stripEmoji = (node: React.ReactNode): React.ReactNode => {
   if (typeof node === 'string') {
-    return node.replace(/[\p{Extended_Pictographic}️]/gu, '').replace(/^\s+/, '');
+    return node.replace(/(?![©®™])[\p{Extended_Pictographic}️]/gu, '').replace(/^\s+/, '');
   }
   if (Array.isArray(node)) return node.map(stripEmoji);
   return node;
