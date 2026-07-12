@@ -4,16 +4,20 @@ import * as THREE from 'three';
 interface BodyState {
   group: THREE.Group;
   rot: THREE.Vector3;
-  vx: number;
-  vy: number;
 }
 
 /** Half-width / half-height of the corridor bodies spawn in. */
 const SPREAD_X = 620;
 const SPREAD_Y = 360;
-/** Bodies live between these z coords and recycle past NEAR. */
+/** Bodies live between these distances along the heading. */
 const FAR = -2100;
 const NEAR = 90;
+/**
+ * Recycled bodies respawn between these distances ahead of the heading;
+ * with fog exp2 0.00115 anything past ~1100 fades in rather than popping.
+ */
+const SPAWN_NEAR = 1100;
+const SPAWN_FAR = 2100;
 /** Base drift speed (units/s); clicks multiply it via the throttle. */
 const BASE_SPEED = 34;
 const DUST_N = 300;
@@ -109,8 +113,6 @@ export function createDeepField(container: HTMLElement): () => void {
         (Math.random() - 0.5) * 0.4,
         (Math.random() - 0.5) * 0.4,
       ),
-      vx: 0,
-      vy: 0,
     };
   }
   const bodies = Array.from({ length: 26 }, makeBody);
@@ -186,15 +188,34 @@ export function createDeepField(container: HTMLElement): () => void {
   window.addEventListener('resize', onResize);
 
   // ---- render loop ----
-  const clock = new THREE.Clock();
+  let last = performance.now();
+  let t = 0;
   const heading = new THREE.Vector3(0, 0, -1);
   const FORWARD = new THREE.Vector3(0, 0, -1);
+  const UP = new THREE.Vector3(0, 1, 0);
   const lookTarget = new THREE.Vector3();
+  const side = new THREE.Vector3();
+  const lift = new THREE.Vector3();
+  const lateral = new THREE.Vector3();
   let roll = 0;
 
-  renderer.setAnimationLoop(() => {
-    const dt = Math.min(clock.getDelta(), 0.05);
-    const t = clock.elapsedTime;
+  // Bodies passing behind respawn ahead of the *current* heading, so the
+  // view stays populated whichever way a long turn ends up pointing.
+  const respawnAhead = (b: BodyState) => {
+    side.crossVectors(heading, UP).normalize(); // heading.z < 0 keeps this non-degenerate
+    lift.crossVectors(side, heading);
+    b.group.position
+      .copy(heading)
+      .multiplyScalar(SPAWN_NEAR + Math.random() * (SPAWN_FAR - SPAWN_NEAR))
+      .addScaledVector(side, (Math.random() - 0.5) * 2 * SPREAD_X)
+      .addScaledVector(lift, (Math.random() - 0.5) * 2 * SPREAD_Y);
+  };
+
+  renderer.setAnimationLoop((now) => {
+    // timestamps can predate `last` on the first frame — clamp to 0
+    const dt = Math.max(0, Math.min((now - last) / 1000, 0.05));
+    last = now;
+    t += dt;
 
     // throttle: click kicks, hold burns, release coasts back to cruise
     if (throttleDown) boost += (8 - boost) * Math.min(1, dt * 1.6);
@@ -221,6 +242,11 @@ export function createDeepField(container: HTMLElement): () => void {
       heading.lerp(FORWARD, Math.min(1, dt * 0.08));
     }
     heading.y = THREE.MathUtils.clamp(heading.y, -0.55, 0.55);
+    // Steering is a pursuit curve (the cursor ray is always offset from the
+    // heading), so an edge-held cursor turns forever; keep the flight
+    // meaningfully forward or the dust recycle (z > 30 below) stops firing
+    // and the drift loses its direction.
+    heading.z = Math.min(heading.z, -0.35);
     heading.normalize();
 
     lookTarget.copy(camera.position).addScaledVector(heading, 520);
@@ -233,26 +259,17 @@ export function createDeepField(container: HTMLElement): () => void {
     // bodies: the world slides past, opposite the heading
     for (const b of bodies) {
       b.group.position.addScaledVector(heading, -speed * dt);
-      b.group.position.x += b.vx * dt;
-      b.group.position.y += b.vy * dt;
-      b.vx *= Math.pow(0.35, dt);
-      b.vy *= Math.pow(0.35, dt);
       b.group.rotation.x += b.rot.x * dt;
       b.group.rotation.y += b.rot.y * dt;
+      b.group.rotation.z += b.rot.z * dt;
 
-      if (b.group.position.z > NEAR) {
-        b.group.position.set(
-          (Math.random() - 0.5) * 2 * SPREAD_X,
-          (Math.random() - 0.5) * 2 * SPREAD_Y,
-          FAR + Math.random() * 120,
-        );
-        b.vx = b.vy = 0;
+      // recycle once behind the camera, or once a turn has left the body
+      // too far off the flight axis to ever be seen again
+      const proj = b.group.position.dot(heading);
+      lateral.copy(b.group.position).addScaledVector(heading, -proj);
+      if (proj < -NEAR || lateral.lengthSq() > (SPREAD_X * 1.9) ** 2) {
+        respawnAhead(b);
       }
-      // lateral wrap so long turns never empty the field
-      if (Math.abs(b.group.position.x) > SPREAD_X * 1.8)
-        b.group.position.x -= Math.sign(b.group.position.x) * SPREAD_X * 3.6;
-      if (Math.abs(b.group.position.y) > SPREAD_Y * 1.8)
-        b.group.position.y -= Math.sign(b.group.position.y) * SPREAD_Y * 3.6;
     }
 
     // dust: streams past opposite the heading, recycled around the camera

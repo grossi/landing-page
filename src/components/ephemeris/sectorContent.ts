@@ -557,6 +557,14 @@ export function buildHomeSystem(rand: () => number): SectorContent {
   pois.push({ name: 'THE COMET', object: comet, radius: 2 });
   const TRAIL_LENGTH = 70;
   const trailPositions = new Float32Array(TRAIL_LENGTH * 3);
+  // Start the whole trail at the comet's t=0 position (same formula as
+  // update below); zeros would draw a line to the origin for the first
+  // TRAIL_LENGTH frames.
+  for (let i = 0; i < TRAIL_LENGTH; i++) {
+    trailPositions[i * 3] = Math.cos(2) * 620;
+    trailPositions[i * 3 + 1] = Math.sin(4) * 18;
+    trailPositions[i * 3 + 2] = Math.sin(2) * 260;
+  }
   const trailGeo = new THREE.BufferGeometry();
   trailGeo.setAttribute('position', new THREE.BufferAttribute(trailPositions, 3));
   own.push(trailGeo);

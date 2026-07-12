@@ -226,12 +226,16 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
   };
   const onKeyDown = (e: KeyboardEvent) => { keys[e.code] = true; };
   const onKeyUp = (e: KeyboardEvent) => { keys[e.code] = false; };
+  // keyup never arrives for keys held across a focus loss (Cmd-Tab etc.),
+  // which would leave the ship burning forever.
+  const onBlur = () => { for (const code in keys) keys[code] = false; };
   const onPointerMove = (e: PointerEvent) => { pointer = toLocal(e.clientX, e.clientY); };
   const onPointerDown = () => { pointerDown = true; };
   const onPointerUp = () => { pointerDown = false; };
   const onTouchMove = (e: TouchEvent) => { pointer = toLocal(e.touches[0].clientX, e.touches[0].clientY); };
   window.addEventListener('keydown', onKeyDown);
   window.addEventListener('keyup', onKeyUp);
+  window.addEventListener('blur', onBlur);
   container.addEventListener('pointermove', onPointerMove);
   container.addEventListener('pointerdown', onPointerDown);
   window.addEventListener('pointerup', onPointerUp);
@@ -420,6 +424,7 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
     if (globalHost.__EPHEMERIS === debugHandle) delete globalHost.__EPHEMERIS;
     window.removeEventListener('keydown', onKeyDown);
     window.removeEventListener('keyup', onKeyUp);
+    window.removeEventListener('blur', onBlur);
     container.removeEventListener('pointermove', onPointerMove);
     container.removeEventListener('pointerdown', onPointerDown);
     window.removeEventListener('pointerup', onPointerUp);
