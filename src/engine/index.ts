@@ -37,6 +37,16 @@ export {
 } from 'engine/core/sectorGrid';
 export { runBudgeted, type BuildStep } from 'engine/core/scheduler';
 export {
+  ASTEROID_PROFILE,
+  getCraterSpecs,
+  makeDisplacementField,
+  PLANET_PROFILE,
+  STAR_PROFILE,
+  type CraterSpec,
+  type DisplacementPreset,
+  type DisplacementProfile,
+} from 'engine/lod/displacement';
+export {
   clampDt,
   createStage,
   isPaused,
