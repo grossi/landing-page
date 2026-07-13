@@ -6,6 +6,7 @@ import {
   apparentScale,
   ATMOSPHERE_MAX_OPACITY,
   atmosphereOpacity,
+  biasedMaxLevel,
   createLodManager,
   SCALE_RAMP_FLOOR,
 } from 'engine/lod/lodManager';
@@ -57,6 +58,24 @@ describe('atmosphereOpacity', () => {
       expect(o).toBeGreaterThanOrEqual(last - 1e-12);
       last = o;
     }
+  });
+});
+
+describe('biasedMaxLevel', () => {
+  it('subtracts the bias from the cap', () => {
+    expect(biasedMaxLevel(5, 0)).toBe(5);
+    expect(biasedMaxLevel(5, 1)).toBe(4);
+    expect(biasedMaxLevel(3, 1)).toBe(2);
+  });
+
+  it('floors at rung 1 — a nearby body keeps a silhouette, never a dot', () => {
+    expect(biasedMaxLevel(5, 5)).toBe(1);
+    expect(biasedMaxLevel(2, 99)).toBe(1);
+  });
+
+  it('never raises a cap already below the floor (always-dot content)', () => {
+    expect(biasedMaxLevel(0, 0)).toBe(0);
+    expect(biasedMaxLevel(0, 1)).toBe(0);
   });
 });
 
@@ -138,6 +157,65 @@ describe('createLodManager', () => {
       expect(handle.level).toBeLessThanOrEqual(2);
     }
     expect(handle.level).toBe(2);
+    lod.dispose();
+  });
+
+  it('setLodBias sheds one rung per dwell window down to the floor, then restores', async () => {
+    const scene = new THREE.Scene();
+    const lod = createLodManager(scene);
+    const anchor = new THREE.Group();
+    anchor.position.set(0, 0, -15);
+    scene.add(anchor);
+    const handle = lod.register({ seed: 23, radius: 10, kind: 'planet', anchor });
+    for (let i = 0; i < 40 && handle.level < 5; i++) {
+      lod.update(makeCamera(), VIEW_H, 0.6);
+      await flush();
+    }
+    expect(handle.level).toBe(5);
+
+    lod.setLodBias(1); // governor quality level 1/2
+    let previous = handle.level;
+    for (let i = 0; i < 6; i++) {
+      lod.update(makeCamera(), VIEW_H, 0.6);
+      await flush();
+      expect(handle.level).toBeGreaterThanOrEqual(previous - 1); // one step per window
+      previous = handle.level;
+    }
+    expect(handle.level).toBe(4);
+
+    lod.setLodBias(99); // sheds to the floor, never the dot
+    for (let i = 0; i < 10; i++) {
+      lod.update(makeCamera(), VIEW_H, 0.6);
+      await flush();
+      expect(handle.liveSlotCount).toBeLessThanOrEqual(2); // sheds stay pairwise
+    }
+    expect(handle.level).toBe(1);
+
+    lod.setLodBias(0); // load recovered — the registration cap returns
+    for (let i = 0; i < 40 && handle.level < 5; i++) {
+      lod.update(makeCamera(), VIEW_H, 0.6);
+      await flush();
+    }
+    expect(handle.level).toBe(5);
+    lod.dispose();
+  });
+
+  it('clamps fadeSeconds to the dwell so an option cannot strand a dissolve', async () => {
+    const scene = new THREE.Scene();
+    const lod = createLodManager(scene, { fadeSeconds: 9 }); // > LOD_MIN_DWELL_S
+    const anchor = new THREE.Group();
+    anchor.position.set(0, 0, -15);
+    scene.add(anchor);
+    const handle = lod.register({ seed: 27, radius: 10, kind: 'planet', anchor });
+    for (let i = 0; i < 40 && handle.level < 5; i++) {
+      lod.update(makeCamera(), VIEW_H, 0.6);
+      await flush();
+    }
+    expect(handle.level).toBe(5);
+    // one more dwell-length frame: the (clamped) final fade must complete
+    lod.update(makeCamera(), VIEW_H, 0.6);
+    expect(handle.liveSlotCount).toBe(1);
+    expect(handle.slotOpacities[0]).toBeCloseTo(0.85, 5);
     lod.dispose();
   });
 

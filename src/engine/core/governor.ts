@@ -12,7 +12,7 @@
 
 /** Render settings for one quality level. */
 export interface QualityLevel {
-  /** Cap for renderer.setPixelRatio (already capped at 1.5 by the stage). */
+  /** Cap for renderer.setPixelRatio (the stage may raise the level-0 cap). */
   readonly pixelRatio: number;
   /** Fraction of the full dust/particle budget to keep alive. */
   readonly dustFraction: number;
@@ -20,12 +20,16 @@ export interface QualityLevel {
   readonly lodBias: number;
 }
 
-/** Quality ladder, best (0) to most degraded (2). */
-export const GOVERNOR_LEVELS: readonly QualityLevel[] = [
-  { pixelRatio: 1.5, dustFraction: 1, lodBias: 0 },
-  { pixelRatio: 1.25, dustFraction: 0.66, lodBias: 1 },
-  { pixelRatio: 1.0, dustFraction: 0.4, lodBias: 1 },
-];
+/**
+ * Quality ladder, best (0) to most degraded (2). Frozen at runtime — the
+ * entries are handed out per frame (stage.quality()), and a stray write
+ * through one would silently rewrite the ladder for every stage.
+ */
+export const GOVERNOR_LEVELS: readonly QualityLevel[] = Object.freeze([
+  Object.freeze({ pixelRatio: 1.5, dustFraction: 1, lodBias: 0 }),
+  Object.freeze({ pixelRatio: 1.25, dustFraction: 0.66, lodBias: 1 }),
+  Object.freeze({ pixelRatio: 1.0, dustFraction: 0.4, lodBias: 1 }),
+]);
 
 /** Degrade one level when the frame-time EMA stays above this (ms)… */
 export const DEGRADE_MS = 14;

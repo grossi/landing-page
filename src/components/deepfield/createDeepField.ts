@@ -57,11 +57,11 @@ const GIANT_FADE_FAR = 14000;
  * they recycle) they must fade to black explicitly before leaving the
  * corridor — otherwise the lateral recycle would despawn a visible
  * silhouette inside the frustum. The fade band starts beyond the widest
- * possible spawn (√2 · SPREAD ≈ 1.42) and ends before the recycle rim.
+ * possible spawn (√2 · SPREAD ≈ 1.42); its far edge, where the target
+ * opacity hits 0, doubles as the recycle rim.
  */
 const GIANT_LAT_FADE_NEAR = GIANT_SPREAD * 1.45;
 const GIANT_LAT_FADE_FAR = GIANT_SPREAD * 1.8;
-const GIANT_LAT_LIMIT = GIANT_SPREAD * 1.9;
 /** Giants drift at this fraction of ship speed — far things barely parallax. */
 const GIANT_PARALLAX = 0.06;
 const GIANT_COUNT = 3;
@@ -79,8 +79,16 @@ const GIANT_COUNT = 3;
  */
 export function createDeepField(container: HTMLElement): () => void {
   // far 20,000 gives the giants a deep corridor; nothing nests, so a
-  // standard depth buffer at 4e4 far:near is comfortable (near raised to 0.5)
-  const stage = createStage(container, { fov: 62, near: 0.5, far: 20000, fogDensity: 0.00115 });
+  // standard depth buffer at 4e4 far:near is comfortable (near raised to 0.5).
+  // maxPixelRatio 2: full retina crispness for the 1px wireframes at quality
+  // level 0 (parity with main); governor steps down still shed below it.
+  const stage = createStage(container, {
+    fov: 62,
+    near: 0.5,
+    far: 20000,
+    fogDensity: 0.00115,
+    maxPixelRatio: 2,
+  });
   const { scene, camera, renderer, tracker } = stage;
 
   // Mount-owned GPU resources (point clouds, fresh wireframe materials) are
@@ -369,8 +377,9 @@ export function createDeepField(container: HTMLElement): () => void {
     // rim); actual opacity glides toward it, so a respawn (which zeroes it)
     // always resolves out of black over a couple of seconds. Recycling waits
     // until the giant is provably invisible — fully behind the camera, or
-    // past the rim with its glided opacity at black — so it never pops in
-    // EITHER direction.
+    // past the fade band's far edge (target opacity 0) with its glided
+    // opacity at black — so it never pops in EITHER direction, and a faded
+    // giant never squats invisibly in one of the few slots.
     for (const g of giants) {
       g.group.position.addScaledVector(heading, -speed * GIANT_PARALLAX * dt);
       g.group.rotation.y += g.spin * dt;
@@ -383,10 +392,16 @@ export function createDeepField(container: HTMLElement): () => void {
         (1 - THREE.MathUtils.smoothstep(d, GIANT_FADE_NEAR, GIANT_FADE_FAR)) *
         (1 - THREE.MathUtils.smoothstep(lat, GIANT_LAT_FADE_NEAR, GIANT_LAT_FADE_FAR));
       g.mat.opacity += (targetOpacity - g.mat.opacity) * Math.min(1, dt * 0.6);
-      if (proj < -(NEAR + g.extent) || (lat > GIANT_LAT_LIMIT && g.mat.opacity < 0.005)) {
+      if (proj < -(NEAR + g.extent) || (lat > GIANT_LAT_FADE_FAR && g.mat.opacity < 0.005)) {
         respawnGiantAhead(g);
       }
     }
+
+    // adaptive quality: under sustained load the governor sheds dust and
+    // LOD rungs alongside pixels; both knobs are identity at level 0
+    const quality = stage.quality();
+    dust.setDensity(quality.dustFraction);
+    lod.setLodBias(quality.lodBias);
 
     // dust: streams past opposite the heading; the wrap cube is centered 60
     // units ahead along it so most particles stay in front of the camera

@@ -345,6 +345,12 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
     refreshBeacons();
     field.updateContents(dt, t);
 
+    // adaptive quality: under sustained load the governor sheds dust and
+    // LOD rungs alongside pixels; both knobs are identity at level 0
+    const quality = stage.quality();
+    dust.setDensity(quality.dustFraction);
+    lod.setLodBias(quality.lodBias);
+
     // backdrop + dust follow the ship (render-local; a rebase wraps the dust
     // by whole sector multiples, which the modulo wrap absorbs in one step)
     stars.position.copy(ship.position);

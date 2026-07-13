@@ -36,7 +36,19 @@ export interface DustField {
    * viewer with no velocity uploads nothing.
    */
   update(dt: number, center: THREE.Vector3, velocity?: THREE.Vector3): void;
+  /**
+   * Live fraction of the particle budget (the governor's dustFraction):
+   * only the first `dustDrawCount` points are drawn. Deterministic — the
+   * same particles hide and return, and `update` keeps advecting hidden
+   * ones, so recovery restores the exact field with no reshuffle.
+   */
+  setDensity(fraction: number): void;
   dispose(): void;
+}
+
+/** Points drawn at a dust fraction: `count * fraction`, clamped and rounded. */
+export function dustDrawCount(count: number, fraction: number): number {
+  return Math.round(count * Math.min(1, Math.max(0, fraction)));
 }
 
 /**
@@ -89,6 +101,9 @@ export function createDustField(opts: DustFieldOptions = {}): DustField {
         step(i * 3 + 2, dz, center.z);
       }
       if (moved) attribute.needsUpdate = true;
+    },
+    setDensity(fraction) {
+      geometry.setDrawRange(0, dustDrawCount(count, fraction));
     },
     dispose() {
       geometry.dispose();

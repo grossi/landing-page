@@ -27,7 +27,7 @@
  */
 
 import * as THREE from 'three';
-import { projectedPixelRadius, selectLod } from 'engine/core/selectLod';
+import { LOD_MIN_DWELL_S, projectedPixelRadius, selectLod } from 'engine/core/selectLod';
 import {
   ASTEROID_PROFILE,
   makeDisplacementField,
@@ -99,6 +99,17 @@ export function atmosphereOpacity(surfaceDistance: number, radius: number): numb
   const d = surfaceDistance / Math.max(radius, 1e-6);
   const t = Math.min(1, Math.max(0, (ATMOSPHERE_FAR - d) / (ATMOSPHERE_FAR - ATMOSPHERE_NEAR)));
   return ATMOSPHERE_MAX_OPACITY * smooth(t);
+}
+
+/**
+ * Effective ladder cap under governor load-shedding (`setLodBias`). The
+ * floor is rung 1, not 0: demoting a nearby body all the way to the
+ * far-contact dot under load would read as it vanishing, while rung 1
+ * keeps a wireframe silhouette. Bodies registered with a cap below 1
+ * (always-dot content) stay there — the bias never raises a cap.
+ */
+export function biasedMaxLevel(maxLevel: number, lodBias: number): number {
+  return Math.min(maxLevel, Math.max(1, maxLevel - lodBias));
 }
 
 export type LodBodyKind = 'planet' | 'asteroid' | 'star';
@@ -176,6 +187,13 @@ export interface LodManager {
   setBeacons(beacons: readonly LodBeacon[]): void;
   /** Number of registered bodies (stats overlay). */
   bodyCount(): number;
+  /**
+   * Governor load-shedding: lowers every body's effective ladder cap (see
+   * biasedMaxLevel). Bodies above the biased cap shed one rung per dwell
+   * window through the normal cross-dissolve — no extra smoothing needed;
+   * 0 (quality level 0) restores the registration caps.
+   */
+  setLodBias(bias: number): void;
   /** Advance selection, dissolves, dots and geometry jobs. Once per frame. */
   update(camera: THREE.PerspectiveCamera, viewportHeightPx: number, dt: number): void;
   dispose(): void;
@@ -231,7 +249,9 @@ const getAtmosphereGeometry = (): THREE.TorusGeometry => {
 
 /** Creates the LOD manager for one scene. Call `update` once per frame. */
 export function createLodManager(scene: THREE.Scene, opts: LodManagerOptions = {}): LodManager {
-  const fadeSeconds = opts.fadeSeconds ?? LOD_FADE_S;
+  // clamp: a fade longer than the selection dwell would be interrupted by
+  // the next rung change, violating the no-interrupted-fade invariant
+  const fadeSeconds = Math.min(opts.fadeSeconds ?? LOD_FADE_S, LOD_MIN_DWELL_S);
   const jobBudgetMs = opts.jobBudgetMs ?? 3;
   const ownsCache = opts.cache === undefined;
   const ownsQueue = opts.queue === undefined;
@@ -240,6 +260,8 @@ export function createLodManager(scene: THREE.Scene, opts: LodManagerOptions = {
 
   const bodies = new Set<BodyState>();
   const states = new Map<LodBodyHandle, BodyState>();
+  // governor load-shedding bias applied to every body's cap (0 = no shed)
+  let lodBias = 0;
 
   // ---- shared far-contact dot layer (rung 0 of every registered body) ----
   const dotPositions = new Float32Array(DOT_CAPACITY * 3);
@@ -496,6 +518,10 @@ export function createLodManager(scene: THREE.Scene, opts: LodManagerOptions = {
       return bodies.size;
     },
 
+    setLodBias(bias) {
+      lodBias = bias;
+    },
+
     setBeacons(list) {
       const count = Math.min(list.length, BEACON_CAPACITY);
       for (let i = 0; i < count; i++) {
@@ -539,7 +565,7 @@ export function createLodManager(scene: THREE.Scene, opts: LodManagerOptions = {
         // rung selection (one step per frame; dwell ≥ fade keeps it pairwise)
         const px = projectedPixelRadius(body.radius * scale, centerDistance, fovYRad, viewportHeightPx);
         body.dwell += dt;
-        const desired = selectLod(body.level, px, body.dwell, body.maxLevel);
+        const desired = selectLod(body.level, px, body.dwell, biasedMaxLevel(body.maxLevel, lodBias));
         if (desired !== body.level) {
           if (body.pendingLevel === desired) queue.setPriority(body.pendingKey, px);
           else requestLevel(body, desired, px);

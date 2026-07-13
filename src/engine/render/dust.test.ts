@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
-import { createDustField, wrapAround } from 'engine/render/dust';
+import { createDustField, dustDrawCount, wrapAround } from 'engine/render/dust';
 
 describe('wrapAround', () => {
   it('returns values already inside the band untouched', () => {
@@ -33,6 +33,20 @@ describe('wrapAround', () => {
       expect(w).toBeGreaterThanOrEqual(-3);
       expect(w).toBeLessThanOrEqual(17);
     }
+  });
+});
+
+describe('dustDrawCount', () => {
+  it('rounds count * fraction', () => {
+    expect(dustDrawCount(300, 1)).toBe(300);
+    expect(dustDrawCount(300, 0.66)).toBe(198);
+    expect(dustDrawCount(300, 0.4)).toBe(120);
+    expect(dustDrawCount(261, 0.66)).toBe(172);
+  });
+
+  it('clamps the fraction to [0, 1]', () => {
+    expect(dustDrawCount(300, 1.5)).toBe(300);
+    expect(dustDrawCount(300, -0.2)).toBe(0);
   });
 });
 
@@ -81,6 +95,21 @@ describe('createDustField', () => {
       expect(Math.abs(pos.getY(i) - center.y)).toBeLessThanOrEqual(10);
       expect(Math.abs(pos.getZ(i) - center.z)).toBeLessThanOrEqual(10);
     }
+    field.dispose();
+  });
+
+  it('setDensity scales the drawRange and restores cleanly (governor dustFraction)', () => {
+    const field = createDustField({ count: 50, range: 20 });
+    const geometry = field.points.geometry;
+    field.setDensity(0.4);
+    expect(geometry.drawRange.count).toBe(20);
+    // hidden particles keep advecting — recovery restores the exact field
+    const pos = positionsOf(field);
+    const hiddenX = pos.getX(30); // index past the 20-point draw window
+    field.update(1, new THREE.Vector3(0, 0, 0), new THREE.Vector3(2, 0, 0));
+    expect(pos.getX(30)).not.toBe(hiddenX);
+    field.setDensity(1);
+    expect(geometry.drawRange.count).toBe(50);
     field.dispose();
   });
 

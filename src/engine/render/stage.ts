@@ -4,6 +4,7 @@ import {
   pushFrameTime,
   qualityForLevel,
   type GovernorState,
+  type QualityLevel,
 } from 'engine/core/governor';
 import { createResourceTracker, type ResourceTracker } from 'engine/render/resourceTracker';
 
@@ -27,6 +28,19 @@ export function isPaused(sources: ReadonlySet<PauseSource>): boolean {
   return sources.size > 0;
 }
 
+/**
+ * Governor pixel-ratio cap for a quality level, with an optional raised
+ * level-0 ceiling (`maxPixelRatio`). The option only ever RAISES level 0
+ * (never lowers any cap — a ceiling at or below the table is a no-op);
+ * degraded levels keep their own smaller table caps, so governor steps
+ * down always shed pixels below it.
+ */
+export function pixelRatioCap(level: number, maxPixelRatio?: number): number {
+  const table = qualityForLevel(level).pixelRatio;
+  if (maxPixelRatio === undefined || level !== 0) return table;
+  return Math.max(table, maxPixelRatio);
+}
+
 export interface StageOptions {
   fov?: number;
   near?: number;
@@ -41,6 +55,12 @@ export interface StageOptions {
    * wireframe scene. Scenes without nesting should keep the default.
    */
   logDepth?: boolean;
+  /**
+   * Raises the governor's level-0 pixel-ratio ceiling (see pixelRatioCap).
+   * Light scenes whose 1px wireframes want full retina crispness (DEEP
+   * FIELD) pass 2; the default keeps the quality table's 1.5 cap.
+   */
+  maxPixelRatio?: number;
 }
 
 export interface Stage {
@@ -59,6 +79,12 @@ export interface Stage {
    * Read-only for consumers (the stats overlay renders it).
    */
   governor: GovernorState;
+  /**
+   * Settings for the governor's current quality level. The stage applies
+   * the pixelRatio cap itself; consumers feed dustFraction/lodBias to their
+   * dust field and LOD manager each frame (identity at level 0).
+   */
+  quality(): QualityLevel;
   /** Frames rendered since creation; the stats overlay derives FPS from it. */
   frameCount(): number;
   /** Sets the per-frame callback and starts the loop; runs before render. */
@@ -84,7 +110,7 @@ export interface Stage {
  * a giant dt.
  */
 export function createStage(container: HTMLElement, opts: StageOptions = {}): Stage {
-  const { fov = 60, near = 0.1, far = 5000, fogDensity, logDepth = false } = opts;
+  const { fov = 60, near = 0.1, far = 5000, fogDensity, logDepth = false, maxPixelRatio } = opts;
 
   const scene = new THREE.Scene();
   if (fogDensity !== undefined) scene.fog = new THREE.FogExp2(0x000000, fogDensity);
@@ -97,11 +123,12 @@ export function createStage(container: HTMLElement, opts: StageOptions = {}): St
   const renderer = new THREE.WebGLRenderer({ antialias: true, logarithmicDepthBuffer: logDepth });
 
   // adaptive quality: the governor watches per-frame JS cost and steps the
-  // pixelRatio cap down (1.5 → 1.25 → 1.0) under sustained load. Its
-  // dustFraction/lodBias knobs are not consumed yet — DPR is the big lever.
+  // pixelRatio cap down (1.5 → 1.25 → 1.0) under sustained load — DPR is
+  // the big lever. Its dustFraction/lodBias knobs are read by the
+  // experiences' frame loops via quality() to shed dust and LOD rungs too.
   const governor = createGovernorState();
   const applyGovernorPixelRatio = () =>
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, qualityForLevel(governor.level).pixelRatio));
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, pixelRatioCap(governor.level, maxPixelRatio)));
   applyGovernorPixelRatio();
   renderer.setSize(container.clientWidth, container.clientHeight);
   container.appendChild(renderer.domElement);
@@ -170,6 +197,8 @@ export function createStage(container: HTMLElement, opts: StageOptions = {}): St
   const onResize = () => {
     camera.aspect = container.clientWidth / Math.max(1, container.clientHeight);
     camera.updateProjectionMatrix();
+    // re-clamp: a drag to a different-DPR monitor changes devicePixelRatio
+    applyGovernorPixelRatio();
     renderer.setSize(container.clientWidth, container.clientHeight);
   };
   const resizeObserver = new ResizeObserver(onResize);
@@ -181,6 +210,7 @@ export function createStage(container: HTMLElement, opts: StageOptions = {}): St
     renderer,
     tracker,
     governor,
+    quality: () => qualityForLevel(governor.level),
     frameCount: () => frames,
     start(cb) {
       onFrame = cb;
