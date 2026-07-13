@@ -7,8 +7,9 @@
  * - Levels 3+ go through `GeometryJobQueue`: resumable jobs that displace
  *   `SLICE_VERTS` vertices per step, drained by C4's `runBudgeted` scheduler
  *   inside a few-ms frame budget — at most ~one geometry build per frame.
- * - Finished geometries live in `GeometryCache` (LRU, keyed `${seed}:${level}`)
- *   so re-approaching the same planet is free.
+ * - Finished geometries live in `GeometryCache` (LRU, keyed by
+ *   `lodGeometryKey`) so re-approaching the same planet is free. Entries
+ *   backing live meshes are pinned via retain/release and never evicted.
  *
  * No THREE.Mesh / DOM here — geometry only, so everything unit-tests in node.
  */
@@ -20,8 +21,14 @@ import type { IcosphereTables } from 'engine/lod/icosphere';
 /** Radial displacement field: unit direction in, offset in [-1, 1] out. */
 export type RadialField = (x: number, y: number, z: number) => number;
 
-/** Cache key for one body's geometry at one rung. */
-export const lodGeometryKey = (seed: number, level: number): string => `${seed}:${level}`;
+/**
+ * Cache key for one body's geometry at one rung. Seed alone is not enough:
+ * seeds are independent 31-bit draws, so two bodies can collide — kind and
+ * radius must contribute or the second body silently renders the first
+ * body's terrain at the wrong size and archetype.
+ */
+export const lodGeometryKey = (seed: number, kind: string, radius: number, level: number): string =>
+  `${seed}:${kind}:${radius}:${level}`;
 
 /** Vertices displaced per job slice (sub5 = 10242 verts → 6 slices). */
 export const SLICE_VERTS = 2048;
@@ -29,7 +36,11 @@ export const SLICE_VERTS = 2048;
 /** Default per-frame job budget in milliseconds. */
 export const JOB_BUDGET_MS = 3;
 
-/** Default LRU capacity (sub5 positions ≈ 123 KB ⇒ < 3 MB worst case). */
+/**
+ * Default LRU capacity (sub5 positions ≈ 123 KB ⇒ < 3 MB worst case).
+ * A soft cap: pinned (in-use) entries never evict, so the cache may run
+ * over while more bodies than this are displayed at rung 1+.
+ */
 export const GEOMETRY_CACHE_MAX = 24;
 
 /**
@@ -110,9 +121,14 @@ export function buildLodGeometrySync(
 }
 
 /**
- * LRU cache of finished rung geometries keyed `${seed}:${level}`.
+ * LRU cache of finished rung geometries keyed by `lodGeometryKey`.
  * Eviction disposes the BufferGeometry (frees the GPU buffers; the shared
  * edge-index backing array survives, three re-uploads it on next use).
+ *
+ * Every displayed geometry is also a cache entry (the manager always shows
+ * the cached instance), so consumers must `retain` a key while a mesh uses
+ * it and `release` it after — pinned entries are skipped by eviction, else
+ * the LRU would dispose buffers out from under a live mesh.
  */
 export class GeometryCache {
   private readonly maxEntries: number;
@@ -120,6 +136,11 @@ export class GeometryCache {
   // Map iteration order is insertion order; re-inserting on get() makes the
   // first key the least recently used.
   private readonly entries = new Map<string, THREE.BufferGeometry>();
+
+  // in-use refcounts; a present key means "never evict"
+  private readonly pins = new Map<string, number>();
+
+  private disposed = false;
 
   constructor(maxEntries: number = GEOMETRY_CACHE_MAX) {
     this.maxEntries = Math.max(1, maxEntries);
@@ -143,31 +164,62 @@ export class GeometryCache {
     return geometry;
   }
 
-  /** Insert a geometry, evicting (and disposing) the LRU entry when full. */
+  /** Pin a key: eviction skips it until every retain is released. */
+  retain(key: string): void {
+    this.pins.set(key, (this.pins.get(key) ?? 0) + 1);
+  }
+
+  /** Drop one pin; the last release makes the key evictable again. */
+  release(key: string): void {
+    const count = this.pins.get(key);
+    if (count === undefined) return;
+    if (count > 1) {
+      this.pins.set(key, count - 1);
+      return;
+    }
+    this.pins.delete(key);
+    this.evictOverflow(); // pinned overflow may be waiting to shrink back
+  }
+
+  /** Insert a geometry, evicting (and disposing) unpinned LRU entries when full. */
   set(key: string, geometry: THREE.BufferGeometry): void {
+    if (this.disposed) {
+      // a stale async build landing after dispose() must not re-populate
+      // (nothing would ever free it)
+      geometry.dispose();
+      return;
+    }
     const existing = this.entries.get(key);
-    if (existing !== undefined && existing !== geometry) existing.dispose();
+    // a pinned existing backs a live mesh; leave its buffers alone (the pin
+    // implies get() served it, so a same-key rebuild cannot actually occur)
+    if (existing !== undefined && existing !== geometry && !this.pins.has(key)) existing.dispose();
     this.entries.delete(key);
     this.entries.set(key, geometry);
-    while (this.entries.size > this.maxEntries) {
-      const [lruKey, lruGeometry] = this.entries.entries().next().value as [
-        string,
-        THREE.BufferGeometry,
-      ];
-      this.entries.delete(lruKey);
-      lruGeometry.dispose();
+    this.evictOverflow(key);
+  }
+
+  private evictOverflow(protectedKey?: string): void {
+    if (this.entries.size <= this.maxEntries) return;
+    for (const [key, geometry] of this.entries) {
+      if (this.pins.has(key)) continue; // in use — soft cap overflows instead
+      if (key === protectedKey) continue; // never evict the entry set() just added
+      this.entries.delete(key);
+      geometry.dispose();
+      if (this.entries.size <= this.maxEntries) return;
     }
   }
 
   /** Dispose every cached geometry and empty the cache. */
   dispose(): void {
+    this.disposed = true;
     for (const geometry of this.entries.values()) geometry.dispose();
     this.entries.clear();
+    this.pins.clear();
   }
 }
 
 export interface GeometryJobRequest {
-  /** Cache key (`lodGeometryKey(seed, level)`); also the job's identity. */
+  /** Cache key (`lodGeometryKey(seed, kind, radius, level)`); also the job's identity. */
   key: string;
   tables: IcosphereTables;
   field: RadialField;

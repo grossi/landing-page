@@ -184,6 +184,8 @@ export interface LodManager {
 interface Slot {
   mesh: THREE.LineSegments;
   material: THREE.LineBasicMaterial;
+  /** Cache key pinned while this slot displays it (the geometry is the cache's instance). */
+  cacheKey: string;
 }
 
 interface ScaleTarget {
@@ -302,6 +304,7 @@ export function createLodManager(scene: THREE.Scene, opts: LodManagerOptions = {
     if (!slot) return;
     body.anchor.remove(slot.mesh);
     slot.material.dispose(); // geometry stays in the LRU cache
+    cache.release(slot.cacheKey); // …and becomes evictable again
   };
 
   const finishFade = (body: BodyState): void => {
@@ -313,7 +316,12 @@ export function createLodManager(scene: THREE.Scene, opts: LodManagerOptions = {
     body.fading = false;
   };
 
-  const beginFade = (body: BodyState, level: number, geometry: THREE.BufferGeometry | null): void => {
+  const beginFade = (
+    body: BodyState,
+    level: number,
+    geometry: THREE.BufferGeometry | null,
+    cacheKey: string,
+  ): void => {
     finishFade(body); // an interrupted dissolve resolves instantly, never leaks
     body.previous = body.current;
     body.fadeFrom = body.level;
@@ -327,7 +335,8 @@ export function createLodManager(scene: THREE.Scene, opts: LodManagerOptions = {
       const mesh = new THREE.LineSegments(geometry, material);
       mesh.scale.setScalar(body.lastScale);
       body.anchor.add(mesh);
-      body.current = { mesh, material };
+      cache.retain(cacheKey); // never evicted out from under the live mesh
+      body.current = { mesh, material, cacheKey };
     } else {
       body.current = null; // rung 0: the shared dot carries the body
     }
@@ -346,14 +355,14 @@ export function createLodManager(scene: THREE.Scene, opts: LodManagerOptions = {
   const requestLevel = (body: BodyState, target: number, px: number): void => {
     cancelPending(body);
     if (target === 0) {
-      beginFade(body, 0, null);
+      beginFade(body, 0, null, '');
       return;
     }
     const level = target as IcosphereLevel;
-    const key = lodGeometryKey(body.seed, level);
+    const key = lodGeometryKey(body.seed, body.kind, body.radius, level);
     const cached = cache.get(key);
     if (cached) {
-      beginFade(body, target, cached);
+      beginFade(body, target, cached, key);
       return;
     }
     const tables = getIcosphereTables(level);
@@ -362,7 +371,7 @@ export function createLodManager(scene: THREE.Scene, opts: LodManagerOptions = {
     if (level <= SYNC_LEVEL_MAX) {
       const geometry = buildLodGeometrySync(tables, body.field, body.radius, amplitude);
       cache.set(key, geometry);
-      beginFade(body, target, geometry);
+      beginFade(body, target, geometry, key);
       return;
     }
     body.pendingLevel = target;
@@ -374,7 +383,7 @@ export function createLodManager(scene: THREE.Scene, opts: LodManagerOptions = {
         if (body.pendingLevel !== target) return; // cancelled or superseded
         body.pendingLevel = -1;
         if (!geometry || body.disposed) return;
-        beginFade(body, target, geometry);
+        beginFade(body, target, geometry, key);
       });
   };
 

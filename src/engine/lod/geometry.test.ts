@@ -84,8 +84,13 @@ describe('makeLodGeometry / buildLodGeometrySync', () => {
 });
 
 describe('lodGeometryKey', () => {
-  it('keys by seed and level', () => {
-    expect(lodGeometryKey(42, 3)).toBe('42:3');
+  it('keys by seed, kind, radius, and level', () => {
+    expect(lodGeometryKey(42, 'planet', 60, 3)).toBe('42:planet:60:3');
+  });
+
+  it('colliding seeds still get distinct keys when kind or radius differ', () => {
+    expect(lodGeometryKey(42, 'planet', 60, 3)).not.toBe(lodGeometryKey(42, 'asteroid', 60, 3));
+    expect(lodGeometryKey(42, 'planet', 60, 3)).not.toBe(lodGeometryKey(42, 'planet', 25, 3));
   });
 });
 
@@ -142,6 +147,49 @@ describe('GeometryCache', () => {
     const spy = vi.spyOn(g, 'dispose');
     cache.set('x', g);
     cache.dispose();
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(cache.size).toBe(0);
+  });
+
+  it('a retained entry survives eviction pressure; the next unpinned entry goes instead', () => {
+    const cache = new GeometryCache(2);
+    const pinned = stubGeometry();
+    const disposePinned = vi.spyOn(pinned, 'dispose');
+    const b = stubGeometry();
+    const disposeB = vi.spyOn(b, 'dispose');
+    cache.set('pinned', pinned);
+    cache.retain('pinned');
+    cache.set('b', b);
+    cache.set('c', stubGeometry()); // pinned is LRU but must be skipped
+    expect(disposePinned).not.toHaveBeenCalled();
+    expect(cache.get('pinned')).toBe(pinned);
+    expect(disposeB).toHaveBeenCalledTimes(1);
+    cache.dispose();
+  });
+
+  it('overflow held by pins shrinks back once the last retain is released', () => {
+    const cache = new GeometryCache(1);
+    const a = stubGeometry();
+    const disposeA = vi.spyOn(a, 'dispose');
+    cache.set('a', a);
+    cache.retain('a');
+    cache.retain('a'); // two holders
+    cache.set('b', stubGeometry()); // over cap; only 'a' is evictable-but-pinned
+    expect(cache.size).toBe(2);
+    cache.release('a');
+    expect(disposeA).not.toHaveBeenCalled(); // still one holder
+    cache.release('a');
+    expect(disposeA).toHaveBeenCalledTimes(1); // last release trims the overflow
+    expect(cache.size).toBe(1);
+    cache.dispose();
+  });
+
+  it('set() after dispose() disposes the incoming geometry instead of storing it', () => {
+    const cache = new GeometryCache();
+    cache.dispose();
+    const late = stubGeometry();
+    const spy = vi.spyOn(late, 'dispose');
+    cache.set('stale-job', late);
     expect(spy).toHaveBeenCalledTimes(1);
     expect(cache.size).toBe(0);
   });

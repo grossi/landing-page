@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import * as THREE from 'three';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { GeometryCache, lodGeometryKey } from 'engine/lod/geometry';
 import {
   apparentScale,
   ATMOSPHERE_MAX_OPACITY,
@@ -183,6 +184,33 @@ describe('createLodManager', () => {
     lod.unregister(handle);
     expect(anchor.children).toHaveLength(0);
     lod.dispose();
+  });
+
+  it('pins the displayed geometry so cache pressure cannot dispose it under a live mesh', async () => {
+    const scene = new THREE.Scene();
+    const cache = new GeometryCache(1); // every insert evicts — worst case
+    const lod = createLodManager(scene, { cache });
+    const anchor = new THREE.Group();
+    anchor.position.set(0, 0, -15);
+    scene.add(anchor);
+    const handle = lod.register({ seed: 42, radius: 10, kind: 'planet', anchor });
+    for (let i = 0; i < 40 && handle.level < 5; i++) {
+      lod.update(makeCamera(), VIEW_H, 0.6);
+      await flush();
+    }
+    lod.update(makeCamera(), VIEW_H, 0.6); // finish the final cross-dissolve
+    expect(handle.liveSlotCount).toBe(1);
+    const displayed = (rungMeshes(anchor)[0] as THREE.LineSegments).geometry;
+    const disposeSpy = vi.spyOn(displayed, 'dispose');
+
+    cache.set('intruder-a', new THREE.BufferGeometry());
+    cache.set('intruder-b', new THREE.BufferGeometry());
+    expect(disposeSpy).not.toHaveBeenCalled();
+    expect(cache.get(lodGeometryKey(42, 'planet', 10, handle.level))).toBe(displayed);
+
+    lod.dispose(); // releases the pin (injected cache is not disposed)
+    cache.dispose();
+    expect(disposeSpy).toHaveBeenCalled();
   });
 
   it('adds the atmosphere cue for close planets only', async () => {
