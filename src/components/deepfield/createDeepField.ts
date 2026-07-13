@@ -1,9 +1,26 @@
 import * as THREE from 'three';
+import { createLodManager } from 'engine/lod/lodManager';
+import { DODEC, ICO_MID, OCT, RING_THIN, wireMat } from 'engine/render/assets';
+import { createDustField } from 'engine/render/dust';
+import { createStage } from 'engine/render/stage';
+import { createStarfield } from 'engine/render/starfield';
+import { attachStatsOverlay } from 'engine/render/statsOverlay';
 
 /** Per-body drift state kept outside the scene graph for type safety. */
 interface BodyState {
   group: THREE.Group;
   rot: THREE.Vector3;
+}
+
+/** Per-giant state: one fog-free material drives the distance fade. */
+interface GiantState {
+  group: THREE.Group;
+  mat: THREE.MeshBasicMaterial;
+  maxOpacity: number;
+  /** Slow self-rotation (rad/s) — barely perceptible, just alive. */
+  spin: number;
+  /** Farthest reach of the geometry from the group origin (ring or body). */
+  extent: number;
 }
 
 /** Half-width / half-height of the corridor bodies spawn in. */
@@ -23,6 +40,32 @@ const BASE_SPEED = 34;
 const DUST_N = 300;
 const DUST_RANGE = 150;
 
+// ---- distant giants (silhouette layer beyond the fog falloff) ----
+/** Lateral half-spread of the giant corridor around the heading. */
+const GIANT_SPREAD = 3000;
+/** First spawn anywhere in the deep corridor so the field opens populated. */
+const GIANT_FIRST_NEAR = 4000;
+const GIANT_FIRST_FAR = 14000;
+/** Recycled giants respawn inside the fade band so they emerge from black. */
+const GIANT_SPAWN_NEAR = 9000;
+const GIANT_SPAWN_FAR = 14000;
+/** Distance-driven opacity ramp: 0 at FADE_FAR, full at FADE_NEAR. */
+const GIANT_FADE_NEAR = 9000;
+const GIANT_FADE_FAR = 14000;
+/**
+ * Giants are fog-free, so unlike the mid bodies (which fog erases before
+ * they recycle) they must fade to black explicitly before leaving the
+ * corridor — otherwise the lateral recycle would despawn a visible
+ * silhouette inside the frustum. The fade band starts beyond the widest
+ * possible spawn (√2 · SPREAD ≈ 1.42); its far edge, where the target
+ * opacity hits 0, doubles as the recycle rim.
+ */
+const GIANT_LAT_FADE_NEAR = GIANT_SPREAD * 1.45;
+const GIANT_LAT_FADE_FAR = GIANT_SPREAD * 1.8;
+/** Giants drift at this fraction of ship speed — far things barely parallax. */
+const GIANT_PARALLAX = 0.06;
+const GIANT_COUNT = 3;
+
 /**
  * Mounts the DEEP FIELD backdrop into `container` and starts its render
  * loop. Returns a dispose function that stops the loop, removes listeners
@@ -35,68 +78,94 @@ const DUST_RANGE = 150;
  * speed (the throttle); holding the button sustains a full burn.
  */
 export function createDeepField(container: HTMLElement): () => void {
-  const scene = new THREE.Scene();
-  scene.fog = new THREE.FogExp2(0x000000, 0.00115);
-  const camera = new THREE.PerspectiveCamera(
-    62,
-    container.clientWidth / Math.max(1, container.clientHeight),
-    0.1,
-    5000,
-  );
-  const renderer = new THREE.WebGLRenderer({ antialias: true });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-  renderer.setSize(container.clientWidth, container.clientHeight);
-  container.appendChild(renderer.domElement);
+  // far 20,000 gives the giants a deep corridor; nothing nests, so a
+  // standard depth buffer at 4e4 far:near is comfortable (near raised to 0.5).
+  // maxPixelRatio 2: full retina crispness for the 1px wireframes at quality
+  // level 0 (parity with main); governor steps down still shed below it.
+  const stage = createStage(container, {
+    fov: 62,
+    near: 0.5,
+    far: 20000,
+    fogDensity: 0.00115,
+    maxPixelRatio: 2,
+  });
+  const { scene, camera, renderer, tracker } = stage;
+
+  // Mount-owned GPU resources (point clouds, fresh wireframe materials) are
+  // tracked so stage.dispose() frees them; the shared unit geometries from
+  // engine/render/assets are never tracked and never disposed.
+  const wire = (opacity: number) => tracker.track(wireMat(opacity));
+
+  // LOD ladder for the drifting planets: they resolve from a dot to a
+  // displaced wireframe on approach (jobs budgeted low — it's a backdrop).
+  // Capped at level 3: the landing page is mood, not close inspection.
+  const lod = createLodManager(scene, { jobBudgetMs: 2 });
+
+  // dev-only perf panel (backquote toggles; `?stats` shows it immediately)
+  const stats = attachStatsOverlay(container, stage, {
+    getExtra: () => [`LOD BODIES ${lod.bodyCount()}`],
+  });
 
   // ---- distant stars (rotate with the view, never translate) ----
   {
-    const n = 900;
-    const positions = new Float32Array(n * 3);
-    for (let i = 0; i < n; i++) {
-      const v = new THREE.Vector3().randomDirection().multiplyScalar(1800 + Math.random() * 1400);
-      positions.set([v.x, v.y, v.z], i * 3);
-    }
-    const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    const stars = new THREE.Points(
-      geometry,
-      new THREE.PointsMaterial({ color: 0xffffff, size: 1.7, transparent: true, opacity: 0.5, fog: false }),
-    );
-    stars.frustumCulled = false;
+    const stars = createStarfield({
+      count: 900,
+      minRadius: 1800,
+      spread: 1400,
+      size: 1.7,
+      opacity: 0.5,
+      fog: false,
+    });
+    tracker.track(stars.geometry);
+    tracker.track(stars.material);
     scene.add(stars);
   }
 
-  // ---- drifting wireframe bodies ----
-  const wire = (opacity: number) =>
-    new THREE.MeshBasicMaterial({ color: 0xffffff, wireframe: true, transparent: true, opacity });
-
+  // ---- drifting wireframe bodies (shared unit geometries, per-mesh scale) ----
   function makeBody(): BodyState {
     const group = new THREE.Group();
     const kind = Math.random();
     if (kind < 0.45) {
-      // asteroid — jittered dodecahedron
+      // asteroid — dodecahedron squashed a little differently on each axis
       const r = 6 + Math.random() * 14;
-      const geo = new THREE.DodecahedronGeometry(r, 0);
-      const p = geo.attributes.position;
-      for (let i = 0; i < p.count; i++) {
-        const s = 0.75 + Math.random() * 0.5;
-        p.setXYZ(i, p.getX(i) * s, p.getY(i) * s, p.getZ(i) * s);
-      }
-      group.add(new THREE.Mesh(geo, wire(0.5)));
+      const rock = new THREE.Mesh(DODEC, wire(0.5));
+      rock.scale.set(
+        r * (0.75 + Math.random() * 0.5),
+        r * (0.75 + Math.random() * 0.5),
+        r * (0.75 + Math.random() * 0.5),
+      );
+      group.add(rock);
     } else if (kind < 0.8) {
-      // planet, sometimes ringed
+      // planet, sometimes ringed — rendered through the LOD ladder. The
+      // registration lives as long as the body: recycled bodies keep their
+      // seed, so a respawned planet keeps its shape (cache hit, zero build).
       const r = 18 + Math.random() * 30;
-      group.add(new THREE.Mesh(new THREE.IcosahedronGeometry(r, 1), wire(0.45)));
+      const planet = new THREE.Group(); // LOD anchor
+      group.add(planet);
+      const scaleTargets: THREE.Object3D[] = [];
       if (Math.random() < 0.55) {
-        const ring = new THREE.Mesh(new THREE.TorusGeometry(r * 1.7, r * 0.015, 3, 56), wire(0.6));
+        const ring = new THREE.Mesh(RING_THIN, wire(0.6));
+        ring.scale.setScalar(r);
         ring.rotation.x = Math.PI / 2 + (Math.random() - 0.5) * 0.7;
         group.add(ring);
+        scaleTargets.push(ring); // ring tracks the apparent-scale ramp
       }
+      lod.register({
+        seed: Math.floor(Math.random() * 2 ** 31),
+        radius: r,
+        kind: 'planet',
+        anchor: planet,
+        baseOpacity: 0.45,
+        maxLevel: 3,
+        scaleTargets,
+      });
     } else {
       // beacon / derelict — stacked octahedra
       const r = 8 + Math.random() * 8;
-      const outer = new THREE.Mesh(new THREE.OctahedronGeometry(r, 0), wire(0.7));
-      const inner = new THREE.Mesh(new THREE.OctahedronGeometry(r * 0.55, 0), wire(0.9));
+      const outer = new THREE.Mesh(OCT, wire(0.7));
+      outer.scale.setScalar(r);
+      const inner = new THREE.Mesh(OCT, wire(0.9));
+      inner.scale.setScalar(r * 0.55);
       inner.rotation.z = Math.PI / 4;
       group.add(outer, inner);
     }
@@ -117,36 +186,51 @@ export function createDeepField(container: HTMLElement): () => void {
   }
   const bodies = Array.from({ length: 26 }, makeBody);
 
+  // ---- distant giants (purely additive layer; steering untouched) ----
+  // Huge low-detail silhouettes far beyond the fog falloff: their materials
+  // are fog-free, so visibility is driven entirely by a distance smoothstep —
+  // they emerge from black over the 14,000 → 9,000 band and never pop.
+  function makeGiant(): GiantState {
+    const mat = tracker.track(
+      new THREE.MeshBasicMaterial({
+        color: 0xffffff,
+        wireframe: true,
+        transparent: true,
+        opacity: 0,
+        fog: false,
+      }),
+    );
+    const maxOpacity = 0.12 + Math.random() * 0.08;
+    const r = 300 + Math.random() * 500;
+    const group = new THREE.Group();
+    const body = new THREE.Mesh(ICO_MID, mat);
+    body.scale.setScalar(r);
+    group.add(body);
+    let extent = r;
+    if (Math.random() < 0.2) {
+      // one in five giants gets a ring — same fading material, shared torus
+      const ring = new THREE.Mesh(RING_THIN, mat);
+      ring.scale.setScalar(r);
+      ring.rotation.x = Math.PI / 2 + (Math.random() - 0.5) * 0.7;
+      group.add(ring);
+      extent = r * 1.75; // RING_THIN reaches 1.7 body radii (+ tube)
+    }
+    // first spawn fills the whole corridor so the deep field opens populated
+    group.position.set(
+      (Math.random() - 0.5) * 2 * GIANT_SPREAD,
+      (Math.random() - 0.5) * 2 * GIANT_SPREAD,
+      -(GIANT_FIRST_NEAR + Math.random() * (GIANT_FIRST_FAR - GIANT_FIRST_NEAR)),
+    );
+    scene.add(group);
+    return { group, mat, maxOpacity, spin: (Math.random() - 0.5) * 0.04, extent };
+  }
+  const giants = Array.from({ length: GIANT_COUNT }, makeGiant);
+
   // ---- dust for speed perception ----
-  const dustPositions = new Float32Array(DUST_N * 3);
-  for (let i = 0; i < DUST_N * 3; i++) dustPositions[i] = (Math.random() - 0.5) * DUST_RANGE * 2;
-  const dustGeo = new THREE.BufferGeometry();
-  dustGeo.setAttribute('position', new THREE.BufferAttribute(dustPositions, 3));
-  const dustSprite = (() => {
-    const c = document.createElement('canvas');
-    c.width = c.height = 32;
-    const g = c.getContext('2d')!;
-    const grad = g.createRadialGradient(16, 16, 0, 16, 16, 16);
-    grad.addColorStop(0, 'rgba(255,255,255,1)');
-    grad.addColorStop(0.5, 'rgba(255,255,255,.55)');
-    grad.addColorStop(1, 'rgba(255,255,255,0)');
-    g.fillStyle = grad;
-    g.fillRect(0, 0, 32, 32);
-    return new THREE.CanvasTexture(c);
-  })();
-  const dust = new THREE.Points(
-    dustGeo,
-    new THREE.PointsMaterial({
-      color: 0xffffff,
-      size: 1.5,
-      map: dustSprite,
-      transparent: true,
-      opacity: 0.34,
-      depthWrite: false,
-    }),
+  const dust = tracker.track(
+    createDustField({ count: DUST_N, range: DUST_RANGE, size: 1.5, opacity: 0.34 }),
   );
-  dust.frustumCulled = false;
-  scene.add(dust);
+  scene.add(dust.points);
 
   // ---- input ----
   const raycaster = new THREE.Raycaster();
@@ -175,15 +259,6 @@ export function createDeepField(container: HTMLElement): () => void {
   const onPointerUp = () => {
     throttleDown = false;
   };
-  const onResize = () => {
-    camera.aspect = container.clientWidth / Math.max(1, container.clientHeight);
-    camera.updateProjectionMatrix();
-    renderer.setSize(container.clientWidth, container.clientHeight);
-  };
-  // observe the container, not the window — it tracks any layout change
-  // (same pattern as EPHEMERIS)
-  const resizeObserver = new ResizeObserver(onResize);
-  resizeObserver.observe(container);
   window.addEventListener('mousemove', onMouseMove);
   document.addEventListener('mouseleave', onMouseLeave);
   window.addEventListener('pointerdown', onPointerDown);
@@ -191,8 +266,6 @@ export function createDeepField(container: HTMLElement): () => void {
   window.addEventListener('pointercancel', onPointerUp);
 
   // ---- render loop ----
-  let last = performance.now();
-  let t = 0;
   const heading = new THREE.Vector3(0, 0, -1);
   const FORWARD = new THREE.Vector3(0, 0, -1);
   const X_AXIS = new THREE.Vector3(1, 0, 0);
@@ -202,15 +275,9 @@ export function createDeepField(container: HTMLElement): () => void {
   const side = new THREE.Vector3();
   const lift = new THREE.Vector3();
   const lateral = new THREE.Vector3();
+  const dustCenter = new THREE.Vector3();
+  const dustVelocity = new THREE.Vector3();
   let roll = 0;
-
-  // O(1) modulo wrap onto [-DUST_RANGE, DUST_RANGE] — handles any
-  // single-frame overshoot on any axis (same pattern as EPHEMERIS)
-  const DUST_SPAN = DUST_RANGE * 2;
-  const wrapDust = (v: number) =>
-    v > DUST_RANGE || v < -DUST_RANGE
-      ? ((((v + DUST_RANGE) % DUST_SPAN) + DUST_SPAN) % DUST_SPAN) - DUST_RANGE
-      : v;
 
   // Bodies passing behind respawn ahead of the *current* heading, so the
   // view stays populated whichever way a long turn ends up pointing.
@@ -226,12 +293,21 @@ export function createDeepField(container: HTMLElement): () => void {
       .addScaledVector(lift, (Math.random() - 0.5) * 2 * SPREAD_Y);
   };
 
-  renderer.setAnimationLoop((now) => {
-    // timestamps can predate `last` on the first frame — clamp to 0
-    const dt = Math.max(0, Math.min((now - last) / 1000, 0.05));
-    last = now;
-    t += dt;
+  // Giants recycle the same way, but respawn inside the fade band with their
+  // opacity zeroed, so they always emerge from black instead of popping —
+  // even when the fade band's distance ramp is already partly up at spawn.
+  const respawnGiantAhead = (g: GiantState) => {
+    side.crossVectors(heading, camUp);
+    lift.copy(camUp);
+    g.group.position
+      .copy(heading)
+      .multiplyScalar(GIANT_SPAWN_NEAR + Math.random() * (GIANT_SPAWN_FAR - GIANT_SPAWN_NEAR))
+      .addScaledVector(side, (Math.random() - 0.5) * 2 * GIANT_SPREAD)
+      .addScaledVector(lift, (Math.random() - 0.5) * 2 * GIANT_SPREAD);
+    g.mat.opacity = 0;
+  };
 
+  stage.start((dt, t) => {
     // throttle: click kicks, hold burns, release coasts back to cruise
     if (throttleDown) boost += (8 - boost) * Math.min(1, dt * 1.6);
     else boost += (1 - boost) * Math.min(1, dt * 1.1);
@@ -295,45 +371,59 @@ export function createDeepField(container: HTMLElement): () => void {
       }
     }
 
+    // giants: barely-parallaxing silhouettes in the far field. The opacity
+    // TARGET is a pure function of position — a depth ramp (fades in over
+    // the 14k → 9k band) times a lateral ramp (fades out toward the recycle
+    // rim); actual opacity glides toward it, so a respawn (which zeroes it)
+    // always resolves out of black over a couple of seconds. Recycling waits
+    // until the giant is provably invisible — fully behind the camera, or
+    // past the fade band's far edge (target opacity 0) with its glided
+    // opacity at black — so it never pops in EITHER direction, and a faded
+    // giant never squats invisibly in one of the few slots.
+    for (const g of giants) {
+      g.group.position.addScaledVector(heading, -speed * GIANT_PARALLAX * dt);
+      g.group.rotation.y += g.spin * dt;
+      const proj = g.group.position.dot(heading);
+      lateral.copy(g.group.position).addScaledVector(heading, -proj);
+      const lat = lateral.length();
+      const d = g.group.position.length();
+      const targetOpacity =
+        g.maxOpacity *
+        (1 - THREE.MathUtils.smoothstep(d, GIANT_FADE_NEAR, GIANT_FADE_FAR)) *
+        (1 - THREE.MathUtils.smoothstep(lat, GIANT_LAT_FADE_NEAR, GIANT_LAT_FADE_FAR));
+      g.mat.opacity += (targetOpacity - g.mat.opacity) * Math.min(1, dt * 0.6);
+      if (proj < -(NEAR + g.extent) || (lat > GIANT_LAT_FADE_FAR && g.mat.opacity < 0.005)) {
+        respawnGiantAhead(g);
+      }
+    }
+
+    // adaptive quality: under sustained load the governor sheds dust and
+    // LOD rungs alongside pixels; both knobs are identity at level 0
+    const quality = stage.quality();
+    dust.setDensity(quality.dustFraction);
+    lod.setLodBias(quality.lodBias);
+
     // dust: streams past opposite the heading; the wrap cube is centered 60
     // units ahead along it so most particles stay in front of the camera
-    const dp = dustGeo.attributes.position as THREE.BufferAttribute;
-    const dvx = -heading.x * speed * 2.4;
-    const dvy = -heading.y * speed * 2.4;
-    const dvz = -heading.z * speed * 2.4;
-    const cx = heading.x * 60;
-    const cy = heading.y * 60;
-    const cz = heading.z * 60;
-    for (let i = 0; i < DUST_N; i++) {
-      dp.setXYZ(
-        i,
-        wrapDust(dp.getX(i) + dvx * dt - cx) + cx,
-        wrapDust(dp.getY(i) + dvy * dt - cy) + cy,
-        wrapDust(dp.getZ(i) + dvz * dt - cz) + cz,
-      );
-    }
-    dp.needsUpdate = true;
+    dust.update(
+      dt,
+      dustCenter.copy(heading).multiplyScalar(60),
+      dustVelocity.copy(heading).multiplyScalar(-speed * 2.4),
+    );
 
-    renderer.render(scene, camera);
+    // LOD: planets resolve (and swell) on approach; geometry jobs budgeted
+    lod.update(camera, container.clientHeight, dt);
   });
 
   return () => {
-    renderer.setAnimationLoop(null);
-    resizeObserver.disconnect();
     window.removeEventListener('mousemove', onMouseMove);
     document.removeEventListener('mouseleave', onMouseLeave);
     window.removeEventListener('pointerdown', onPointerDown);
     window.removeEventListener('pointerup', onPointerUp);
     window.removeEventListener('pointercancel', onPointerUp);
-    scene.traverse((obj) => {
-      if (obj instanceof THREE.Mesh || obj instanceof THREE.Points || obj instanceof THREE.LineSegments) {
-        obj.geometry.dispose();
-        const material = obj.material as THREE.Material;
-        material.dispose();
-      }
-    });
-    dustSprite.dispose();
-    renderer.dispose();
-    renderer.domElement.remove();
+    stats.dispose();
+    lod.dispose();
+    // stops the loop and frees every tracked geometry/material
+    stage.dispose();
   };
 }
