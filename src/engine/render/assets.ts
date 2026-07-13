@@ -48,7 +48,14 @@ export const UNIT_CIRCLE = (() => {
 })();
 
 // soft round sprite for nebula/dust points
-export const softSprite = (() => {
+export const softSprite: THREE.Texture = (() => {
+  if (typeof document === 'undefined') {
+    // DOM-less test environments (node): single white texel stands in for the
+    // radial gradient so importing this module never touches the DOM.
+    const t = new THREE.DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1);
+    t.needsUpdate = true;
+    return t;
+  }
   const c = document.createElement('canvas');
   c.width = c.height = 64;
   const g = c.getContext('2d'); // null in canvas-less test environments
