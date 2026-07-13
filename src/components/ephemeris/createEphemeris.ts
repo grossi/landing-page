@@ -421,6 +421,7 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
         Math.floor(z / SECTOR) * SECTOR - origin.z,
       );
       if (rebase.lengthSq() > 0) {
+        camera.position.sub(rebase); // keep the chase pose — no cross-sector swoop
         home.group.position.sub(rebase);
         home.group.updateMatrixWorld(true);
         field.applyOriginShift(rebase);
