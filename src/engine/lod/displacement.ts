@@ -84,6 +84,18 @@ export const STAR_PROFILE: DisplacementPreset = {
   amplitude: 0,
 };
 
+/**
+ * Preset per LOD body archetype — the single source BOTH the LOD manager
+ * (geometry) and the flight sim's terrain-following altitude floor
+ * (engine/lod/surfaceFloor) resolve a body's field through, so the floor
+ * always matches the rendered surface exactly.
+ */
+export const KIND_PRESETS: Record<'planet' | 'asteroid' | 'star', DisplacementPreset> = {
+  planet: PLANET_PROFILE,
+  asteroid: ASTEROID_PROFILE,
+  star: STAR_PROFILE,
+};
+
 export interface CraterSpec {
   /** Unit direction of the crater center. */
   dir: readonly [number, number, number];

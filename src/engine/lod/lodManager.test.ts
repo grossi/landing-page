@@ -25,7 +25,10 @@ import {
   HAZE_RADII,
   hazeStrength,
   hazeVertexFade,
+  SCALE_RAMP_FAR,
+  SCALE_RAMP_FAR_MAX_DISTANCE,
   SCALE_RAMP_FLOOR,
+  SCALE_RAMP_NEAR,
 } from 'engine/lod/lodManager';
 
 const VIEW_H = 800;
@@ -63,6 +66,37 @@ describe('apparentScale', () => {
       const s = apparentScale(d, 10);
       expect(s).toBeLessThanOrEqual(last + 1e-12);
       expect(Math.abs(s - last)).toBeLessThan(0.02); // no jumps
+      last = s;
+    }
+  });
+
+  it('clamps the swell band to the fog wall for big bodies only', () => {
+    // bodies at/below the binding radius keep the exact 4–40-radii ramp
+    const bindRadius = SCALE_RAMP_FAR_MAX_DISTANCE / SCALE_RAMP_FAR; // 360
+    expect(apparentScale(SCALE_RAMP_FAR * bindRadius, bindRadius)).toBe(SCALE_RAMP_FLOOR);
+    expect(apparentScale((SCALE_RAMP_FAR - 1) * bindRadius, bindRadius)).toBeGreaterThan(
+      SCALE_RAMP_FLOOR,
+    );
+    // a max true-scale rogue (960, clamp at 15 radii): the whole 0.6 → 1
+    // swell completes exactly by the clamp distance — inside the fog wall,
+    // where it can be seen
+    expect(apparentScale(SCALE_RAMP_FAR_MAX_DISTANCE, 960)).toBe(SCALE_RAMP_FLOOR);
+    expect(apparentScale(SCALE_RAMP_FAR_MAX_DISTANCE * 0.9, 960)).toBeGreaterThan(SCALE_RAMP_FLOOR);
+    expect(apparentScale(SCALE_RAMP_NEAR * 960, 960)).toBe(1);
+    // hero-giant territory (2,400 — above 14,400 / 8 = 1,800): the 2×-near
+    // guard keeps a usable band, landing the far edge at 8 radii = 19,200
+    const guardEdge = SCALE_RAMP_NEAR * 2 * 2400;
+    expect(guardEdge).toBeGreaterThan(SCALE_RAMP_FAR_MAX_DISTANCE);
+    expect(apparentScale(guardEdge, 2400)).toBe(SCALE_RAMP_FLOOR);
+    expect(apparentScale(guardEdge * 0.9, 2400)).toBeGreaterThan(SCALE_RAMP_FLOOR);
+  });
+
+  it('stays monotone and continuous across the clamped band', () => {
+    let last = apparentScale(100, 960);
+    for (let d = 200; d <= 12000; d += 100) {
+      const s = apparentScale(d, 960);
+      expect(s).toBeLessThanOrEqual(last + 1e-12);
+      expect(Math.abs(s - last)).toBeLessThan(0.05); // no jumps
       last = s;
     }
   });

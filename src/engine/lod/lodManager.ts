@@ -57,10 +57,8 @@ import {
   selectLod,
 } from 'engine/core/selectLod';
 import {
-  ASTEROID_PROFILE,
+  KIND_PRESETS,
   makeDisplacementField,
-  PLANET_PROFILE,
-  STAR_PROFILE,
   type DisplacementPreset,
 } from 'engine/lod/displacement';
 import { getIcosphereTables, type IcosphereLevel } from 'engine/lod/icosphere';
@@ -85,6 +83,18 @@ export const SCALE_RAMP_FLOOR = 0.6;
 export const SCALE_RAMP_NEAR = 4;
 /** Surface distance (in radii) beyond which a body renders at the floor. */
 export const SCALE_RAMP_FAR = 40;
+/**
+ * Absolute cap on the far edge of the swell band, in world units. The
+ * EPHEMERIS fog wall (exp2 density 0.000055 at the 12,000-unit sector
+ * grid) passes ~53% at 14,400 units and ~2% by 36,000 — a band reaching
+ * past it would spend its far half swelling invisibly. 14,400 ≈ 0.4× the
+ * visibility limit, so the whole 0.6 → 1 swell of a true-scale body (rogue
+ * planets up to 960, the 800 home sun) happens where the body can actually
+ * be seen. Only binds for radii above 14,400 / SCALE_RAMP_FAR = 360: DEEP
+ * FIELD's planets (≤ 48) and every pre-scale-up body keep the exact
+ * 4–40-radii ramp.
+ */
+export const SCALE_RAMP_FAR_MAX_DISTANCE = 14400;
 
 /** Peak opacity of the wireframe atmosphere ring cue. */
 export const ATMOSPHERE_MAX_OPACITY = 0.3;
@@ -106,19 +116,23 @@ const PARK_Y = 1e9;
 const smooth = (t: number): number => t * t * (3 - 2 * t);
 
 const LOG_NEAR = Math.log10(SCALE_RAMP_NEAR);
-const LOG_FAR = Math.log10(SCALE_RAMP_FAR);
 
 /**
  * Apparent-scale ramp: 1 inside `SCALE_RAMP_NEAR` radii of the surface,
- * `SCALE_RAMP_FLOOR` beyond `SCALE_RAMP_FAR`, smoothstepped over
+ * `SCALE_RAMP_FLOOR` beyond the band's far edge — `SCALE_RAMP_FAR` radii,
+ * clamped to `SCALE_RAMP_FAR_MAX_DISTANCE` for big bodies so the swell
+ * never sits past the fog wall (and never below 2× the near edge, so a
+ * future hero-giant radius still keeps a usable span) — smoothstepped over
  * log-distance between (monotonic and C1, so the swell never reads as a
  * camera zoom). HUD distances and POI radii keep logical values.
  */
 export function apparentScale(surfaceDistance: number, radius: number): number {
-  const d = Math.max(surfaceDistance, 1e-6) / Math.max(radius, 1e-6);
+  const r = Math.max(radius, 1e-6);
+  const d = Math.max(surfaceDistance, 1e-6) / r;
+  const far = Math.max(SCALE_RAMP_NEAR * 2, Math.min(SCALE_RAMP_FAR, SCALE_RAMP_FAR_MAX_DISTANCE / r));
   if (d <= SCALE_RAMP_NEAR) return 1;
-  if (d >= SCALE_RAMP_FAR) return SCALE_RAMP_FLOOR;
-  const u = (Math.log10(d) - LOG_NEAR) / (LOG_FAR - LOG_NEAR);
+  if (d >= far) return SCALE_RAMP_FLOOR;
+  const u = (Math.log10(d) - LOG_NEAR) / (Math.log10(far) - LOG_NEAR);
   return 1 - (1 - SCALE_RAMP_FLOOR) * smooth(u);
 }
 
@@ -229,12 +243,6 @@ export function biasedMaxLevel(maxLevel: number, lodBias: number): number {
 }
 
 export type LodBodyKind = 'planet' | 'asteroid' | 'star';
-
-const KIND_PRESET: Record<LodBodyKind, DisplacementPreset> = {
-  planet: PLANET_PROFILE,
-  asteroid: ASTEROID_PROFILE,
-  star: STAR_PROFILE,
-};
 
 /** Ladder cap per archetype (stars stay smooth; asteroids are texture). */
 const KIND_MAX_LEVEL: Record<LodBodyKind, number> = { planet: 6, asteroid: 3, star: 4 };
@@ -828,8 +836,8 @@ export function createLodManager(scene: THREE.Scene, opts: LodManagerOptions = {
           target,
           base: target.scale.x, // decorations are uniformly scaled
         })),
-        preset: KIND_PRESET[kind],
-        field: makeDisplacementField(registration.seed, KIND_PRESET[kind]),
+        preset: KIND_PRESETS[kind],
+        field: makeDisplacementField(registration.seed, KIND_PRESETS[kind]),
         level: 0,
         coldStart: true,
         dwell: 0,

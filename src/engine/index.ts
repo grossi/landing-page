@@ -7,6 +7,7 @@ export { hashCoords, makeName, mulberry32, pickFrom, SYLLABLES } from 'engine/co
 export { computeRebase, type Vec3Like } from 'engine/core/floatingOrigin';
 export {
   BOOST_LIMIT_FACTOR,
+  DECK_FLOOR,
   DIFFUSE_DRAG_FLOOR,
   diffuseDrag,
   ENVELOPE_BAND_RADII,
@@ -15,11 +16,14 @@ export {
   ENVELOPE_REARM_RADII,
   envelopeCap,
   escapeRelief,
+  FLOOR_TAPER_FULL_RADII,
+  FLOOR_TAPER_START_RADII,
   RELIEF_FULL,
   RELIEF_START,
   SPEED_CEIL,
   SPEED_FLOOR,
   SPEED_PER_SURFACE_DISTANCE,
+  speedFloor,
   speedLimit,
 } from 'engine/core/motion';
 export {
@@ -58,6 +62,7 @@ export { runBudgeted, type BuildStep } from 'engine/core/scheduler';
 export {
   ASTEROID_PROFILE,
   getCraterSpecs,
+  KIND_PRESETS,
   makeDisplacementField,
   PLANET_PROFILE,
   STAR_PROFILE,
@@ -65,6 +70,14 @@ export {
   type DisplacementPreset,
   type DisplacementProfile,
 } from 'engine/lod/displacement';
+export {
+  FLAT_FLOOR_RADII,
+  FLOOR_MARGIN_RADII,
+  FLOOR_PROBE_RADII,
+  floorRadius,
+  makeSurfaceFloor,
+  type SurfaceFloor,
+} from 'engine/lod/surfaceFloor';
 export {
   getIcosphereTables,
   type IcosphereLevel,
@@ -112,6 +125,7 @@ export {
   hazeVertexFade,
   LOD_FADE_S,
   SCALE_RAMP_FAR,
+  SCALE_RAMP_FAR_MAX_DISTANCE,
   SCALE_RAMP_FLOOR,
   SCALE_RAMP_NEAR,
   type LodBeacon,
@@ -157,11 +171,16 @@ export {
   buildHomeSystem,
   buildSectorContent,
   drawSectorHeader,
+  homeLayout,
   peekSectorBeacon,
+  TRUE_SCALE,
+  UNIT_SCALE,
+  type HomeLayout,
   type Poi,
   type SectorBeacon,
   type SectorContent,
   type SectorHeader,
+  type WorldScale,
 } from 'engine/world/sectorContent';
 export {
   createSectorField,

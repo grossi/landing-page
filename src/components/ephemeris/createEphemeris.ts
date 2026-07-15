@@ -9,7 +9,14 @@ import {
   speedLimit,
 } from 'engine/core/motion';
 import { mulberry32 } from 'engine/core/rng';
+import { KIND_PRESETS } from 'engine/lod/displacement';
 import { createLodManager, type LodBeacon, type LodBodyHandle } from 'engine/lod/lodManager';
+import {
+  FLAT_FLOOR_RADII,
+  FLOOR_PROBE_RADII,
+  makeSurfaceFloor,
+  type SurfaceFloor,
+} from 'engine/lod/surfaceFloor';
 import { wireMat } from 'engine/render/assets';
 import { createDustField } from 'engine/render/dust';
 import { createStage } from 'engine/render/stage';
@@ -17,7 +24,9 @@ import { createStarfield } from 'engine/render/starfield';
 import { attachStatsOverlay } from 'engine/render/statsOverlay';
 import {
   buildHomeSystem,
+  homeLayout,
   peekSectorBeacon,
+  TRUE_SCALE,
   type Poi,
   type SectorContent,
 } from 'engine/world/sectorContent';
@@ -38,15 +47,46 @@ export interface EphemerisHudElements {
   ping: HTMLElement;
 }
 
-/** Edge length of one cubic sector of procedural space (1 unit = 1 km). */
-const SECTOR = 6000;
+/**
+ * Edge length of one cubic sector of procedural space (1 unit = 1 km).
+ * Doubled from 6,000 (plan Phase 3.5) after the true-scale playtest read as
+ * crowded: one archetype per cell, so bigger cells mean sparser space by
+ * design — formation probability is deliberately NOT raised. Content sizes
+ * are grid-independent, so every cell-budget margin doubles (offset
+ * ±0.25·SECTOR = ±3000, eviction line 1.5·SECTOR = 18,000 vs a worst-case
+ * mini-system reach of 3000 + 3880 + 180 = 7060). The dust wrap span
+ * (2 × 500 = 1000) divides 12,000 exactly, as the rebase math requires.
+ */
+const SECTOR = 12000;
+/**
+ * Budgeted true scale: the per-archetype multipliers this experience feeds
+ * the shared sector builders and the home system (rogues ×6 up to radius
+ * 960, mini-systems ×2, home ×2 — the cell-fit arithmetic lives with
+ * TRUE_SCALE and in the builders). Fog-wall check at the new top radius
+ * 960: the envelope/atmosphere band engages at 4r = 3840, clouds at
+ * 2r = 1920, graticule at 0.8r = 768 — all far inside the 14,400-unit
+ * swell clamp (SCALE_RAMP_FAR_MAX_DISTANCE) and the ~36,000-unit fog wall,
+ * so no cue ever fades in past visibility. envelopeCap at these radii
+ * (2.5·0.35·960 = 840 u/s at a max rogue, 700 at the 800 home sun) sits
+ * above the 100 u/s cruise, so at cruise the arrival ritual is HUD-first;
+ * the cap only BINDS — is felt — under boost. Design-accepted: slow-cruise
+ * pacing (review decision W2).
+ */
+const WORLD_SCALE = TRUE_SCALE;
+/** Derived home dimensions (orbits, worst-case extent) at the home scale. */
+const HOME_LAYOUT = homeLayout(WORLD_SCALE.home);
 /** Sectors are kept alive within this many cells of the ship (1 → 3×3×3). */
 const ACTIVE_RANGE = 1;
 /**
  * Sectors beyond the streamed window still show as far-contact beacon dots
- * out to this Chebyshev cell range (peeked, zero geometry built).
+ * out to this Chebyshev cell range (peeked, zero geometry built). At
+ * 12,000-unit cells, range 2 puts the farthest beacon cell centres at
+ * 24,000·√3 ≈ 41,600 on the diagonal — the same physical distance the old
+ * range-4 shell had at 6,000 cells, and inside the 60,000 far plane (range
+ * 4 would sit at ~83,000 and clip). Fewer candidate cells (98 vs 704) is
+ * the sparser-space goal, not a regression.
  */
-const BEACON_RANGE = 4;
+const BEACON_RANGE = 2;
 /**
  * Open-space cruise speed. Deliberately slow — cruise is for drifting and
  * looking around; covering distance is what the boost burn is for.
@@ -65,8 +105,14 @@ const CAMERA_MAX_LAG = 12;
 const ACCEL_RATE = 2.2;
 const ACCEL_RATE_BOOST = 3.4;
 const DECEL_RATE = 1.4;
-/** First close approach inside this surface distance logs a POI. */
-const discoveryRange = (radius: number) => Math.max(150, radius * 1.2);
+/**
+ * First close approach inside this surface distance logs a POI. The cap
+ * binds for the sprawling diffuse volumes — nebulae reach 2,940, clusters
+ * 2,598, swarms 2,400 — which would otherwise log from most of a cell
+ * away; the biggest solid bodies stay under it (rogue 960 → 1,152, home
+ * sun 800 → 960), and a future authored giant caps at 1,200 too.
+ */
+const discoveryRange = (radius: number) => Math.max(150, Math.min(radius * 1.2, 1200));
 /** The HUD flags "APPROACH" inside this surface distance. */
 const approachRange = (radius: number) => Math.max(60, radius * 0.5);
 
@@ -102,7 +148,10 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
   // LOD shells + atmosphere rings — a linear z-buffer would z-fight them.
   // far covers the beacon-dot shell (BEACON_RANGE sectors on the diagonal).
   // Gentle exp2 fog gives far content the DEEP FIELD emergence — geometry
-  // fades up from black over the ~12k → 3k approach band instead of popping.
+  // fades up from black over the ~24k → 6k approach band instead of popping
+  // (density halved with the doubled SECTOR so the band tracks the doubled
+  // stream-in distance: transmittance ~0.18 at 24,000, ~0.02 by 36,000 —
+  // the same proportions the old 0.00011 had at 12,000/18,000).
   // Far *contacts* stay visible regardless: the LOD dot/beacon layers and
   // the starfield are fog-free, so fog shapes emergence, not awareness.
   const stage = createStage(container, {
@@ -110,7 +159,7 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
     near: 0.5,
     far: 60000,
     logDepth: true,
-    fogDensity: 0.00011,
+    fogDensity: 0.000055,
   });
   const { scene, camera, tracker } = stage;
 
@@ -122,7 +171,7 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
   const lod = createLodManager(scene, { jobBudgetMs: 3, surfaceHaze: true, surfaceShells: true });
 
   // ---- the home system (permanent, at absolute (0,0,0)) ----
-  const home = buildHomeSystem(mulberry32(worldSeed ^ 0x5eed));
+  const home = buildHomeSystem(mulberry32(worldSeed ^ 0x5eed), WORLD_SCALE.home);
   home.pois.forEach((poi, i) => { poi.id = `home:${i}`; });
   scene.add(home.group);
   home.group.updateMatrixWorld(true);
@@ -130,23 +179,28 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
 
   // stars — attached to the ship's position each frame so the backdrop is
   // infinite (they only rotate with the camera, never translate past you);
-  // the shell sits beyond the beacon range but inside the far plane
+  // the 20–40k shell spans the beacon band, inside the far plane
   const stars = createStarfield({ count: 800, minRadius: 20000, spread: 20000, size: 26, opacity: 0.55, fog: false });
   tracker.track(stars.geometry);
   tracker.track(stars.material);
   scene.add(stars);
 
   // local dust — tiny soft points recycled around the ship so speed is
-  // visible even in the emptiest stretch of space. The wrap span (2 × range)
-  // must divide SECTOR exactly, or a floating-origin rebase would teleport
-  // every particle by the remainder (6,000 % 800 = 400 — a visible pop).
+  // visible even in the emptiest stretch of space. The wrap span (2 × range
+  // = 1,000) must divide SECTOR exactly (12,000 / 1,000 = 12 ✓), or a
+  // floating-origin rebase would teleport every particle by the remainder
+  // (e.g. a 900-unit span leaves 12,000 % 900 = 300 — a visible pop).
   const dust = tracker.track(createDustField({ count: 260, range: 500, size: 3, opacity: 0.35 }));
   scene.add(dust.points);
 
   // ---- procedural sectors ----
-  // The home system spans these cells; they get no random content.
+  // The home system spans these cells; they get no random content. At the
+  // 12,000-unit grid, cells -1..1 guarantee reserved space to ±12,000 per
+  // axis (cell 1 spans 12,000–24,000) — the home layout's hard wall
+  // (homeLayout: max extent ~11,037 at ×2) and the spawn point (z ≈ 13,437,
+  // cell 1) both sit inside. y keeps ±1 — its old generosity.
   const isHomeCell = (x: number, y: number, z: number) =>
-    x >= -2 && x <= 2 && z >= -2 && z <= 2 && y >= -1 && y <= 1;
+    x >= -1 && x <= 1 && z >= -1 && z <= 1 && y >= -1 && y <= 1;
 
   const lodHandles = new Map<SectorContent, LodBodyHandle[]>();
   const field = createSectorField(scene, {
@@ -154,6 +208,7 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
     sectorSize: SECTOR,
     activeRange: ACTIVE_RANGE,
     reserved: isHomeCell,
+    contentScale: WORLD_SCALE,
     // new sectors emerge from black (fog covers the distance ramp; this
     // covers builds that land inside the visible band)
     revealSeconds: 1.4,
@@ -219,7 +274,10 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
   );
   shipBody.add(new THREE.Line(wingGeo, tracker.track(new THREE.LineBasicMaterial({ color: 0xffffff }))));
   ship.add(shipBody);
-  ship.position.set(0, 340, 12000); // just outside the outermost home orbit
+  // spawn just outside the home system: past the outermost planet's deepest
+  // moon reach, with the same ~2,400-unit clearance the pre-scale layout
+  // had (extent 9,591 → spawn 12,000; at home ×2, extent ~11,037 → ~13,437)
+  ship.position.set(0, 340 * WORLD_SCALE.home, HOME_LAYOUT.maxExtent + 2400);
   scene.add(ship);
 
   // ---- input ----
@@ -276,8 +334,25 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
   // altitude floor — a nebula must never wall the ship out. `dragFactor` is
   // the deepest diffuse-volume drag the pass found (1 in open space).
   const nearest = { name: '', dist: Infinity, radius: 0 };
-  const nearestSolid = { name: '', id: '', envelope: false, dist: Infinity, radius: 0, center: new THREE.Vector3() };
+  const nearestSolid = {
+    name: '',
+    id: '',
+    envelope: false,
+    dist: Infinity,
+    radius: 0,
+    center: new THREE.Vector3(),
+    // the POI's LOD registration + anchor, for the terrain-following floor
+    // (null → no displacement field → flat floor)
+    lod: null as Poi['lod'] | null,
+    anchor: null as THREE.Object3D | null,
+  };
   let dragFactor = 1;
+  // Floor sampler for the CURRENT nearest solid body — the only body whose
+  // floor can engage — rebuilt when the nearest id changes. Pure and
+  // deterministic (seed + kind + radius), so an evicted-and-rebuilt body
+  // resolves the identical floor.
+  let floorSamplerId = '';
+  let floorSampler: SurfaceFloor | null = null;
   // Arrival-ritual one-shots, PER BODY: announced id → that body's own d/r
   // from the latest scan. An id re-arms (leaves the map) only once ITS OWN
   // distance passes ENVELOPE_REARM_RADII — never another body's — so
@@ -305,6 +380,8 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
         nearestSolid.envelope = poi.envelope ?? true;
         nearestSolid.radius = poi.radius;
         nearestSolid.center.copy(poiPos);
+        nearestSolid.lod = poi.lod ?? null;
+        nearestSolid.anchor = poi.object;
       }
     } else if (d < 0) {
       // inside a diffuse volume — the deepest overlapping one sets the drag
@@ -327,6 +404,9 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
   const rebase = new THREE.Vector3();
   // scratch Euler for attitude → quaternion (a fresh one per frame is garbage)
   const scratchEuler = new THREE.Euler(0, 0, 0, 'YXZ');
+  // floor scratch: the radial direction in the body's local frame
+  const floorDir = new THREE.Vector3();
+  const floorQuat = new THREE.Quaternion();
 
   // start the camera in the chase pose — at the new world scale a swoop-in
   // from the scene origin would cross the whole home system
@@ -361,7 +441,9 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
     const approach = nearestSolid.dist === Infinity
       ? -1
       : forward.dot(scratch.copy(nearestSolid.center).sub(ship.position).normalize());
-    const solidLimit = speedLimit(nearestSolid.dist, approach);
+    // the radius makes the floor taper near the deck (speedFloor); with no
+    // solid body scanned, radius is 0 and the plain flat-floor law applies
+    const solidLimit = speedLimit(nearestSolid.dist, approach, nearestSolid.radius);
     // the envelope step is fiction as much as physics — bodies flagged
     // envelope: false (the comet, the station) keep the plain law
     const limit =
@@ -418,6 +500,12 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
     nearest.radius = 0;
     nearestSolid.dist = Infinity;
     nearestSolid.radius = 0;
+    // drop references so evicted sector content is collectable (typed as
+    // the full union — considerPoi refills these, but TS can't see through
+    // the callback and would narrow the properties to `null` for the rest
+    // of the frame)
+    nearestSolid.lod = null as Poi['lod'] | null;
+    nearestSolid.anchor = null as THREE.Object3D | null;
     dragFactor = 1;
     for (const poi of home.pois) considerPoi(poi);
     field.forEachPoi(considerPoi);
@@ -469,15 +557,41 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
       );
     }
 
-    // soft altitude floor: below 3% of a SOLID radius the ship is eased back
-    // out to a 1.03r skim — no bounce, no damage, no fail state. Diffuse
-    // volumes have no floor: formations are meant to be flown through.
-    if (nearestSolid.dist < nearestSolid.radius * 0.03) {
+    // terrain-following soft altitude floor: probing below FLOOR_PROBE_RADII
+    // of a SOLID body's surface, the floor under the ship is that body's own
+    // displacement field sampled along the ship's radial — in the anchor's
+    // LOCAL frame, since the displaced wireframe spins with it — plus a
+    // small margin (engine/lod/surfaceFloor). Low flight hugs valleys and
+    // never clips through the 1.06R peaks the old flat 1.03r floor allowed;
+    // sinking below eases the ship back out — no bounce, no damage, no fail
+    // state. Solid POIs without a field (station, binary pair, pulsar core)
+    // keep the flat floor; diffuse volumes have no floor at all: formations
+    // are meant to be flown through.
+    if (nearestSolid.dist < nearestSolid.radius * FLOOR_PROBE_RADII) {
       scratch.copy(ship.position).sub(nearestSolid.center);
       const len = scratch.length();
       if (len > 1e-6) {
-        scratch.multiplyScalar((nearestSolid.radius * 1.03) / len).add(nearestSolid.center);
-        ship.position.lerp(scratch, Math.min(1, dt * 3));
+        let floorR = nearestSolid.radius * FLAT_FLOOR_RADII;
+        if (nearestSolid.lod && nearestSolid.anchor) {
+          if (floorSamplerId !== nearestSolid.id || !floorSampler) {
+            floorSamplerId = nearestSolid.id;
+            floorSampler = makeSurfaceFloor(
+              nearestSolid.lod.seed,
+              KIND_PRESETS[nearestSolid.lod.kind],
+              nearestSolid.radius,
+            );
+          }
+          // frame skew: `center` is the last scan's matrixWorld while the
+          // quaternion reads current — ≤ ~1.2 units at max skim speed,
+          // absorbed by the 0.015r margin and the ease-out lerp
+          nearestSolid.anchor.getWorldQuaternion(floorQuat).invert();
+          floorDir.copy(scratch).multiplyScalar(1 / len).applyQuaternion(floorQuat);
+          floorR = floorSampler(floorDir.x, floorDir.y, floorDir.z);
+        }
+        if (len < floorR) {
+          scratch.multiplyScalar(floorR / len).add(nearestSolid.center);
+          ship.position.lerp(scratch, Math.min(1, dt * 3));
+        }
       }
     }
 

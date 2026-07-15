@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  DECK_FLOOR,
   DIFFUSE_DRAG_FLOOR,
   diffuseDrag,
   ENVELOPE_BAND_RADII,
@@ -7,19 +8,66 @@ import {
   ENVELOPE_RADII,
   envelopeCap,
   escapeRelief,
+  FLOOR_TAPER_FULL_RADII,
+  FLOOR_TAPER_START_RADII,
   RELIEF_FULL,
   RELIEF_START,
   SPEED_CEIL,
   SPEED_FLOOR,
   SPEED_PER_SURFACE_DISTANCE,
+  speedFloor,
   speedLimit,
 } from 'engine/core/motion';
+
+describe('speedFloor', () => {
+  it('keeps the full skim floor at and above the taper band', () => {
+    expect(speedFloor(0.15 * 960, 960)).toBe(SPEED_FLOOR);
+    // continuous at the band's outer edge
+    expect(speedFloor(FLOOR_TAPER_START_RADII * 960, 960)).toBe(SPEED_FLOOR);
+  });
+
+  it('settles at the deck floor hugging the ground', () => {
+    expect(speedFloor(FLOOR_TAPER_FULL_RADII * 960, 960)).toBe(DECK_FLOOR);
+    expect(speedFloor(0, 960)).toBe(DECK_FLOOR);
+    expect(speedFloor(-20, 960)).toBe(DECK_FLOOR); // mid soft-floor push-out
+  });
+
+  it('is monotone non-decreasing and continuous across the band', () => {
+    const r = 500;
+    let last = speedFloor(-r * 0.01, r);
+    for (let d = 0; d <= r * 0.2; d += r * 0.001) {
+      const f = speedFloor(d, r);
+      expect(f).toBeGreaterThanOrEqual(last - 1e-9);
+      expect(Math.abs(f - last)).toBeLessThan(2); // no steps
+      expect(f).toBeGreaterThanOrEqual(DECK_FLOOR); // never parked
+      last = f;
+    }
+  });
+
+  it('keeps the plain floor when no solid body is scanned', () => {
+    expect(speedFloor(50, Infinity)).toBe(SPEED_FLOOR);
+    expect(speedFloor(50, 0)).toBe(SPEED_FLOOR);
+    expect(speedFloor(50, NaN)).toBe(SPEED_FLOOR);
+  });
+});
 
 describe('speedLimit', () => {
   it('clamps to the floor at and inside the surface', () => {
     expect(speedLimit(0)).toBe(SPEED_FLOOR);
     expect(speedLimit(-500)).toBe(SPEED_FLOOR);
     expect(speedLimit(1)).toBe(SPEED_FLOOR);
+  });
+
+  it('tapers the floor near the deck when given the body radius', () => {
+    const r = 500;
+    // orbit altitude: the old law exactly
+    expect(speedLimit(FLOOR_TAPER_START_RADII * r, 1, r)).toBe(SPEED_FLOOR);
+    // on the deck: the taper governs, never below DECK_FLOOR
+    expect(speedLimit(FLOOR_TAPER_FULL_RADII * r, 1, r)).toBe(DECK_FLOOR);
+    expect(speedLimit(-5, 1, r)).toBe(DECK_FLOOR); // mid push-out
+    // the default radius reproduces the flat-floor law bit for bit
+    expect(speedLimit(10)).toBe(speedLimit(10, 1, Infinity));
+    expect(speedLimit(10, 1, Infinity)).toBe(SPEED_FLOOR);
   });
 
   it('clamps to the ceiling in deep space', () => {
@@ -113,6 +161,13 @@ describe('envelopeCap', () => {
     expect(envelopeCap(0, 25)).toBe(SPEED_FLOOR);
     // huge body: the inside value would exceed the open-space ceiling
     expect(envelopeCap(0, 1e6)).toBe(SPEED_CEIL);
+  });
+
+  it('keeps a sane felt step at the true-scale radii', () => {
+    // biggest rogue planet (radius 960): 2.5 · 960 · 0.35 = 840 u/s
+    expect(envelopeCap(0, 960)).toBeCloseTo(840, 9);
+    // the ×2 home sun (radius 800): 2.5 · 800 · 0.35 = 700 u/s
+    expect(envelopeCap(0, 800)).toBeCloseTo(700, 9);
   });
 
   it('steps down continuously over the band around ENVELOPE_RADII', () => {

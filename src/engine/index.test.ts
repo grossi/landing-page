@@ -20,6 +20,7 @@ describe('engine barrel', () => {
     expect(engine.getIcosphereTables).toBeTypeOf('function'); // icosphere
     expect(engine.makeLodGeometry).toBeTypeOf('function'); // geometry
     expect(engine.createLodManager).toBeTypeOf('function'); // lodManager
+    expect(engine.makeSurfaceFloor).toBeTypeOf('function'); // surfaceFloor
     // render
     expect(engine.createStage).toBeTypeOf('function'); // stage
     expect(engine.createResourceTracker).toBeTypeOf('function'); // resourceTracker
