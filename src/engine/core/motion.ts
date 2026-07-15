@@ -124,9 +124,15 @@ export const ENVELOPE_CAP_RADII = 2.5;
  * has a felt beginning even on relieved (grazing/leaving) headings, and the
  * plain distance law takes back over once it becomes the stricter of the
  * two. The cap steps down over a short smoothstep band around the boundary
- * (continuous everywhere — the velocity lerp does the rest), clamps to the
- * law's own floor and ceiling so it never fights either, and negative
+ * (continuous everywhere — the velocity lerp does the rest), clamps to
+ * `SPEED_FLOOR` and `SPEED_CEIL` so it never fights the law, and negative
  * distances (mid soft-floor push-out) hold the inside value.
+ *
+ * The floor clamp is the FLAT `SPEED_FLOOR`, not the radius-aware
+ * `speedFloor`, on purpose: the cap's minimum (40) always sits above
+ * `DECK_FLOOR` (14), so under `min(law, cap)` the law's deck taper still
+ * governs near the ground — the flat clamp only guarantees the cap itself
+ * never undercuts the skim floor.
  */
 export function envelopeCap(surfaceDistance: number, radius: number): number {
   const inside = Math.min(

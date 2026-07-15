@@ -91,8 +91,10 @@ describe('buildSectorContent', () => {
   });
 
   it('classifies archetype solidity: hard bodies solid, formations diffuse', () => {
-    // indices into the BUILDERS table whose volumes are enterable: asteroid
-    // cluster, nebula, monolith field, comet swarm
+    // Indices into the BUILDERS table whose volumes are enterable:
+    // 0 = asteroidCluster, 1 = nebula, 5 = monolithField, 7 = cometSwarm
+    // (8 = derelictStation, asserted solid-but-envelopeless below).
+    // Coupled to the table's order — reordering BUILDERS fails here loudly.
     const DIFFUSE_BUILDERS = new Set([0, 1, 5, 7]);
     let sawDiffuse = 0;
     let sawSolid = 0;

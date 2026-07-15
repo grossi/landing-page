@@ -155,6 +155,11 @@ export const HAZE_NEAR_RADII = 0.3;
 export const HAZE_LIT_COS = 0.2;
 /** …and at/below which the far limb is fully hazed out. */
 export const HAZE_DARK_COS = -0.5;
+// Rewrite gate: a slot's vertex colors are refilled only once its inputs
+// drift this far from the LAST WRITE (see applyHaze). Implementation
+// detail of the write path, not a look tune — deliberately unexported.
+const HAZE_REWRITE_MIN_DSTRENGTH = 0.01;
+const HAZE_REWRITE_MIN_COS = Math.cos(0.01);
 
 /**
  * Strength of the near-surface far-limb haze: 0 at and beyond `HAZE_RADII`
@@ -345,6 +350,10 @@ interface Slot {
   level: IcosphereLevel;
   /** Whether the haze pass has written non-white vertex colors here. */
   hazed: boolean;
+  /** Haze strength of the last color write (keys the rewrite skip). */
+  hazeStrength: number;
+  /** Local camera direction of the last color write (keys the rewrite skip). */
+  hazeDir: THREE.Vector3;
   /** Cache key pinned while this slot displays it (the geometry is the cache's instance). */
   cacheKey: string;
 }
@@ -593,7 +602,15 @@ export function createLodManager(scene: THREE.Scene, opts: LodManagerOptions = {
       mesh.scale.setScalar(body.lastScale);
       body.anchor.add(mesh);
       cache.retain(cacheKey); // never evicted out from under the live mesh
-      body.current = { mesh, material, level: level as IcosphereLevel, hazed: false, cacheKey };
+      body.current = {
+        mesh,
+        material,
+        level: level as IcosphereLevel,
+        hazed: false,
+        hazeStrength: 0,
+        hazeDir: new THREE.Vector3(),
+        cacheKey,
+      };
     } else {
       body.current = null; // rung 0: the shared dot carries the body
     }
@@ -764,6 +781,20 @@ export function createLodManager(scene: THREE.Scene, opts: LodManagerOptions = {
       clearHaze(slot); // one white refill on exit, then zero-cost again
       return;
     }
+    // The fade is a pure function of (strength, local camera dir): a slot
+    // whose inputs moved less than the write of record keeps its buffer —
+    // otherwise a hover re-fills and re-uploads the top rung's ~480 KB
+    // color attribute every frame for an identical result. Drift compares
+    // against the LAST WRITE, not the last frame, so error never
+    // accumulates past the gate: ≤0.01 rad shifts a vertex cosine ≤0.01,
+    // under 1.5% of the 0.7-wide fade band — invisible on a wireframe.
+    if (
+      slot.hazed &&
+      Math.abs(strength - slot.hazeStrength) < HAZE_REWRITE_MIN_DSTRENGTH &&
+      slot.hazeDir.dot(hazeCameraDir) >= HAZE_REWRITE_MIN_COS
+    ) {
+      return;
+    }
     const geometry = slot.mesh.geometry;
     let colors = geometry.getAttribute('color') as THREE.BufferAttribute | undefined;
     if (colors === undefined) {
@@ -794,6 +825,8 @@ export function createLodManager(scene: THREE.Scene, opts: LodManagerOptions = {
     }
     colors.needsUpdate = true;
     slot.hazed = true;
+    slot.hazeStrength = strength;
+    slot.hazeDir.copy(hazeCameraDir);
   };
 
   const unregisterState = (body: BodyState): void => {
@@ -949,6 +982,11 @@ export function createLodManager(scene: THREE.Scene, opts: LodManagerOptions = {
             // finishes, so the placement would never commit. Only abandon
             // the build when the governor cap dropped below it or px left
             // its hysteresis band (the same demote point selectLod uses).
+            // Deliberately asymmetric: a px RISE past the NEXT promote
+            // threshold is NOT retargeted either — the pending rung commits
+            // first, then the ordinary dwell-gated climb takes it higher.
+            // One extra dissolve beats restarting a 40k-vert build from
+            // vertex 0 on a fast approach.
             const demotePx = LOD_PROMOTE_PX[body.pendingLevel - 1] * LOD_DEMOTE_RATIO;
             if (cap < body.pendingLevel || px < demotePx) {
               requestLevel(body, coldStartLevel(px, cap), px);

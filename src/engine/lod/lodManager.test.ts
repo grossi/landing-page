@@ -510,6 +510,36 @@ describe('createLodManager', () => {
     lod.dispose();
   });
 
+  it('skips identical haze rewrites while strength and camera direction hold', async () => {
+    const scene = new THREE.Scene();
+    const lod = createLodManager(scene, { surfaceHaze: true });
+    const anchor = new THREE.Group();
+    anchor.position.set(0, 0, -15); // 0.5 radii off the surface — haze active
+    scene.add(anchor);
+    const handle = lod.register({ seed: 35, radius: 10, kind: 'planet', anchor });
+    for (let i = 0; i < 40 && handle.level < 5; i++) {
+      lod.update(makeCamera(), VIEW_H, 0.6);
+      await flush();
+    }
+    lod.update(makeCamera(), VIEW_H, 0.6); // settle the final cross-dissolve
+    const mesh = rungMeshes(anchor)[0] as THREE.LineSegments;
+    const colors = mesh.geometry.getAttribute('color') as THREE.BufferAttribute;
+    const version = colors.version;
+
+    // nothing moves: the fade inputs are identical, so the ~480 KB buffer
+    // must not be refilled or re-uploaded (a hover would otherwise pay it
+    // every frame)
+    for (let i = 0; i < 5; i++) lod.update(makeCamera(), VIEW_H, 0.016);
+    expect(colors.version).toBe(version);
+
+    // swing the local camera direction well past the drift gate at the
+    // same surface distance — the fade must recompute
+    anchor.position.set(0, -3, -14.7);
+    lod.update(makeCamera(), VIEW_H, 0.016);
+    expect(colors.version).toBeGreaterThan(version);
+    lod.dispose();
+  });
+
   it('leaves geometry and materials untouched by default (Home DEEP FIELD parity)', async () => {
     const scene = new THREE.Scene();
     const lod = createLodManager(scene); // no surfaceHaze — the Home mount
