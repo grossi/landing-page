@@ -1,13 +1,21 @@
 // @vitest-environment happy-dom
 import * as THREE from 'three';
 import { describe, expect, it, vi } from 'vitest';
+import { ENVELOPE_RADII } from 'engine/core/motion';
 import { GeometryCache, lodGeometryKey } from 'engine/lod/geometry';
 import {
   apparentScale,
+  ATMOSPHERE_FAR,
   ATMOSPHERE_MAX_OPACITY,
   atmosphereOpacity,
   biasedMaxLevel,
   createLodManager,
+  HAZE_DARK_COS,
+  HAZE_LIT_COS,
+  HAZE_NEAR_RADII,
+  HAZE_RADII,
+  hazeStrength,
+  hazeVertexFade,
   SCALE_RAMP_FLOOR,
 } from 'engine/lod/lodManager';
 
@@ -57,6 +65,54 @@ describe('atmosphereOpacity', () => {
       expect(o).toBeLessThanOrEqual(ATMOSPHERE_MAX_OPACITY);
       expect(o).toBeGreaterThanOrEqual(last - 1e-12);
       last = o;
+    }
+  });
+
+  it('starts in the same band as the arrival ritual (ENVELOPE_RADII)', () => {
+    // the HUD "ATMOSPHERIC ENVELOPE" ping and the ring cue must always
+    // begin together — retuning one without the other desyncs the ritual
+    expect(ATMOSPHERE_FAR).toBe(ENVELOPE_RADII);
+  });
+});
+
+describe('hazeStrength', () => {
+  it('is zero at and beyond HAZE_RADII and full by HAZE_NEAR_RADII', () => {
+    expect(hazeStrength(20, 10)).toBe(0); // 2 radii out
+    expect(hazeStrength(HAZE_RADII * 10, 10)).toBe(0); // continuous far edge
+    expect(hazeStrength(HAZE_NEAR_RADII * 10, 10)).toBe(1);
+    expect(hazeStrength(0, 10)).toBe(1);
+  });
+
+  it('rises monotonically and continuously on approach', () => {
+    let last = 0;
+    for (let d = 20; d >= 0; d -= 0.1) {
+      const s = hazeStrength(d, 10);
+      expect(s).toBeGreaterThanOrEqual(last - 1e-12);
+      expect(Math.abs(s - last)).toBeLessThan(0.03); // no jumps
+      last = s;
+    }
+  });
+});
+
+describe('hazeVertexFade', () => {
+  it('keeps camera-facing vertices fully lit', () => {
+    expect(hazeVertexFade(1, 1)).toBe(1);
+    expect(hazeVertexFade(HAZE_LIT_COS, 1)).toBe(1);
+  });
+
+  it('fades the far limb to 1 - strength', () => {
+    expect(hazeVertexFade(HAZE_DARK_COS, 1)).toBeCloseTo(0, 10);
+    expect(hazeVertexFade(-1, 0.5)).toBeCloseTo(0.5, 10);
+    expect(hazeVertexFade(-1, 0)).toBe(1); // zero strength touches nothing
+  });
+
+  it('is monotone in the cosine with no steps across the terminator', () => {
+    let last = hazeVertexFade(1, 0.8);
+    for (let c = 1; c >= -1; c -= 0.01) {
+      const fade = hazeVertexFade(c, 0.8);
+      expect(fade).toBeLessThanOrEqual(last + 1e-12);
+      expect(last - fade).toBeLessThan(0.03);
+      last = fade;
     }
   });
 });
@@ -313,6 +369,68 @@ describe('createLodManager', () => {
     lod.dispose();
   });
 
+  it('hazes the far limb when skimming with surfaceHaze enabled, composing with opacity', async () => {
+    const scene = new THREE.Scene();
+    const lod = createLodManager(scene, { surfaceHaze: true });
+    const anchor = new THREE.Group();
+    anchor.position.set(0, 0, -15); // 0.5 radii off the surface — haze active
+    scene.add(anchor);
+    const handle = lod.register({ seed: 31, radius: 10, kind: 'planet', anchor });
+    for (let i = 0; i < 40 && handle.level < 5; i++) {
+      lod.update(makeCamera(), VIEW_H, 0.6);
+      await flush();
+    }
+    lod.update(makeCamera(), VIEW_H, 0.6); // finish the final cross-dissolve
+    const mesh = rungMeshes(anchor)[0] as THREE.LineSegments;
+    const material = mesh.material as THREE.LineBasicMaterial;
+    const colors = mesh.geometry.getAttribute('color');
+    expect(colors).toBeDefined();
+    expect(material.vertexColors).toBe(true);
+    // the haze rides vertex colors; the dissolve keeps sole ownership of opacity
+    expect(material.opacity).toBeCloseTo(0.85, 5);
+
+    // camera sits at +z of the body: the near pole stays lit, the far fades
+    const positions = mesh.geometry.getAttribute('position');
+    let nearIdx = 0;
+    let farIdx = 0;
+    for (let i = 0; i < positions.count; i++) {
+      if (positions.getZ(i) > positions.getZ(nearIdx)) nearIdx = i;
+      if (positions.getZ(i) < positions.getZ(farIdx)) farIdx = i;
+    }
+    expect(colors.getX(nearIdx)).toBeCloseTo(1, 5);
+    expect(colors.getX(farIdx)).toBeLessThan(0.15);
+
+    // leaving the band clears the fade back to white (then costs nothing);
+    // cached rungs released mid-climb were white-refilled too, so even the
+    // demote's reused geometry carries no stale fade
+    anchor.position.set(0, 0, -60); // 5 radii off the surface — strength 0
+    lod.update(makeCamera(), VIEW_H, 0.6);
+    for (const rung of rungMeshes(anchor) as THREE.LineSegments[]) {
+      const c = rung.geometry.getAttribute('color');
+      if (!c) continue;
+      for (let i = 0; i < c.count; i++) expect(c.getX(i)).toBe(1);
+    }
+    lod.dispose();
+  });
+
+  it('leaves geometry and materials untouched by default (Home DEEP FIELD parity)', async () => {
+    const scene = new THREE.Scene();
+    const lod = createLodManager(scene); // no surfaceHaze — the Home mount
+    const anchor = new THREE.Group();
+    anchor.position.set(0, 0, -15); // skimming distance, yet no haze
+    scene.add(anchor);
+    const handle = lod.register({ seed: 33, radius: 10, kind: 'planet', anchor });
+    for (let i = 0; i < 40 && handle.level < 5; i++) {
+      lod.update(makeCamera(), VIEW_H, 0.6);
+      await flush();
+    }
+    lod.update(makeCamera(), VIEW_H, 0.6);
+    const mesh = rungMeshes(anchor)[0] as THREE.LineSegments;
+    expect(mesh.geometry.getAttribute('color')).toBeUndefined();
+    expect((mesh.material as THREE.LineBasicMaterial).vertexColors).toBe(false);
+    lod.dispose();
+  });
+
   it('drives the apparent-scale ramp on rung meshes and scale targets', async () => {
     const scene = new THREE.Scene();
     const lod = createLodManager(scene);
@@ -332,7 +450,7 @@ describe('createLodManager', () => {
       lod.update(makeCamera(), VIEW_H, 0.6);
       await flush();
     }
-    expect(handle.level).toBeGreaterThan(0); // px ≈ 3.2 at floor scale
+    expect(handle.level).toBeGreaterThan(0); // px ≈ 4.3 at floor scale
     expect(ring.scale.x).toBeCloseTo(10 * SCALE_RAMP_FLOOR, 5);
     expect(rungMeshes(anchor)[0].scale.x).toBeCloseTo(SCALE_RAMP_FLOOR, 5);
 

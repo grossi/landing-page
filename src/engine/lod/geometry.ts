@@ -37,7 +37,8 @@ export const SLICE_VERTS = 2048;
 export const JOB_BUDGET_MS = 3;
 
 /**
- * Default LRU capacity (sub5 positions ≈ 123 KB ⇒ < 3 MB worst case).
+ * Default LRU capacity (sub5 positions ≈ 123 KB, doubled for entries that
+ * gained a haze color attribute during a skim ⇒ < 6 MB worst case).
  * A soft cap: pinned (in-use) entries never evict, so the cache may run
  * over while more bodies than this are displayed at rung 1+.
  */

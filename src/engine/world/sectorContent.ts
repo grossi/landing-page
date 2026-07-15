@@ -29,6 +29,22 @@ export interface Poi {
   object: THREE.Object3D;
   /** Approximate radius of the thing, so distance reads as surface distance. */
   radius: number;
+  /**
+   * Whether the radius is a hard surface. Solid bodies (planets, stars, the
+   * pulsar core, the derelict station's hull cluster) get the soft altitude
+   * floor and the full surface-distance speed cap; diffuse volumes (nebulae,
+   * asteroid clusters, comet swarms, monolith fields — sparse enough to
+   * thread through) are enterable and apply only a gentle drag inside.
+   */
+  solid: boolean;
+  /**
+   * Whether the body reads as carrying an atmospheric envelope (the HUD
+   * arrival ritual and its entry speed step). Defaults to `solid`; small or
+   * artificial bodies (the comet, the derelict station) opt out — the
+   * fiction reads wrong over a hull or a 27-unit snowball. The speed law
+   * and soft altitude floor ignore this flag: they follow `solid` alone.
+   */
+  envelope?: boolean;
   /** Stable identity across sector rebuilds; assigned by the engine. */
   id?: string;
 }
@@ -126,7 +142,8 @@ const asteroidCluster: Builder = (rand, own) => {
   const spin = (rand() - 0.5) * 0.02;
   return {
     group,
-    pois: [{ name: `${makeName(rand)} CLUSTER`, object: group, radius: spread }],
+    // scattered rocks, mostly void — flyable, so the volume is not solid
+    pois: [{ name: `${makeName(rand)} CLUSTER`, object: group, radius: spread, solid: false }],
     update: (dt) => { group.rotation.y += spin * dt; },
   };
 };
@@ -166,7 +183,7 @@ const nebula: Builder = (rand, own) => {
   const spin = (rand() - 0.5) * 0.014;
   return {
     group,
-    pois: [{ name: `${makeName(rand)} NEBULA`, object: group, radius: reach }],
+    pois: [{ name: `${makeName(rand)} NEBULA`, object: group, radius: reach, solid: false }],
     update: (dt) => { group.rotation.y += spin * dt; },
   };
 };
@@ -199,7 +216,7 @@ const roguePlanet: Builder = (rand) => {
   const name = `${makeName(rand)}-${1 + Math.floor(rand() * 8)}`;
   return {
     group,
-    pois: [{ name, object: planet, radius }],
+    pois: [{ name, object: planet, radius, solid: true }],
     lodBodies: [{ seed, radius, kind: 'planet', anchor: planet, baseOpacity: 0.85, scaleTargets }],
     update: (dt, t) => {
       planet.rotation.y += spin * dt;
@@ -220,7 +237,7 @@ const miniSystem: Builder = (rand) => {
   halo.rotation.x = rand() * Math.PI;
   group.add(halo);
 
-  const pois: Poi[] = [{ name: starName, object: star, radius: starRadius }];
+  const pois: Poi[] = [{ name: starName, object: star, radius: starRadius, solid: true }];
   const lodBodies: LodRegistration[] = [
     { seed: starSeed, radius: starRadius, kind: 'star', anchor: star, baseOpacity: 0.9, scaleTargets: [halo] },
   ];
@@ -236,7 +253,7 @@ const miniSystem: Builder = (rand) => {
     orbit.scale.setScalar(orbitR);
     group.add(orbit);
     planets.push({ mesh: planet, r: orbitR, speed: (0.5 / Math.pow(orbitR / 340, 1.5)) * 0.5, phase: rand() * Math.PI * 2 });
-    pois.push({ name: `${starName}-${i + 1}`, object: planet, radius });
+    pois.push({ name: `${starName}-${i + 1}`, object: planet, radius, solid: true });
     lodBodies.push({ seed: planetSeed, radius, kind: 'planet', anchor: planet, baseOpacity: 0.85 });
   }
   // the whole system tilts a little
@@ -277,7 +294,8 @@ const binaryStars: Builder = (rand) => {
   group.add(orbit);
   return {
     group,
-    pois: [{ name: `${name} BINARY`, object: group, radius: separation + 120 }],
+    // the orbiting pair sweeps the whole radius — treat it as one solid star
+    pois: [{ name: `${name} BINARY`, object: group, radius: separation + 120, solid: true }],
     lodBodies,
     update: (_dt, t) => { updateOrbiters(stars, t); },
   };
@@ -304,7 +322,7 @@ const pulsar: Builder = (rand) => {
   const phase = rand() * Math.PI * 2;
   return {
     group,
-    pois: [{ name: `PULSAR ${makeName(rand)}`, object: core, radius: 70 }],
+    pois: [{ name: `PULSAR ${makeName(rand)}`, object: core, radius: 70, solid: true }],
     update: (dt, t) => {
       beams.rotation.y += spin * dt;
       core.scale.setScalar(coreSize * (1 + Math.sin(phase + t * 6) * 0.16));
@@ -329,7 +347,8 @@ const monolithField: Builder = (rand, own) => {
   const spin = (rand() - 0.5) * 0.01;
   return {
     group,
-    pois: [{ name: `THE ${makeName(rand)} MONOLITHS`, object: group, radius: spread }],
+    // a handful of slabs over a huge spread — drifting among them is the point
+    pois: [{ name: `THE ${makeName(rand)} MONOLITHS`, object: group, radius: spread, solid: false }],
     update: (dt) => { group.rotation.y += spin * dt; },
   };
 };
@@ -361,7 +380,9 @@ const derelictStation: Builder = (rand) => {
   const tumbleY = (rand() - 0.5) * 0.12;
   return {
     group,
-    pois: [{ name: `${makeName(rand)} STATION (DERELICT)`, object: group, radius: 182 }],
+    // the radius hugs the hull cluster itself, so the station reads solid —
+    // but a wreck has no atmosphere to announce
+    pois: [{ name: `${makeName(rand)} STATION (DERELICT)`, object: group, radius: 182, solid: true, envelope: false }],
     update: (dt) => {
       group.rotation.x += tumbleX * dt;
       group.rotation.y += tumbleY * dt;
@@ -389,7 +410,7 @@ const cometSwarm: Builder = (rand) => {
   }
   return {
     group,
-    pois: [{ name: `${name} SWARM`, object: group, radius: 1200 }],
+    pois: [{ name: `${name} SWARM`, object: group, radius: 1200, solid: false }],
     update: (_dt, t) => { updateOrbiters(swarm, t); },
   };
 };
@@ -564,7 +585,7 @@ export function buildHomeSystem(rand: () => number): SectorContent {
   group.add(sunPulse);
   const sun = new THREE.Group(); // LOD anchor
   sunPulse.add(sun);
-  pois.push({ name: 'THE SUN', object: sun, radius: SUN_RADIUS });
+  pois.push({ name: 'THE SUN', object: sun, radius: SUN_RADIUS, solid: true });
   // halos live beside the sun (not inside it) so its unit-scale doesn't
   // multiply their world-space radii
   const halos = new THREE.Group();
@@ -600,7 +621,7 @@ export function buildHomeSystem(rand: () => number): SectorContent {
     const planetSeed = Math.floor(rand() * 2 ** 31); // seed right after the radius
     const planet = new THREE.Group(); // LOD anchor, positioned by its orbiter
     group.add(planet);
-    pois.push({ name: `${makeName(rand)}-${i + 1}`, object: planet, radius });
+    pois.push({ name: `${makeName(rand)}-${i + 1}`, object: planet, radius, solid: true });
     planetOrbiters.push({
       mesh: planet,
       r: ORBIT_RADII[i],
@@ -668,7 +689,8 @@ export function buildHomeSystem(rand: () => number): SectorContent {
   const comet = new THREE.Mesh(ICO_LOW, MAT_BRIGHT);
   comet.scale.setScalar(22);
   group.add(comet);
-  pois.push({ name: 'THE COMET', object: comet, radius: 27 });
+  // solid, but far too small for an "atmospheric envelope" to read right
+  pois.push({ name: 'THE COMET', object: comet, radius: 27, solid: true, envelope: false });
   const TRAIL_LENGTH = 70;
   const trailPositions = new Float32Array(TRAIL_LENGTH * 3);
   // Start the whole trail at the comet's t=0 position (same formula as

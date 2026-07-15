@@ -2,7 +2,12 @@
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
 import { hashCoords, mulberry32 } from 'engine/core/rng';
-import { buildHomeSystem, buildSectorContent, peekSectorBeacon } from 'engine/world/sectorContent';
+import {
+  buildHomeSystem,
+  buildSectorContent,
+  drawSectorHeader,
+  peekSectorBeacon,
+} from 'engine/world/sectorContent';
 
 const SECTOR = 6000;
 
@@ -79,6 +84,31 @@ describe('buildSectorContent', () => {
     }
   });
 
+  it('classifies archetype solidity: hard bodies solid, formations diffuse', () => {
+    // indices into the BUILDERS table whose volumes are enterable: asteroid
+    // cluster, nebula, monolith field, comet swarm
+    const DIFFUSE_BUILDERS = new Set([0, 1, 5, 7]);
+    let sawDiffuse = 0;
+    let sawSolid = 0;
+    for (let i = 0; i < 60; i++) {
+      const [x, y, z] = [i, 4, 3 * i];
+      const header = drawSectorHeader(mulberry32(hashCoords(x, y, z, 2024)));
+      const content = buildAt(x, y, z, 2024);
+      const expected = !DIFFUSE_BUILDERS.has(header.builderIndex);
+      for (const poi of content.pois) {
+        expect(poi.solid).toBe(expected);
+        // the derelict station is solid but carries no envelope fiction
+        if (header.builderIndex === 8) expect(poi.envelope).toBe(false);
+        if (poi.solid) sawSolid++;
+        else sawDiffuse++;
+      }
+      content.dispose();
+    }
+    // both kinds are common enough that 60 sectors must yield each
+    expect(sawDiffuse).toBeGreaterThan(0);
+    expect(sawSolid).toBeGreaterThan(0);
+  });
+
   it('renders static swarms as instanced batches with covering bounds', () => {
     const collectInstanced = (root: THREE.Object3D): THREE.InstancedMesh[] => {
       const out: THREE.InstancedMesh[] = [];
@@ -141,8 +171,11 @@ describe('buildHomeSystem', () => {
     const names = a.pois.map((p) => p.name);
     expect(names[0]).toBe('THE SUN');
     expect(names).toContain('THE COMET');
-    // sun + seven planets + comet
+    // sun + seven planets + comet — all hard bodies; only the comet is too
+    // small to carry the atmospheric-envelope fiction
     expect(a.pois).toHaveLength(9);
+    expect(a.pois.every((p) => p.solid)).toBe(true);
+    expect(a.pois.find((p) => p.name === 'THE COMET')!.envelope).toBe(false);
     // the sun and every planet render through the LOD ladder
     expect(a.lodBodies).toHaveLength(8);
     expect(a.lodBodies[0]).toMatchObject({ kind: 'star', radius: 400 });

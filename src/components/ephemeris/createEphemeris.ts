@@ -1,6 +1,13 @@
 import * as THREE from 'three';
 import { computeRebase } from 'engine/core/floatingOrigin';
-import { BOOST_LIMIT_FACTOR, speedLimit } from 'engine/core/motion';
+import {
+  BOOST_LIMIT_FACTOR,
+  diffuseDrag,
+  ENVELOPE_RADII,
+  ENVELOPE_REARM_RADII,
+  envelopeCap,
+  speedLimit,
+} from 'engine/core/motion';
 import { mulberry32 } from 'engine/core/rng';
 import { createLodManager, type LodBeacon, type LodBodyHandle } from 'engine/lod/lodManager';
 import { wireMat } from 'engine/render/assets';
@@ -40,12 +47,20 @@ const ACTIVE_RANGE = 1;
  * out to this Chebyshev cell range (peeked, zero geometry built).
  */
 const BEACON_RANGE = 4;
-/** Open-space cruise speed; boost quadruples it (see the speed-law block). */
-const CRUISE_SPEED = 1000;
-const BOOST_FACTOR = 4;
+/**
+ * Open-space cruise speed. Deliberately slow — cruise is for drifting and
+ * looking around; covering distance is what the boost burn is for.
+ */
+const CRUISE_SPEED = 250;
+const BOOST_FACTOR = 16;
 /** Camera FOV at cruise / under boost (the DEEP FIELD throttle-widen cue). */
 const CRUISE_FOV = 64;
 const BOOST_FOV = 71;
+/**
+ * Cap on how far the chase camera may trail its pose (units). The trail is
+ * the speed cue, but past this the ship reads as a speck instead of fast.
+ */
+const CAMERA_MAX_LAG = 12;
 /** Velocity response rates (1/s): a boost kicks, a slowdown eases. */
 const ACCEL_RATE = 2.2;
 const ACCEL_RATE_BOOST = 3.4;
@@ -69,12 +84,15 @@ const approachRange = (radius: number) => Math.max(60, radius * 0.5);
  * generates its own content (asteroid clusters, nebulae, rogue planets,
  * minor star systems, pulsars, derelicts…) from its absolute coordinates.
  *
- * Max speed is proportional to the distance to the nearest surface
+ * Max speed is proportional to the distance to the nearest SOLID surface
  * (engine/core/motion), so deep-space hops stay quick while planetary
  * approaches decelerate into a controlled, seamless surface skim — and a
  * soft altitude floor pushes the ship out gently instead of ever crashing.
  * The cap is direction-aware (pointing away from a body lifts it, so
- * leaving is never a grind) and boosting punches through it.
+ * leaving is never a grind) and boosting punches through it. Crossing into
+ * a solid body's atmospheric envelope announces itself on the HUD with a
+ * felt speed step; diffuse formations (nebulae, clusters, swarms) are
+ * enterable — no floor, no cap, just a gentle drag inside the volume.
  *
  * The sim owns its canvas; HUD text is written into the provided elements so
  * the caller controls layout/styling without re-rendering per frame.
@@ -99,7 +117,8 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
   const worldSeed = Math.floor(Math.random() * 2 ** 31);
 
   // ---- LOD ladder for planets/stars (screen-space rungs, cross-dissolve) ----
-  const lod = createLodManager(scene, { jobBudgetMs: 3 });
+  // surfaceHaze: skimming a body fades its far limb (Ephemeris-only cue)
+  const lod = createLodManager(scene, { jobBudgetMs: 3, surfaceHaze: true });
 
   // ---- the home system (permanent, at absolute (0,0,0)) ----
   const home = buildHomeSystem(mulberry32(worldSeed ^ 0x5eed));
@@ -250,10 +269,21 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
   let hudTimer = 0;
   setHudText(hud.contacts, '0 CONTACTS LOGGED');
 
-  // Nearest body of the last completed HUD pass. `dist`/`radius`/`center`
-  // also feed the speed law (one frame stale — <50 units at max speed) and
-  // the soft altitude floor.
-  const nearest = { name: '', dist: Infinity, radius: 0, center: new THREE.Vector3() };
+  // Nearest bodies of the last completed HUD pass (one frame stale —
+  // <50 units at max speed). `nearest` spans BOTH kinds and drives the HUD;
+  // `nearestSolid` drives the speed law, the arrival ritual and the soft
+  // altitude floor — a nebula must never wall the ship out. `dragFactor` is
+  // the deepest diffuse-volume drag the pass found (1 in open space).
+  const nearest = { name: '', dist: Infinity, radius: 0 };
+  const nearestSolid = { name: '', id: '', envelope: false, dist: Infinity, radius: 0, center: new THREE.Vector3() };
+  let dragFactor = 1;
+  // Arrival-ritual one-shots, PER BODY: announced id → that body's own d/r
+  // from the latest scan. An id re-arms (leaves the map) only once ITS OWN
+  // distance passes ENVELOPE_REARM_RADII — never another body's — so
+  // touring overlapping envelopes can't ping-pong announcements. Checked in
+  // the 10 Hz HUD pass; a value left at Infinity there means the POI is no
+  // longer scanned (sector eviction) and re-arms too.
+  const envelopeAnnounced = new Map<string, number>();
   const poiPos = new THREE.Vector3();
   const considerPoi = (poi: Poi) => {
     poiPos.setFromMatrixPosition(poi.object.matrixWorld);
@@ -262,7 +292,22 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
       nearest.dist = d;
       nearest.name = poi.name;
       nearest.radius = poi.radius;
-      nearest.center.copy(poiPos);
+    }
+    if (poi.solid) {
+      const id = poi.id ?? poi.name;
+      // refresh the ritual's per-body re-arm distance while announced
+      if (envelopeAnnounced.has(id)) envelopeAnnounced.set(id, d / poi.radius);
+      if (d < nearestSolid.dist) {
+        nearestSolid.dist = d;
+        nearestSolid.name = poi.name;
+        nearestSolid.id = id;
+        nearestSolid.envelope = poi.envelope ?? true;
+        nearestSolid.radius = poi.radius;
+        nearestSolid.center.copy(poiPos);
+      }
+    } else if (d < 0) {
+      // inside a diffuse volume — the deepest overlapping one sets the drag
+      dragFactor = Math.min(dragFactor, diffuseDrag(d, poi.radius));
     }
     if (d < discoveryRange(poi.radius) && poi.id && !discoveredIds.has(poi.id)) {
       discoveredIds.add(poi.id);
@@ -306,13 +351,23 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
     // distance-proportional speed law: time-to-contact stays roughly
     // constant, so approaches decelerate into a skim automatically. The cap
     // is direction-aware (pointing away from the body relaxes it — leaving
-    // is never a grind) and a boost burn punches through it.
+    // is never a grind) and a boost burn punches through it. Only SOLID
+    // bodies drive the law; inside the envelope the relieved limit is
+    // additionally clamped (min — it can only lower the law), the felt
+    // beginning of the arrival ritual. Diffuse volumes contribute only
+    // `dragFactor` — atmosphere, never a wall.
     forward.set(0, 0, -1).applyQuaternion(ship.quaternion);
-    const approach = nearest.dist === Infinity
+    const approach = nearestSolid.dist === Infinity
       ? -1
-      : forward.dot(scratch.copy(nearest.center).sub(ship.position).normalize());
-    const limit = speedLimit(nearest.dist, approach) * (boost ? BOOST_LIMIT_FACTOR : 1);
-    const targetSpeed = Math.min(boost ? CRUISE_SPEED * BOOST_FACTOR : CRUISE_SPEED, limit);
+      : forward.dot(scratch.copy(nearestSolid.center).sub(ship.position).normalize());
+    const solidLimit = speedLimit(nearestSolid.dist, approach);
+    // the envelope step is fiction as much as physics — bodies flagged
+    // envelope: false (the comet, the station) keep the plain law
+    const limit =
+      (nearestSolid.envelope
+        ? Math.min(solidLimit, envelopeCap(nearestSolid.dist, nearestSolid.radius))
+        : solidLimit) * (boost ? BOOST_LIMIT_FACTOR : 1);
+    const targetSpeed = Math.min(boost ? CRUISE_SPEED * BOOST_FACTOR : CRUISE_SPEED, limit) * dragFactor;
     // asymmetric response: the boost kick is felt, the slowdown never slams
     const rate = velocity.length() < targetSpeed ? (boost ? ACCEL_RATE_BOOST : ACCEL_RATE) : DECEL_RATE;
     velocity.lerp(scratch.copy(forward).multiplyScalar(targetSpeed), Math.min(1, dt * rate));
@@ -360,8 +415,27 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
     nearest.name = 'DEEP SPACE';
     nearest.dist = Infinity;
     nearest.radius = 0;
+    nearestSolid.dist = Infinity;
+    nearestSolid.radius = 0;
+    dragFactor = 1;
     for (const poi of home.pois) considerPoi(poi);
     field.forEachPoi(considerPoi);
+
+    // arrival ritual: crossing into a solid body's atmospheric envelope
+    // (the ring-cue band) announces once per approach; each body re-arms
+    // past its OWN ENVELOPE_REARM_RADII (hysteresis, per-body — see the
+    // 10 Hz pass below). HUD text plus the envelope speed step only — the
+    // camera never reacts.
+    if (
+      nearestSolid.envelope &&
+      nearestSolid.dist < nearestSolid.radius * ENVELOPE_RADII &&
+      !envelopeAnnounced.has(nearestSolid.id)
+    ) {
+      envelopeAnnounced.set(nearestSolid.id, nearestSolid.dist / nearestSolid.radius);
+      pingTimer = 4;
+      setHudText(hud.ping, `ATMOSPHERIC ENVELOPE · ${nearestSolid.name}`);
+    }
+
     if (pingTimer > 0) {
       pingTimer -= dt;
       hud.ping.style.opacity = String(Math.max(0, Math.min(1, pingTimer / 1.5)));
@@ -369,6 +443,14 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
     hudTimer -= dt;
     if (hudTimer <= 0) {
       hudTimer = 0.1;
+      // envelope re-arm: drop ids past their own re-arm band, then reset
+      // the rest to Infinity — the per-frame POI scan refreshes live ones,
+      // so a value still Infinity next pass means the POI was evicted with
+      // its sector and re-arms too. The map only ever holds nearby bodies.
+      for (const [id, ratio] of envelopeAnnounced) {
+        if (ratio > ENVELOPE_REARM_RADII) envelopeAnnounced.delete(id);
+        else envelopeAnnounced.set(id, Infinity);
+      }
       setHudText(hud.body, nearest.name);
       const surface = Math.max(0, nearest.dist);
       const approach = nearest.dist < approachRange(nearest.radius) ? ' · APPROACH' : '';
@@ -386,20 +468,28 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
       );
     }
 
-    // soft altitude floor: below 3% of the radius the ship is eased back out
-    // to a 1.03r skim — no bounce, no damage, no fail state
-    if (nearest.dist < nearest.radius * 0.03) {
-      scratch.copy(ship.position).sub(nearest.center);
+    // soft altitude floor: below 3% of a SOLID radius the ship is eased back
+    // out to a 1.03r skim — no bounce, no damage, no fail state. Diffuse
+    // volumes have no floor: formations are meant to be flown through.
+    if (nearestSolid.dist < nearestSolid.radius * 0.03) {
+      scratch.copy(ship.position).sub(nearestSolid.center);
       const len = scratch.length();
       if (len > 1e-6) {
-        scratch.multiplyScalar((nearest.radius * 1.03) / len).add(nearest.center);
+        scratch.multiplyScalar((nearestSolid.radius * 1.03) / len).add(nearestSolid.center);
         ship.position.lerp(scratch, Math.min(1, dt * 3));
       }
     }
 
-    // chase camera
+    // chase camera. The lerp trails the pose by ~speed/5 units, which reads
+    // as the ship pulling ahead under a burn — good — but unclamped it
+    // shrinks the ship to a speck at full boost, so cap the trail distance.
     const camTarget = scratch.set(0, 2.6, 9).applyQuaternion(ship.quaternion).add(ship.position);
     camera.position.lerp(camTarget, Math.min(1, dt * 5));
+    rebase.copy(camera.position).sub(camTarget); // scratch is camTarget — borrow rebase
+    const lag = rebase.length();
+    if (lag > CAMERA_MAX_LAG) {
+      camera.position.copy(camTarget).addScaledVector(rebase, CAMERA_MAX_LAG / lag);
+    }
     camera.quaternion.slerp(ship.quaternion, Math.min(1, dt * 6));
 
     // LOD after the camera settles: rung selection, dissolves, budgeted jobs
@@ -435,6 +525,7 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
       }
       ship.position.set(x - origin.x, y - origin.y, z - origin.z);
       velocity.set(0, 0, 0);
+      envelopeAnnounced.clear(); // a warp is not an approach — start re-armed
       if (lookX !== undefined && lookY !== undefined && lookZ !== undefined) {
         const dir = scratch.set(lookX - x, lookY - y, lookZ - z).normalize();
         attitude.pitch = Math.asin(Math.max(-1, Math.min(1, dir.y)));

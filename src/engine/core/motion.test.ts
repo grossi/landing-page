@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
+  DIFFUSE_DRAG_FLOOR,
+  diffuseDrag,
+  ENVELOPE_BAND_RADII,
+  ENVELOPE_CAP_RADII,
+  ENVELOPE_RADII,
+  envelopeCap,
   escapeRelief,
   RELIEF_FULL,
   RELIEF_START,
@@ -83,6 +89,65 @@ describe('directional speedLimit', () => {
       const limit = speedLimit(2000, a);
       expect(limit).toBeGreaterThanOrEqual(speedLimit(2000, 1));
       expect(limit).toBeLessThanOrEqual(SPEED_CEIL);
+    }
+  });
+});
+
+describe('envelopeCap', () => {
+  it('imposes no cap outside the envelope band', () => {
+    expect(envelopeCap(1000, 100)).toBe(SPEED_CEIL); // 10 radii out
+    expect(envelopeCap((ENVELOPE_RADII + ENVELOPE_BAND_RADII) * 100, 100)).toBe(SPEED_CEIL);
+    expect(envelopeCap(Infinity, 0)).toBe(SPEED_CEIL); // no solid body around
+  });
+
+  it('settles at the head-on law value ENVELOPE_CAP_RADII radii out', () => {
+    const r = 100;
+    const inside = envelopeCap(r, r); // well below the band
+    expect(inside).toBeCloseTo(ENVELOPE_CAP_RADII * r * SPEED_PER_SURFACE_DISTANCE, 10);
+    expect(envelopeCap(0, r)).toBeCloseTo(inside, 10);
+    expect(envelopeCap(-50, r)).toBeCloseTo(inside, 10); // mid soft-floor push-out
+  });
+
+  it('clamps to the law floor and ceiling so min(law, cap) never fights either', () => {
+    // tiny body: the inside value would undercut the skim floor — clamp up
+    expect(envelopeCap(0, 25)).toBe(SPEED_FLOOR);
+    // huge body: the inside value would exceed the open-space ceiling
+    expect(envelopeCap(0, 1e6)).toBe(SPEED_CEIL);
+  });
+
+  it('steps down continuously over the band around ENVELOPE_RADII', () => {
+    const r = 100;
+    let previous = envelopeCap((ENVELOPE_RADII + 0.3) * r, r);
+    for (let x = ENVELOPE_RADII + 0.3; x >= ENVELOPE_RADII - 0.3; x -= 0.01) {
+      const cap = envelopeCap(x * r, r);
+      expect(cap).toBeLessThanOrEqual(previous + 1e-9); // monotone on approach
+      expect(previous - cap).toBeLessThan(SPEED_CEIL * 0.05); // no snap
+      previous = cap;
+    }
+    expect(previous).toBeCloseTo(envelopeCap(0, r), 5);
+  });
+});
+
+describe('diffuseDrag', () => {
+  it('is 1 at and outside the volume boundary', () => {
+    expect(diffuseDrag(0, 1000)).toBe(1);
+    expect(diffuseDrag(500, 1000)).toBe(1);
+    expect(diffuseDrag(Infinity, 0)).toBe(1);
+  });
+
+  it('bottoms out at the floor at the volume centre', () => {
+    expect(diffuseDrag(-1000, 1000)).toBeCloseTo(DIFFUSE_DRAG_FLOOR, 10);
+    expect(diffuseDrag(-2000, 1000)).toBeCloseTo(DIFFUSE_DRAG_FLOOR, 10); // depth clamps
+  });
+
+  it('descends continuously with depth — entering never snaps or parks', () => {
+    let previous = 1;
+    for (let d = 0; d >= -1000; d -= 5) {
+      const drag = diffuseDrag(d, 1000);
+      expect(drag).toBeLessThanOrEqual(previous + 1e-12);
+      expect(previous - drag).toBeLessThan(0.02); // no steps
+      expect(drag).toBeGreaterThanOrEqual(DIFFUSE_DRAG_FLOOR);
+      previous = drag;
     }
   });
 });

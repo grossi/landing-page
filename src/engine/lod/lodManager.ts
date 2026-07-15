@@ -11,11 +11,14 @@
  *   rungs 1+ are LineSegments of displaced icospheres served by the LRU
  *   cache and budgeted job queue (engine/lod/geometry). Level 3+ never
  *   builds on the hot path — a body holds its rung until the job lands.
- * - An apparent-scale ramp renders far bodies compressed (0.45×), easing to
+ * - An apparent-scale ramp renders far bodies compressed (0.6×), easing to
  *   1× on approach, so planets visibly swell as you close in — the NMS
  *   approach feel with zero camera involvement (camera rules are sacred).
  * - Planets grow a billboarded wireframe "atmosphere" ring as an approach
  *   cue inside 4 radii of the surface.
+ * - Below `HAZE_RADII` of a body's surface its far limb fades out
+ *   (per-vertex colors, opt-in via `surfaceHaze`), so a skimmed planet
+ *   reads as extending beyond sight instead of ending at the silhouette.
  * - `setBeacons` drives a second shared dot layer for content that is not
  *   even built yet (peeked far sectors), so space reads far bigger than the
  *   streamed window.
@@ -47,8 +50,12 @@ import {
 /** Cross-dissolve duration for rung transitions, in seconds (< dwell 0.5s). */
 export const LOD_FADE_S = 0.35;
 
-/** Apparent-scale ramp: rendered scale of a body at 40+ radii of distance. */
-export const SCALE_RAMP_FLOOR = 0.45;
+/**
+ * Apparent-scale ramp: rendered scale of a body at 40+ radii of distance.
+ * Raised from the original 0.45 so distant planets keep more presence — the
+ * planet-scale design's own fallback tune (lod-detail.md).
+ */
+export const SCALE_RAMP_FLOOR = 0.6;
 /** Surface distance (in radii) at which a body renders at full scale. */
 export const SCALE_RAMP_NEAR = 4;
 /** Surface distance (in radii) beyond which a body renders at the floor. */
@@ -99,6 +106,41 @@ export function atmosphereOpacity(surfaceDistance: number, radius: number): numb
   const d = surfaceDistance / Math.max(radius, 1e-6);
   const t = Math.min(1, Math.max(0, (ATMOSPHERE_FAR - d) / (ATMOSPHERE_FAR - ATMOSPHERE_NEAR)));
   return ATMOSPHERE_MAX_OPACITY * smooth(t);
+}
+
+/** The far-limb haze engages below this surface distance (radii). */
+export const HAZE_RADII = 1.5;
+/** …and reaches full strength by this surface distance (radii). */
+export const HAZE_NEAR_RADII = 0.3;
+/** Vertex-to-camera cosine at/above which a vertex stays fully lit. */
+export const HAZE_LIT_COS = 0.2;
+/** …and at/below which the far limb is fully hazed out. */
+export const HAZE_DARK_COS = -0.5;
+
+/**
+ * Strength of the near-surface far-limb haze: 0 at and beyond `HAZE_RADII`
+ * of the surface (the per-vertex pass is skipped entirely — zero cost),
+ * smoothstepping to 1 by `HAZE_NEAR_RADII`. Continuous at the far edge, so
+ * the haze never pops on.
+ */
+export function hazeStrength(surfaceDistance: number, radius: number): number {
+  const d = surfaceDistance / Math.max(radius, 1e-6);
+  const t = Math.min(1, Math.max(0, (HAZE_RADII - d) / (HAZE_RADII - HAZE_NEAR_RADII)));
+  return smooth(t);
+}
+
+/**
+ * Per-vertex haze brightness: 1 for vertices facing the camera (cosine ≥
+ * `HAZE_LIT_COS` between the vertex direction and the body→camera
+ * direction), fading to `1 - strength` past `HAZE_DARK_COS` on the far
+ * limb. Written as vertex COLORS, which the renderer multiplies with the
+ * material color — on the black scene that reads as per-vertex alpha and
+ * COMPOSES with the cross-dissolve's animated material opacity instead of
+ * overwriting it.
+ */
+export function hazeVertexFade(cosToCamera: number, strength: number): number {
+  const t = Math.min(1, Math.max(0, (HAZE_LIT_COS - cosToCamera) / (HAZE_LIT_COS - HAZE_DARK_COS)));
+  return 1 - strength * smooth(t);
 }
 
 /**
@@ -178,6 +220,13 @@ export interface LodManagerOptions {
   cache?: GeometryCache;
   /** Inject a shared queue (the manager owns and clears one by default). */
   queue?: GeometryJobQueue;
+  /**
+   * Enable the near-surface far-limb haze (per-vertex fade below
+   * `HAZE_RADII` of a body's surface). Off by default: the Home DEEP FIELD
+   * registers LOD bodies through this manager too and must keep its exact
+   * look — only the flight experience opts in.
+   */
+  surfaceHaze?: boolean;
 }
 
 export interface LodManager {
@@ -202,6 +251,10 @@ export interface LodManager {
 interface Slot {
   mesh: THREE.LineSegments;
   material: THREE.LineBasicMaterial;
+  /** Icosphere level of this slot's geometry (keys the haze direction table). */
+  level: IcosphereLevel;
+  /** Whether the haze pass has written non-white vertex colors here. */
+  hazed: boolean;
   /** Cache key pinned while this slot displays it (the geometry is the cache's instance). */
   cacheKey: string;
 }
@@ -253,6 +306,7 @@ export function createLodManager(scene: THREE.Scene, opts: LodManagerOptions = {
   // the next rung change, violating the no-interrupted-fade invariant
   const fadeSeconds = Math.min(opts.fadeSeconds ?? LOD_FADE_S, LOD_MIN_DWELL_S);
   const jobBudgetMs = opts.jobBudgetMs ?? 3;
+  const surfaceHaze = opts.surfaceHaze ?? false;
   const ownsCache = opts.cache === undefined;
   const ownsQueue = opts.queue === undefined;
   const cache = opts.cache ?? new GeometryCache();
@@ -314,6 +368,7 @@ export function createLodManager(scene: THREE.Scene, opts: LodManagerOptions = {
   const cameraQuaternion = new THREE.Quaternion();
   const worldPosition = new THREE.Vector3();
   const scratchQuaternion = new THREE.Quaternion();
+  const hazeCameraDir = new THREE.Vector3();
 
   const parkDot = (index: number): void => {
     if (index < 0) return;
@@ -324,6 +379,11 @@ export function createLodManager(scene: THREE.Scene, opts: LodManagerOptions = {
 
   const releaseSlot = (body: BodyState, slot: Slot | null): void => {
     if (!slot) return;
+    // refill haze colors before the geometry returns to the LRU: rendered
+    // output must always be clean — a future slot for this rung (or any
+    // pooled material with vertexColors already on) starts white, never
+    // with another approach's stale fade baked in
+    clearHaze(slot);
     body.anchor.remove(slot.mesh);
     slot.material.dispose(); // geometry stays in the LRU cache
     cache.release(slot.cacheKey); // …and becomes evictable again
@@ -358,7 +418,7 @@ export function createLodManager(scene: THREE.Scene, opts: LodManagerOptions = {
       mesh.scale.setScalar(body.lastScale);
       body.anchor.add(mesh);
       cache.retain(cacheKey); // never evicted out from under the live mesh
-      body.current = { mesh, material, cacheKey };
+      body.current = { mesh, material, level: level as IcosphereLevel, hazed: false, cacheKey };
     } else {
       body.current = null; // rung 0: the shared dot carries the body
     }
@@ -434,6 +494,55 @@ export function createLodManager(scene: THREE.Scene, opts: LodManagerOptions = {
     // billboard in world space, compensating any anchor spin
     body.anchor.getWorldQuaternion(scratchQuaternion).invert();
     atmosphere.mesh.quaternion.copy(scratchQuaternion).multiply(cameraQuaternion);
+  };
+
+  // ---- near-surface far-limb haze (surfaceHaze consumers only) ----
+  // One brightness per vertex, in a color attribute the material multiplies
+  // with its (dissolve-animated) opacity — the two channels compose freely.
+  const clearHaze = (slot: Slot | null): void => {
+    if (!slot || !slot.hazed) return;
+    const colors = slot.mesh.geometry.getAttribute('color');
+    (colors.array as Float32Array).fill(1);
+    colors.needsUpdate = true;
+    slot.hazed = false;
+  };
+
+  const applyHaze = (slot: Slot | null, strength: number): void => {
+    if (!slot) return; // rung 0 — the dot has no limb to fade
+    if (strength <= 0.001) {
+      clearHaze(slot); // one white refill on exit, then zero-cost again
+      return;
+    }
+    const geometry = slot.mesh.geometry;
+    let colors = geometry.getAttribute('color') as THREE.BufferAttribute | undefined;
+    if (colors === undefined) {
+      const array = new Float32Array(geometry.getAttribute('position').count * 3).fill(1);
+      colors = new THREE.BufferAttribute(array, 3);
+      colors.setUsage(THREE.DynamicDrawUsage);
+      geometry.setAttribute('color', colors);
+    }
+    if (!slot.material.vertexColors) {
+      // program swap (three caches the variant); left ON once engaged —
+      // clearHaze writes white instead — so skimming along the haze
+      // boundary never thrashes program switches
+      slot.material.vertexColors = true;
+      slot.material.needsUpdate = true;
+    }
+    // vertex directions come from the level's shared unit table, so the
+    // fade ignores displacement noise and stays exact at every rung
+    const { dirs, vertexCount } = getIcosphereTables(slot.level);
+    const array = colors.array as Float32Array;
+    for (let i = 0; i < vertexCount; i++) {
+      const fade = hazeVertexFade(
+        dirs[i * 3] * hazeCameraDir.x + dirs[i * 3 + 1] * hazeCameraDir.y + dirs[i * 3 + 2] * hazeCameraDir.z,
+        strength,
+      );
+      array[i * 3] = fade;
+      array[i * 3 + 1] = fade;
+      array[i * 3 + 2] = fade;
+    }
+    colors.needsUpdate = true;
+    slot.hazed = true;
   };
 
   const unregisterState = (body: BodyState): void => {
@@ -586,6 +695,24 @@ export function createLodManager(scene: THREE.Scene, opts: LodManagerOptions = {
         }
 
         if (body.kind === 'planet') updateAtmosphere(body, surfaceDistance, scale);
+
+        // far-limb haze while skimming: fade the side of the wireframe
+        // facing away from the camera so the body extends beyond sight
+        if (surfaceHaze && (body.current !== null || body.previous !== null)) {
+          const strength = hazeStrength(surfaceDistance, body.radius);
+          if (strength > 0.001 || body.current?.hazed || body.previous?.hazed) {
+            // body→camera direction in the anchor's local frame (where the
+            // vertex directions live; uniform ancestor scales keep it valid)
+            body.anchor.getWorldQuaternion(scratchQuaternion).invert();
+            hazeCameraDir
+              .copy(cameraPosition)
+              .sub(worldPosition)
+              .applyQuaternion(scratchQuaternion)
+              .normalize();
+            applyHaze(body.current, strength);
+            applyHaze(body.previous, strength);
+          }
+        }
       }
       dotAttribute.needsUpdate = true;
 
