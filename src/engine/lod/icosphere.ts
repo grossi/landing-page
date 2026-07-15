@@ -3,8 +3,8 @@
  *
  * Built by midpoint subdivision from the base icosahedron. New vertices are
  * always appended AFTER the existing ones, so level k's vertices are exactly
- * indices 0..V(k)-1 of level k+1 (V = 12, 42, 162, 642, 2562, 10242). That
- * subset property is what keeps silhouettes aligned across LOD transitions:
+ * indices 0..V(k)-1 of level k+1 (V = 12, 42, 162, 642, 2562, 10242, 40962).
+ * That subset property is what keeps silhouettes aligned across LOD transitions:
  * a displacement field sampled at every level produces geometrically nested
  * surfaces — higher levels only add detail between existing vertices.
  *
@@ -17,10 +17,10 @@
  */
 
 /** Subdivision levels supported by the ladder (level 0 is the shared dot). */
-export type IcosphereLevel = 1 | 2 | 3 | 4 | 5;
+export type IcosphereLevel = 1 | 2 | 3 | 4 | 5 | 6;
 
 export interface IcosphereTables {
-  /** Subdivision level (1..5). */
+  /** Subdivision level (1..6). */
   level: number;
   /** 10 * 4^level + 2. */
   vertexCount: number;
@@ -68,7 +68,8 @@ function subdivide(mesh: MutableMesh): MutableMesh {
   const dirs = mesh.dirs.slice();
   const tris: number[] = [];
   // Midpoint cache keyed by the unordered vertex pair. Vertex indices stay
-  // below 10242 < 2^20, so min * 2^20 + max is collision-free.
+  // below 40962 < 2^20 (level 6's count), so min * 2^20 + max is
+  // collision-free — and comfortably exact: 40962 * 2^20 ≈ 4.3e10 < 2^53.
   const midCache = new Map<number, number>();
 
   const midpoint = (a: number, b: number): number => {

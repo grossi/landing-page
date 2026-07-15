@@ -4,6 +4,13 @@
  *
  * - Rung selection is screen-space (projected pixel radius) with hysteresis
  *   and a minimum dwell (engine/core/selectLod) — never raw distance.
+ * - Cold start: a body's FIRST placement jumps straight to the rung its
+ *   current px justifies (engine/core/selectLod's coldStartLevel), so a
+ *   sector streaming in with the ship close resolves dot → planet in one
+ *   dissolve instead of a dwell-gated multi-second climb. Every change
+ *   after placement is dwell-gated as usual. The Home DEEP FIELD inherits
+ *   the cold start intentionally (shared-engine rule): its planets load in
+ *   at their justified rung instead of dwell-climbing.
  * - Transitions cross-dissolve over LOD_FADE_S seconds: both wireframes
  *   render briefly, reading as the surface "resolving" — the on-brand
  *   anti-pop for a black-and-white wireframe scene.
@@ -19,6 +26,16 @@
  * - Below `HAZE_RADII` of a body's surface its far limb fades out
  *   (per-vertex colors, opt-in via `surfaceHaze`), so a skimmed planet
  *   reads as extending beyond sight instead of ending at the silhouette.
+ * - Planets grow two more skim-band shells (opt-in via `surfaceShells`):
+ *   a lat/long graticule at 1.0r — the wireframe stand-in for ground
+ *   texture density at skim altitude — and a sparse drifting cloud layer
+ *   at 1.1r, the "there is air here" parallax cue between ship and
+ *   surface. Both share one unit geometry across all bodies, gate to zero
+ *   cost outside their d/r bands (same pattern as the haze), and compose
+ *   with the atmosphere ring + haze. Their opacity also multiplies by the
+ *   body's live terrain presence, so they resolve WITH the rung wireframe
+ *   instead of popping in around the far-contact dot while a cold-start
+ *   build is still in flight.
  * - `setBeacons` drives a second shared dot layer for content that is not
  *   even built yet (peeked far sectors), so space reads far bigger than the
  *   streamed window.
@@ -30,7 +47,15 @@
  */
 
 import * as THREE from 'three';
-import { LOD_MIN_DWELL_S, projectedPixelRadius, selectLod } from 'engine/core/selectLod';
+import { mulberry32 } from 'engine/core/rng';
+import {
+  coldStartLevel,
+  LOD_DEMOTE_RATIO,
+  LOD_MIN_DWELL_S,
+  LOD_PROMOTE_PX,
+  projectedPixelRadius,
+  selectLod,
+} from 'engine/core/selectLod';
 import {
   ASTEROID_PROFILE,
   makeDisplacementField,
@@ -143,6 +168,55 @@ export function hazeVertexFade(cosToCamera: number, strength: number): number {
   return 1 - strength * smooth(t);
 }
 
+/** The graticule shell starts fading in below this surface distance (radii). */
+export const GRATICULE_FAR = 0.8;
+/** …reaches its peak opacity by this surface distance (radii)… */
+export const GRATICULE_FULL_FAR = 0.5;
+/** …starts fading back out below this surface distance (radii)… */
+export const GRATICULE_FULL_NEAR = 0.3;
+/** …and is fully gone by this surface distance (radii). */
+export const GRATICULE_NEAR = 0.15;
+/** Peak opacity of the graticule shell — a whisper, not a cage. */
+export const GRATICULE_MAX_OPACITY = 0.18;
+
+/**
+ * Opacity of the lat/long graticule shell: a band, zero at and beyond
+ * `GRATICULE_FAR` radii of the surface, peaking at `GRATICULE_MAX_OPACITY`
+ * through the skim window, and gone again by `GRATICULE_NEAR` (hugging the
+ * ground, the lines would read as bars across the view, not texture).
+ * Continuous at both ends — the shell never pops.
+ */
+export function graticuleOpacity(surfaceDistance: number, radius: number): number {
+  const d = surfaceDistance / Math.max(radius, 1e-6);
+  if (d >= GRATICULE_FAR || d <= GRATICULE_NEAR) return 0;
+  const fadeIn = Math.min(1, (GRATICULE_FAR - d) / (GRATICULE_FAR - GRATICULE_FULL_FAR));
+  const fadeOut = Math.min(1, (d - GRATICULE_NEAR) / (GRATICULE_FULL_NEAR - GRATICULE_NEAR));
+  return GRATICULE_MAX_OPACITY * smooth(Math.min(fadeIn, fadeOut));
+}
+
+/** Radius of the cloud shell relative to the body radius. */
+export const CLOUD_SHELL_RADII = 1.1;
+/** The cloud shell starts fading in below this surface distance (radii). */
+export const CLOUD_FAR = 2;
+/** …and reaches its peak opacity by this surface distance (radii). */
+export const CLOUD_NEAR = 0.5;
+/** Peak opacity of the cloud shell. */
+export const CLOUD_MAX_OPACITY = 0.2;
+/** Constant cloud drift around the body's local Y axis, in rad/s. */
+export const CLOUD_DRIFT_RAD_S = 0.012;
+
+/**
+ * Opacity of the drifting cloud shell: 0 at and beyond `CLOUD_FAR` radii of
+ * the surface, easing up to `CLOUD_MAX_OPACITY` by `CLOUD_NEAR`. It stays
+ * full below — skimming UNDER the 1.1r shell is exactly when the parallax
+ * between clouds and ground carries the "there is air here" cue.
+ */
+export function cloudOpacity(surfaceDistance: number, radius: number): number {
+  const d = surfaceDistance / Math.max(radius, 1e-6);
+  const t = Math.min(1, Math.max(0, (CLOUD_FAR - d) / (CLOUD_FAR - CLOUD_NEAR)));
+  return CLOUD_MAX_OPACITY * smooth(t);
+}
+
 /**
  * Effective ladder cap under governor load-shedding (`setLodBias`). The
  * floor is rung 1, not 0: demoting a nearby body all the way to the
@@ -163,7 +237,7 @@ const KIND_PRESET: Record<LodBodyKind, DisplacementPreset> = {
 };
 
 /** Ladder cap per archetype (stars stay smooth; asteroids are texture). */
-const KIND_MAX_LEVEL: Record<LodBodyKind, number> = { planet: 5, asteroid: 3, star: 4 };
+const KIND_MAX_LEVEL: Record<LodBodyKind, number> = { planet: 6, asteroid: 3, star: 4 };
 
 /** Default wireframe opacity per archetype (house opacities). */
 const KIND_OPACITY: Record<LodBodyKind, number> = { planet: 0.85, asteroid: 0.6, star: 0.9 };
@@ -203,7 +277,7 @@ export interface LodBeacon {
 
 /** Read-only view of a registered body, for callers and tests. */
 export interface LodBodyHandle {
-  /** Current committed rung (0..5). */
+  /** Current committed rung (0..6). */
   readonly level: number;
   /** Live rung meshes (0 at the dot rung, 2 during a cross-dissolve). */
   readonly liveSlotCount: number;
@@ -227,6 +301,14 @@ export interface LodManagerOptions {
    * look — only the flight experience opts in.
    */
   surfaceHaze?: boolean;
+  /**
+   * Enable the skim-band shells on planets: the lat/long graticule below
+   * `GRATICULE_FAR` radii and the drifting cloud layer below `CLOUD_FAR`
+   * radii. Off by default for the same reason as `surfaceHaze` — DEEP
+   * FIELD's drifting planets do pass through those bands, and its look
+   * must not change.
+   */
+  surfaceShells?: boolean;
 }
 
 export interface LodManager {
@@ -275,6 +357,8 @@ interface BodyState {
   preset: DisplacementPreset;
   field: RadialField;
   level: number;
+  /** First placement pending — the cold-start fast path owns selection. */
+  coldStart: boolean;
   dwell: number;
   fading: boolean;
   fadeT: number;
@@ -288,8 +372,16 @@ interface BodyState {
   /** Slot in the shared dot layer; -1 when the layer is full. */
   dotIndex: number;
   atmosphere: { mesh: THREE.Mesh; material: THREE.MeshBasicMaterial } | null;
+  graticule: ShellState | null;
+  clouds: ShellState | null;
   lastScale: number;
   disposed: boolean;
+}
+
+/** A skim-band shell: shared unit geometry, per-body material for opacity. */
+interface ShellState {
+  mesh: THREE.LineSegments;
+  material: THREE.LineBasicMaterial;
 }
 
 // Shared unit atmosphere ring (module scope, intentionally never disposed —
@@ -300,6 +392,80 @@ const getAtmosphereGeometry = (): THREE.TorusGeometry => {
   return atmosphereGeometry;
 };
 
+/** Meridians (pole-to-pole lines) of the shared graticule shell. */
+const GRATICULE_MERIDIANS = 12;
+/** Parallels (latitude rings) of the shared graticule shell. */
+const GRATICULE_PARALLELS = 8;
+/** Segments per full circle in the graticule shell. */
+const GRATICULE_CIRCLE_SEGMENTS = 48;
+
+// Shared unit-sphere lat/long graticule (scaled per body; module scope,
+// intentionally never disposed — same convention as the atmosphere ring).
+let graticuleGeometry: THREE.BufferGeometry | null = null;
+const getGraticuleGeometry = (): THREE.BufferGeometry => {
+  if (graticuleGeometry) return graticuleGeometry;
+  const points: number[] = [];
+  const push = (theta: number, phi: number): void => {
+    const s = Math.sin(theta);
+    points.push(s * Math.cos(phi), Math.cos(theta), s * Math.sin(phi));
+  };
+  // meridians: pole-to-pole semicircles at evenly spaced longitudes
+  const meridianSteps = GRATICULE_CIRCLE_SEGMENTS / 2;
+  for (let m = 0; m < GRATICULE_MERIDIANS; m++) {
+    const phi = (m / GRATICULE_MERIDIANS) * Math.PI * 2;
+    for (let s = 0; s < meridianSteps; s++) {
+      push((s / meridianSteps) * Math.PI, phi);
+      push(((s + 1) / meridianSteps) * Math.PI, phi);
+    }
+  }
+  // parallels: full latitude circles, poles excluded (meridians own them)
+  for (let p = 1; p <= GRATICULE_PARALLELS; p++) {
+    const theta = (p / (GRATICULE_PARALLELS + 1)) * Math.PI;
+    for (let s = 0; s < GRATICULE_CIRCLE_SEGMENTS; s++) {
+      push(theta, (s / GRATICULE_CIRCLE_SEGMENTS) * Math.PI * 2);
+      push(theta, (((s + 1) % GRATICULE_CIRCLE_SEGMENTS) / GRATICULE_CIRCLE_SEGMENTS) * Math.PI * 2);
+    }
+  }
+  graticuleGeometry = new THREE.BufferGeometry();
+  graticuleGeometry.setAttribute('position', new THREE.BufferAttribute(Float32Array.from(points), 3));
+  graticuleGeometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1);
+  return graticuleGeometry;
+};
+
+/** Broken latitude arcs of the shared cloud shell. */
+const CLOUD_ARCS = 20;
+/** Segments per cloud arc. */
+const CLOUD_ARC_SEGMENTS = 16;
+/** Fixed seed for the shared cloud arc layout (one geometry for all bodies). */
+const CLOUD_SEED = 0xc10d5;
+
+// Shared unit-radius cloud arcs (scaled to CLOUD_SHELL_RADII * r per body;
+// per-body drift phase keeps the shared pattern from reading as cloned).
+let cloudGeometry: THREE.BufferGeometry | null = null;
+const getCloudGeometry = (): THREE.BufferGeometry => {
+  if (cloudGeometry) return cloudGeometry;
+  const rand = mulberry32(CLOUD_SEED);
+  const points: number[] = [];
+  for (let a = 0; a < CLOUD_ARCS; a++) {
+    // temperate-band latitudes; sparse, broken arcs — not rings
+    const theta = Math.PI * (0.2 + rand() * 0.6);
+    const start = rand() * Math.PI * 2;
+    const span = 0.35 + rand() * 0.85;
+    const s = Math.sin(theta);
+    const y = Math.cos(theta);
+    for (let i = 0; i < CLOUD_ARC_SEGMENTS; i++) {
+      for (const step of [i, i + 1]) {
+        const phi = start + (step / CLOUD_ARC_SEGMENTS) * span;
+        points.push(s * Math.cos(phi), y, s * Math.sin(phi));
+      }
+    }
+  }
+  cloudGeometry = new THREE.BufferGeometry();
+  cloudGeometry.setAttribute('position', new THREE.BufferAttribute(Float32Array.from(points), 3));
+  cloudGeometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1);
+  return cloudGeometry;
+};
+
 /** Creates the LOD manager for one scene. Call `update` once per frame. */
 export function createLodManager(scene: THREE.Scene, opts: LodManagerOptions = {}): LodManager {
   // clamp: a fade longer than the selection dwell would be interrupted by
@@ -307,6 +473,7 @@ export function createLodManager(scene: THREE.Scene, opts: LodManagerOptions = {
   const fadeSeconds = Math.min(opts.fadeSeconds ?? LOD_FADE_S, LOD_MIN_DWELL_S);
   const jobBudgetMs = opts.jobBudgetMs ?? 3;
   const surfaceHaze = opts.surfaceHaze ?? false;
+  const surfaceShells = opts.surfaceShells ?? false;
   const ownsCache = opts.cache === undefined;
   const ownsQueue = opts.queue === undefined;
   const cache = opts.cache ?? new GeometryCache();
@@ -423,6 +590,7 @@ export function createLodManager(scene: THREE.Scene, opts: LodManagerOptions = {
       body.current = null; // rung 0: the shared dot carries the body
     }
     body.level = level;
+    body.coldStart = false; // any committed placement ends the cold start
     body.dwell = 0;
     body.fadeT = 0;
     body.fading = true;
@@ -496,6 +664,81 @@ export function createLodManager(scene: THREE.Scene, opts: LodManagerOptions = {
     atmosphere.mesh.quaternion.copy(scratchQuaternion).multiply(cameraQuaternion);
   };
 
+  // ---- skim-band shells (surfaceShells consumers only, planets only) ----
+  // Both follow the atmosphere/haze gating pattern: created lazily on first
+  // band entry, hidden (visible = false — zero draw cost) outside the band.
+  const makeShell = (body: BodyState, geometry: THREE.BufferGeometry): ShellState => {
+    const material = new THREE.LineBasicMaterial({
+      color: 0xffffff,
+      transparent: true,
+      opacity: 0,
+      depthWrite: false,
+    });
+    const mesh = new THREE.LineSegments(geometry, material);
+    body.anchor.add(mesh);
+    return { mesh, material };
+  };
+
+  const releaseShell = (body: BodyState, shell: ShellState | null): void => {
+    if (!shell) return;
+    body.anchor.remove(shell.mesh);
+    shell.material.dispose(); // the unit geometry is shared, never disposed
+  };
+
+  /**
+   * Terrain presence in [0, 1]: how much rung wireframe is actually lit.
+   * 0 while the body is still the far-contact dot (a cold-start build in
+   * flight), rising with the 0 → rung dissolve, and ~1 through any
+   * rung ↔ rung dissolve (the two slot opacities sum to baseOpacity).
+   * Shell opacities multiply by it so the "never pops" promise holds in
+   * TIME as well as distance — shells resolve with the terrain, never
+   * around a bare dot.
+   */
+  const terrainPresence = (body: BodyState): number => {
+    const lit =
+      (body.current?.material.opacity ?? 0) + (body.previous?.material.opacity ?? 0);
+    return Math.min(1, lit / body.baseOpacity);
+  };
+
+  const updateGraticule = (body: BodyState, surfaceDistance: number, scale: number, terrain: number): void => {
+    const opacity = graticuleOpacity(surfaceDistance, body.radius) * terrain;
+    if (opacity <= 0.001) {
+      if (body.graticule) body.graticule.mesh.visible = false;
+      return;
+    }
+    if (!body.graticule) body.graticule = makeShell(body, getGraticuleGeometry());
+    body.graticule.mesh.visible = true;
+    body.graticule.material.opacity = opacity;
+    // body-fixed (spins with the anchor), sitting right on the surface —
+    // the wireframe stand-in for ground-texture density at skim altitude
+    body.graticule.mesh.scale.setScalar(scale * body.radius);
+  };
+
+  const updateClouds = (
+    body: BodyState,
+    surfaceDistance: number,
+    scale: number,
+    terrain: number,
+    dt: number,
+  ): void => {
+    const opacity = cloudOpacity(surfaceDistance, body.radius) * terrain;
+    if (opacity <= 0.001) {
+      if (body.clouds) body.clouds.mesh.visible = false;
+      return;
+    }
+    if (!body.clouds) {
+      body.clouds = makeShell(body, getCloudGeometry());
+      // seed-keyed initial phase: the shared arc layout never reads cloned
+      body.clouds.mesh.rotation.y = (body.seed % 6283) / 1000;
+    }
+    const clouds = body.clouds;
+    clouds.mesh.visible = true;
+    clouds.material.opacity = opacity;
+    clouds.mesh.scale.setScalar(scale * body.radius * CLOUD_SHELL_RADII);
+    // slow constant drift against the ground — the skim parallax cue
+    clouds.mesh.rotation.y += CLOUD_DRIFT_RAD_S * dt;
+  };
+
   // ---- near-surface far-limb haze (surfaceHaze consumers only) ----
   // One brightness per vertex, in a color attribute the material multiplies
   // with its (dissolve-animated) opacity — the two channels compose freely.
@@ -558,6 +801,10 @@ export function createLodManager(scene: THREE.Scene, opts: LodManagerOptions = {
       body.atmosphere.material.dispose();
       body.atmosphere = null;
     }
+    releaseShell(body, body.graticule);
+    releaseShell(body, body.clouds);
+    body.graticule = null;
+    body.clouds = null;
     if (body.dotIndex >= 0) {
       parkDot(body.dotIndex);
       dotAttribute.needsUpdate = true;
@@ -584,6 +831,7 @@ export function createLodManager(scene: THREE.Scene, opts: LodManagerOptions = {
         preset: KIND_PRESET[kind],
         field: makeDisplacementField(registration.seed, KIND_PRESET[kind]),
         level: 0,
+        coldStart: true,
         dwell: 0,
         fading: false,
         fadeT: 0,
@@ -594,6 +842,8 @@ export function createLodManager(scene: THREE.Scene, opts: LodManagerOptions = {
         pendingKey: '',
         dotIndex: freeDotSlots.pop() ?? -1,
         atmosphere: null,
+        graticule: null,
+        clouds: null,
         lastScale: SCALE_RAMP_FLOOR,
         disposed: false,
       };
@@ -674,12 +924,42 @@ export function createLodManager(scene: THREE.Scene, opts: LodManagerOptions = {
         // rung selection (one step per frame; dwell ≥ fade keeps it pairwise)
         const px = projectedPixelRadius(body.radius * scale, centerDistance, fovYRad, viewportHeightPx);
         body.dwell += dt;
-        const desired = selectLod(body.level, px, body.dwell, biasedMaxLevel(body.maxLevel, lodBias));
-        if (desired !== body.level) {
-          if (body.pendingLevel === desired) queue.setPriority(body.pendingKey, px);
-          else requestLevel(body, desired, px);
-        } else if (body.pendingLevel >= 0) {
-          cancelPending(body); // the approach reversed before the job landed
+        const cap = biasedMaxLevel(body.maxLevel, lodBias);
+        if (body.coldStart) {
+          // cold-start fast path: the first placement jumps straight to the
+          // rung the current px justifies — a sector streaming in with the
+          // ship already close must not spend a dwell window per rung
+          // resolving dot → planet. The flag holds selection until the
+          // placement commits (beginFade clears it — sync builds instantly,
+          // async on landing) or none is needed; from then on every change
+          // is hysteresis + dwell gated as usual.
+          if (body.pendingLevel >= 0) {
+            // a placement build is in flight: hold it. Retargeting from raw
+            // coldStartLevel every frame would cancel and re-enqueue from
+            // vertex 0 whenever px flickers across a promote threshold (FOV
+            // pulse, apparent-scale ramp) — faster than a top-rung build
+            // finishes, so the placement would never commit. Only abandon
+            // the build when the governor cap dropped below it or px left
+            // its hysteresis band (the same demote point selectLod uses).
+            const demotePx = LOD_PROMOTE_PX[body.pendingLevel - 1] * LOD_DEMOTE_RATIO;
+            if (cap < body.pendingLevel || px < demotePx) {
+              requestLevel(body, coldStartLevel(px, cap), px);
+            } else {
+              queue.setPriority(body.pendingKey, px);
+            }
+          } else {
+            const target = coldStartLevel(px, cap);
+            if (target === body.level) body.coldStart = false; // nothing to jump to
+            else requestLevel(body, target, px);
+          }
+        } else {
+          const desired = selectLod(body.level, px, body.dwell, cap);
+          if (desired !== body.level) {
+            if (body.pendingLevel === desired) queue.setPriority(body.pendingKey, px);
+            else requestLevel(body, desired, px);
+          } else if (body.pendingLevel >= 0) {
+            cancelPending(body); // the approach reversed before the job landed
+          }
         }
 
         // rung-0 dot: lit at level 0, and through a fade leaving level 0
@@ -694,7 +974,14 @@ export function createLodManager(scene: THREE.Scene, opts: LodManagerOptions = {
           }
         }
 
-        if (body.kind === 'planet') updateAtmosphere(body, surfaceDistance, scale);
+        if (body.kind === 'planet') {
+          updateAtmosphere(body, surfaceDistance, scale);
+          if (surfaceShells) {
+            const terrain = terrainPresence(body);
+            updateGraticule(body, surfaceDistance, scale, terrain);
+            updateClouds(body, surfaceDistance, scale, terrain, dt);
+          }
+        }
 
         // far-limb haze while skimming: fade the side of the wireframe
         // facing away from the camera so the body extends beyond sight

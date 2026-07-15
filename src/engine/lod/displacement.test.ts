@@ -76,6 +76,7 @@ describe('makeDisplacementField', () => {
       lacunarity: 2,
       gain: 0.5,
       baseFrequency: 2,
+      baseBoost: 1,
       craterCount: 1,
       craterDepth: 1,
     };
@@ -103,6 +104,37 @@ describe('makeDisplacementField', () => {
   it('star profile is identically zero (perfect sphere)', () => {
     const field = makeDisplacementField(0x5747, STAR_PROFILE);
     for (const [x, y, z] of sampleDirs(100, 13)) expect(field(x, y, z)).toBe(0);
+  });
+
+  it('planet profile runs 6 octaves with a boosted base octave', () => {
+    // the boost redistributes energy toward continent scale; the amplitude
+    // contract (±0.06R total — the soft floor / peaks band depend on it)
+    // lives in `amplitude`, which the normalized field never exceeds
+    expect(PLANET_PROFILE.octaves).toBe(6);
+    expect(PLANET_PROFILE.baseBoost).toBeGreaterThan(1);
+    expect(PLANET_PROFILE.amplitude).toBe(0.06);
+  });
+
+  it('the base boost never grows the field beyond the [-1, 1] bound', () => {
+    const boosted: DisplacementProfile = { ...PLANET_PROFILE, baseBoost: 10 };
+    const field = makeDisplacementField(0xfacade, boosted);
+    for (const [x, y, z] of sampleDirs(2000, 17)) {
+      const v = field(x, y, z);
+      expect(v).toBeGreaterThanOrEqual(-1);
+      expect(v).toBeLessThanOrEqual(1);
+    }
+  });
+
+  it('boosting the base octave preserves determinism and changes only weighting', () => {
+    const a = makeDisplacementField(0xc0ffee, PLANET_PROFILE);
+    const b = makeDisplacementField(0xc0ffee, PLANET_PROFILE);
+    const flat = makeDisplacementField(0xc0ffee, { ...PLANET_PROFILE, baseBoost: 1 });
+    let differs = false;
+    for (const [x, y, z] of sampleDirs(100, 19)) {
+      expect(a(x, y, z)).toBe(b(x, y, z)); // 6-octave field stays bitwise-stable
+      if (a(x, y, z) !== flat(x, y, z)) differs = true;
+    }
+    expect(differs).toBe(true);
   });
 });
 

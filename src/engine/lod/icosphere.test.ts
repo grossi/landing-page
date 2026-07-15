@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { getIcosphereTables, type IcosphereLevel } from 'engine/lod/icosphere';
 
-const LEVELS: IcosphereLevel[] = [1, 2, 3, 4, 5];
+const LEVELS: IcosphereLevel[] = [1, 2, 3, 4, 5, 6];
 
 describe('getIcosphereTables', () => {
   it('produces 10 * 4^n + 2 vertices at every level', () => {
@@ -30,7 +30,7 @@ describe('getIcosphereTables', () => {
   });
 
   it('nests vertices: level k dirs are exactly the first V(k)*3 floats of level k+1', () => {
-    for (let k = 1; k < 5; k++) {
+    for (let k = 1; k < 6; k++) {
       const lo = getIcosphereTables(k as IcosphereLevel);
       const hi = getIcosphereTables((k + 1) as IcosphereLevel);
       expect(hi.dirs.subarray(0, lo.dirs.length)).toEqual(lo.dirs);

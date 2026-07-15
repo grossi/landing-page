@@ -24,6 +24,13 @@ export interface DisplacementProfile {
   gain: number;
   /** Lattice frequency of the first octave over the unit sphere. */
   baseFrequency: number;
+  /**
+   * Relative amplitude multiplier on the LOWEST octave only (1 = classic
+   * fBm). Raising it makes continent-scale lumps dominate the normalized
+   * sum, so silhouettes read at the 42/162-vert rungs — where only the
+   * lowest frequencies survive sampling.
+   */
+  baseBoost: number;
   /** Number of seeded impact craters. */
   craterCount: number;
   /** Depth of a crater bowl in field units (before the geometry amplitude). */
@@ -35,12 +42,19 @@ export interface DisplacementPreset extends DisplacementProfile {
   amplitude: number;
 }
 
-/** Rocky planet: rolling fBm terrain + a few craters, displaced ±6% R. */
+/**
+ * Rocky planet: continents + rolling fBm terrain + a few craters, displaced
+ * ±6% R total (the amplitude is a contract — the soft altitude floor and
+ * the peaks band are tuned against 1.06R). Six octaves so rung 6's 40k
+ * verts have real detail to resolve; the boosted base octave keeps the
+ * continent shapes legible all the way down to the level-1/2 silhouettes.
+ */
 export const PLANET_PROFILE: DisplacementPreset = {
-  octaves: 4,
+  octaves: 6,
   lacunarity: 2.1,
   gain: 0.5,
   baseFrequency: 2.0,
+  baseBoost: 2.0,
   craterCount: 6,
   craterDepth: 0.4,
   amplitude: 0.06,
@@ -52,6 +66,7 @@ export const ASTEROID_PROFILE: DisplacementPreset = {
   lacunarity: 2.1,
   gain: 0.55,
   baseFrequency: 2.0,
+  baseBoost: 1,
   craterCount: 3,
   craterDepth: 0.7,
   amplitude: 0.14,
@@ -63,6 +78,7 @@ export const STAR_PROFILE: DisplacementPreset = {
   lacunarity: 2.0,
   gain: 0.5,
   baseFrequency: 2.0,
+  baseBoost: 1,
   craterCount: 0,
   craterDepth: 0,
   amplitude: 0,
@@ -151,15 +167,20 @@ export function makeDisplacementField(
   seed: number,
   profile: DisplacementProfile,
 ): (x: number, y: number, z: number) => number {
-  const { octaves, lacunarity, gain, baseFrequency, craterDepth } = profile;
+  const { octaves, lacunarity, gain, baseFrequency, baseBoost, craterDepth } = profile;
 
-  // Per-octave seeds, precomputed. Golden-ratio stride decorrelates octaves.
+  // Per-octave seeds and amplitudes, precomputed. Golden-ratio stride
+  // decorrelates octaves; the base boost weights octave 0 only. The sum is
+  // normalized by `norm`, so boosting redistributes energy toward the
+  // continent scale without ever growing the total amplitude.
   const octaveSeeds: number[] = [];
+  const octaveAmps: number[] = [];
   let norm = 0;
   let amp = 1;
   for (let o = 0; o < octaves; o++) {
     octaveSeeds.push((seed ^ Math.imul(o + 1, 0x9e3779b9)) >>> 0);
-    norm += amp;
+    octaveAmps.push(o === 0 ? amp * baseBoost : amp);
+    norm += octaveAmps[o];
     amp *= gain;
   }
 
@@ -170,12 +191,10 @@ export function makeDisplacementField(
 
     if (norm > 0) {
       let f = baseFrequency;
-      let a = 1;
       let sum = 0;
       for (let o = 0; o < octaves; o++) {
-        sum += a * valueNoise(x * f, y * f, z * f, octaveSeeds[o]);
+        sum += octaveAmps[o] * valueNoise(x * f, y * f, z * f, octaveSeeds[o]);
         f *= lacunarity;
-        a *= gain;
       }
       value = sum / norm;
     }

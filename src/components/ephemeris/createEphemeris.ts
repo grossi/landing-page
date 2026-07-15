@@ -51,8 +51,8 @@ const BEACON_RANGE = 4;
  * Open-space cruise speed. Deliberately slow — cruise is for drifting and
  * looking around; covering distance is what the boost burn is for.
  */
-const CRUISE_SPEED = 250;
-const BOOST_FACTOR = 16;
+const CRUISE_SPEED = 100;
+const BOOST_FACTOR = 40;
 /** Camera FOV at cruise / under boost (the DEEP FIELD throttle-widen cue). */
 const CRUISE_FOV = 64;
 const BOOST_FOV = 71;
@@ -117,8 +117,9 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
   const worldSeed = Math.floor(Math.random() * 2 ** 31);
 
   // ---- LOD ladder for planets/stars (screen-space rungs, cross-dissolve) ----
-  // surfaceHaze: skimming a body fades its far limb (Ephemeris-only cue)
-  const lod = createLodManager(scene, { jobBudgetMs: 3, surfaceHaze: true });
+  // surfaceHaze: skimming a body fades its far limb; surfaceShells: skim-band
+  // graticule + drifting clouds on planets (both Ephemeris-only cues)
+  const lod = createLodManager(scene, { jobBudgetMs: 3, surfaceHaze: true, surfaceShells: true });
 
   // ---- the home system (permanent, at absolute (0,0,0)) ----
   const home = buildHomeSystem(mulberry32(worldSeed ^ 0x5eed));
