@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  coldStartLevel,
   LOD_DEMOTE_RATIO,
   LOD_MAX_LEVEL,
   LOD_MIN_DWELL_S,
@@ -85,6 +86,7 @@ describe('selectLod', () => {
       [2, 3],
       [3, 4],
       [4, 5],
+      [5, 6],
     ]);
   });
 
@@ -120,5 +122,32 @@ describe('selectLod', () => {
     }
     expect(transitions).toBe(1);
     expect(level).toBe(2);
+  });
+});
+
+describe('coldStartLevel', () => {
+  it('lands at the max rung when px is enormous', () => {
+    expect(coldStartLevel(1e6)).toBe(LOD_MAX_LEVEL);
+  });
+
+  it('picks exactly the rung the promote thresholds justify', () => {
+    expect(coldStartLevel(LOD_PROMOTE_PX[0] - 0.01)).toBe(0);
+    expect(coldStartLevel(LOD_PROMOTE_PX[0])).toBe(1);
+    expect(coldStartLevel(LOD_PROMOTE_PX[3])).toBe(4);
+    expect(coldStartLevel(LOD_PROMOTE_PX[5] - 0.01)).toBe(5);
+    expect(coldStartLevel(LOD_PROMOTE_PX[5])).toBe(6);
+  });
+
+  it('respects the (possibly governor-biased) maxLevel cap', () => {
+    expect(coldStartLevel(1e6, 3)).toBe(3);
+    expect(coldStartLevel(1e6, 0)).toBe(0);
+    expect(coldStartLevel(1e6, 99)).toBe(LOD_MAX_LEVEL);
+  });
+
+  it('only the placement is dwell-free — later changes stay dwell-gated', () => {
+    const placed = coldStartLevel(1e6);
+    // an immediate px collapse must NOT demote before the dwell elapses
+    expect(selectLod(placed, 0, LOD_MIN_DWELL_S - 0.01)).toBe(placed);
+    expect(selectLod(placed, 0, LOD_MIN_DWELL_S)).toBe(placed - 1);
   });
 });

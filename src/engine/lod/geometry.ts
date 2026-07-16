@@ -30,18 +30,42 @@ export type RadialField = (x: number, y: number, z: number) => number;
 export const lodGeometryKey = (seed: number, kind: string, radius: number, level: number): string =>
   `${seed}:${kind}:${radius}:${level}`;
 
-/** Vertices displaced per job slice (sub5 = 10242 verts → 6 slices). */
-export const SLICE_VERTS = 2048;
+/**
+ * Vertices displaced per job slice (sub6 = 40962 verts → 41 slices).
+ * Sized so ONE slice fits the 3 ms budget even on slow phones: the 6-octave
+ * planet field runs a 2048-vert slice in ~1.66 ms on desktop (~5-8 ms on
+ * slow phones — a guaranteed overrun, since runBudgeted cannot split a
+ * step), so slices are 1024. A full level-6 build measures ~35 ms of field
+ * work — ~11 frames at 60 fps desktop, spread hitch-free by the queue.
+ */
+export const SLICE_VERTS = 1024;
 
 /** Default per-frame job budget in milliseconds. */
 export const JOB_BUDGET_MS = 3;
 
 /**
- * Default LRU capacity (sub5 positions ≈ 123 KB ⇒ < 3 MB worst case).
- * A soft cap: pinned (in-use) entries never evict, so the cache may run
- * over while more bodies than this are displayed at rung 1+.
+ * Default LRU byte budget. Entries vary 60x in size (sub2 ≈ 17 KB up to a
+ * hazed sub6 ≈ 1.9 MB: positions ≈ 480 KB + edge index ≈ 960 KB + a color
+ * attribute matching positions when a skim engaged the haze), so the cache
+ * is budgeted in bytes, not entries — ~12 MB holds ~8 top-rung planets or
+ * dozens of mid rungs. A soft cap: pinned (in-use) entries never evict, so
+ * the cache may run over while more geometry than this is displayed.
  */
-export const GEOMETRY_CACHE_MAX = 24;
+export const GEOMETRY_CACHE_BYTES = 12 * 1024 * 1024;
+
+/**
+ * GPU byte estimate of one cached geometry: every vertex attribute plus the
+ * index. The edge index's CPU backing array is shared per level, but each
+ * geometry wraps it in its own BufferAttribute — its own GL buffer — so it
+ * counts per entry.
+ */
+export function geometryByteSize(geometry: THREE.BufferGeometry): number {
+  let bytes = geometry.getIndex()?.array.byteLength ?? 0;
+  for (const name of Object.keys(geometry.attributes)) {
+    bytes += (geometry.attributes[name] as THREE.BufferAttribute).array.byteLength;
+  }
+  return bytes;
+}
 
 /**
  * Displace a range of icosphere vertices:
@@ -121,33 +145,47 @@ export function buildLodGeometrySync(
 }
 
 /**
- * LRU cache of finished rung geometries keyed by `lodGeometryKey`.
- * Eviction disposes the BufferGeometry (frees the GPU buffers; the shared
- * edge-index backing array survives, three re-uploads it on next use).
+ * LRU cache of finished rung geometries keyed by `lodGeometryKey`, budgeted
+ * in BYTES (see `GEOMETRY_CACHE_BYTES`). Eviction disposes the
+ * BufferGeometry (frees the GPU buffers; the shared edge-index backing
+ * array survives, three re-uploads it on next use).
  *
  * Every displayed geometry is also a cache entry (the manager always shows
  * the cached instance), so consumers must `retain` a key while a mesh uses
  * it and `release` it after — pinned entries are skipped by eviction, else
- * the LRU would dispose buffers out from under a live mesh.
+ * the LRU would dispose buffers out from under a live mesh. A pinned entry
+ * may GROW while displayed (the skim haze adds a color attribute); its byte
+ * account is refreshed on the release that makes it evictable again.
  */
 export class GeometryCache {
-  private readonly maxEntries: number;
+  private readonly maxBytes: number;
 
   // Map iteration order is insertion order; re-inserting on get() makes the
   // first key the least recently used.
   private readonly entries = new Map<string, THREE.BufferGeometry>();
+
+  // byte size per entry, tallied into totalBytes (recomputed on release —
+  // attributes can be added while an entry is pinned to a live mesh)
+  private readonly sizes = new Map<string, number>();
+
+  private totalBytes = 0;
 
   // in-use refcounts; a present key means "never evict"
   private readonly pins = new Map<string, number>();
 
   private disposed = false;
 
-  constructor(maxEntries: number = GEOMETRY_CACHE_MAX) {
-    this.maxEntries = Math.max(1, maxEntries);
+  constructor(maxBytes: number = GEOMETRY_CACHE_BYTES) {
+    this.maxBytes = Math.max(1, maxBytes);
   }
 
   get size(): number {
     return this.entries.size;
+  }
+
+  /** Current byte account of every cached geometry (stats overlay, tests). */
+  get bytes(): number {
+    return this.totalBytes;
   }
 
   has(key: string): boolean {
@@ -178,6 +216,7 @@ export class GeometryCache {
       return;
     }
     this.pins.delete(key);
+    this.reaccount(key); // the haze may have grown the entry while pinned
     this.evictOverflow(); // pinned overflow may be waiting to shrink back
   }
 
@@ -194,18 +233,33 @@ export class GeometryCache {
     // implies get() served it, so a same-key rebuild cannot actually occur)
     if (existing !== undefined && existing !== geometry && !this.pins.has(key)) existing.dispose();
     this.entries.delete(key);
+    this.totalBytes -= this.sizes.get(key) ?? 0;
     this.entries.set(key, geometry);
+    const size = geometryByteSize(geometry);
+    this.sizes.set(key, size);
+    this.totalBytes += size;
     this.evictOverflow(key);
   }
 
+  /** Refresh one entry's byte account after its attributes changed. */
+  private reaccount(key: string): void {
+    const geometry = this.entries.get(key);
+    if (geometry === undefined) return;
+    const size = geometryByteSize(geometry);
+    this.totalBytes += size - (this.sizes.get(key) ?? 0);
+    this.sizes.set(key, size);
+  }
+
   private evictOverflow(protectedKey?: string): void {
-    if (this.entries.size <= this.maxEntries) return;
+    if (this.totalBytes <= this.maxBytes) return;
     for (const [key, geometry] of this.entries) {
       if (this.pins.has(key)) continue; // in use — soft cap overflows instead
       if (key === protectedKey) continue; // never evict the entry set() just added
       this.entries.delete(key);
+      this.totalBytes -= this.sizes.get(key) ?? 0;
+      this.sizes.delete(key);
       geometry.dispose();
-      if (this.entries.size <= this.maxEntries) return;
+      if (this.totalBytes <= this.maxBytes) return;
     }
   }
 
@@ -214,6 +268,8 @@ export class GeometryCache {
     this.disposed = true;
     for (const geometry of this.entries.values()) geometry.dispose();
     this.entries.clear();
+    this.sizes.clear();
+    this.totalBytes = 0;
     this.pins.clear();
   }
 }

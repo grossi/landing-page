@@ -3,8 +3,9 @@ import { makeDisplacementField, PLANET_PROFILE } from 'engine/lod/displacement';
 import {
   buildDisplacedPositions,
   buildLodGeometrySync,
-  GEOMETRY_CACHE_MAX,
+  GEOMETRY_CACHE_BYTES,
   GeometryCache,
+  geometryByteSize,
   GeometryJobQueue,
   lodGeometryKey,
   makeLodGeometry,
@@ -21,8 +22,12 @@ const oneStepClock = () => {
   return () => t++;
 };
 
-/** Tiny placeholder geometry for cache tests. */
-const stubGeometry = () => new THREE.BufferGeometry();
+/** Placeholder geometry holding exactly `bytes` of position data. */
+const stubGeometry = (bytes = 1024) => {
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(bytes / 4), 1));
+  return geometry;
+};
 
 describe('buildDisplacedPositions', () => {
   it('is deterministic for the same tables/field/radius/amplitude', () => {
@@ -94,6 +99,40 @@ describe('lodGeometryKey', () => {
   });
 });
 
+describe('geometryByteSize', () => {
+  it('counts positions + index (+ a color attribute when present)', () => {
+    const tables = getIcosphereTables(3);
+    const geometry = buildLodGeometrySync(tables, field, 20, 0.06);
+    const positionBytes = tables.vertexCount * 3 * 4;
+    const indexBytes = tables.edgeIndex.length * 4;
+    expect(geometryByteSize(geometry)).toBe(positionBytes + indexBytes);
+
+    // the skim haze adds a color attribute — the account must grow with it
+    geometry.setAttribute(
+      'color',
+      new THREE.BufferAttribute(new Float32Array(tables.vertexCount * 3), 3),
+    );
+    expect(geometryByteSize(geometry)).toBe(positionBytes * 2 + indexBytes);
+    geometry.dispose();
+  });
+
+  it('a level-6 rung is ~1.4 MB: positions ≈ 480 KB + edge index ≈ 960 KB', () => {
+    const tables = getIcosphereTables(6);
+    expect(tables.vertexCount * 3 * 4).toBe(491_544);
+    expect(tables.edgeIndex.length * 4).toBe(983_040);
+    const geometry = makeLodGeometry(
+      new Float32Array(tables.vertexCount * 3),
+      tables.edgeIndex,
+      20,
+      0.06,
+    );
+    expect(geometryByteSize(geometry)).toBe(491_544 + 983_040);
+    // the default budget holds ~8 of them
+    expect(Math.floor(GEOMETRY_CACHE_BYTES / geometryByteSize(geometry))).toBe(8);
+    geometry.dispose();
+  });
+});
+
 describe('GeometryCache', () => {
   it('returns the same geometry instance on hit', () => {
     const cache = new GeometryCache();
@@ -110,24 +149,40 @@ describe('GeometryCache', () => {
     expect(cache.has('nope')).toBe(false);
   });
 
-  it(`evicts and disposes the LRU entry when entry ${GEOMETRY_CACHE_MAX + 1} lands`, () => {
-    const cache = new GeometryCache();
+  it('evicts and disposes the LRU entry when an insert overflows the byte budget', () => {
+    const cache = new GeometryCache(3 * 1024); // exactly three 1 KB entries
     const first = stubGeometry();
     const disposeSpy = vi.spyOn(first, 'dispose');
     cache.set('seed0:5', first);
-    for (let i = 1; i < GEOMETRY_CACHE_MAX; i++) cache.set(`seed${i}:5`, stubGeometry());
-    expect(cache.size).toBe(GEOMETRY_CACHE_MAX);
+    cache.set('seed1:5', stubGeometry());
+    cache.set('seed2:5', stubGeometry());
+    expect(cache.size).toBe(3);
+    expect(cache.bytes).toBe(3 * 1024);
     expect(disposeSpy).not.toHaveBeenCalled();
 
     cache.set('overflow:5', stubGeometry());
-    expect(cache.size).toBe(GEOMETRY_CACHE_MAX);
+    expect(cache.size).toBe(3);
+    expect(cache.bytes).toBe(3 * 1024);
     expect(disposeSpy).toHaveBeenCalledTimes(1);
     expect(cache.has('seed0:5')).toBe(false);
     cache.dispose();
   });
 
+  it('evicts as many entries as the incoming bytes demand', () => {
+    const cache = new GeometryCache(4 * 1024);
+    cache.set('a', stubGeometry());
+    cache.set('b', stubGeometry());
+    cache.set('c', stubGeometry());
+    cache.set('big', stubGeometry(3 * 1024)); // needs two evictions, not one
+    expect(cache.has('a')).toBe(false);
+    expect(cache.has('b')).toBe(false);
+    expect(cache.has('c')).toBe(true);
+    expect(cache.bytes).toBe(4 * 1024);
+    cache.dispose();
+  });
+
   it('a get() refreshes recency, so the untouched entry is evicted instead', () => {
-    const cache = new GeometryCache(2);
+    const cache = new GeometryCache(2 * 1024);
     const a = stubGeometry();
     const b = stubGeometry();
     const disposeB = vi.spyOn(b, 'dispose');
@@ -149,10 +204,11 @@ describe('GeometryCache', () => {
     cache.dispose();
     expect(spy).toHaveBeenCalledTimes(1);
     expect(cache.size).toBe(0);
+    expect(cache.bytes).toBe(0);
   });
 
   it('a retained entry survives eviction pressure; the next unpinned entry goes instead', () => {
-    const cache = new GeometryCache(2);
+    const cache = new GeometryCache(2 * 1024);
     const pinned = stubGeometry();
     const disposePinned = vi.spyOn(pinned, 'dispose');
     const b = stubGeometry();
@@ -168,19 +224,32 @@ describe('GeometryCache', () => {
   });
 
   it('overflow held by pins shrinks back once the last retain is released', () => {
-    const cache = new GeometryCache(1);
+    const cache = new GeometryCache(1024);
     const a = stubGeometry();
     const disposeA = vi.spyOn(a, 'dispose');
     cache.set('a', a);
     cache.retain('a');
     cache.retain('a'); // two holders
-    cache.set('b', stubGeometry()); // over cap; only 'a' is evictable-but-pinned
+    cache.set('b', stubGeometry()); // over budget; only 'a' is evictable-but-pinned
     expect(cache.size).toBe(2);
     cache.release('a');
     expect(disposeA).not.toHaveBeenCalled(); // still one holder
     cache.release('a');
     expect(disposeA).toHaveBeenCalledTimes(1); // last release trims the overflow
     expect(cache.size).toBe(1);
+    expect(cache.bytes).toBe(1024);
+    cache.dispose();
+  });
+
+  it('re-accounts an entry that grew while pinned (haze color attribute)', () => {
+    const cache = new GeometryCache(64 * 1024);
+    const a = stubGeometry(1024);
+    cache.set('a', a);
+    cache.retain('a');
+    a.setAttribute('color', new THREE.BufferAttribute(new Float32Array(512), 1)); // +2 KB
+    expect(cache.bytes).toBe(1024); // stale while pinned — nothing to evict anyway
+    cache.release('a');
+    expect(cache.bytes).toBe(1024 + 2048); // refreshed by the release
     cache.dispose();
   });
 

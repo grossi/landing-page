@@ -2,8 +2,8 @@
  * Pure LOD tier selection by projected screen-space pixel radius, with
  * hysteresis and a minimum dwell time so tiers never flicker or thrash.
  *
- * The ladder has 6 rungs (0..5): far dot/point → ico-sub1 wireframe →
- * displaced sub2/3/4 → near-surface detail. Rung geometry lives elsewhere;
+ * The ladder has 7 rungs (0..6): far dot/point → ico-sub1 wireframe →
+ * displaced sub2/3/4/5 → near-surface detail. Rung geometry lives elsewhere;
  * this module only decides which rung a body should be on.
  *
  * Screen-space size is the one metric that captures both distance and body
@@ -12,13 +12,14 @@
  */
 
 /** Highest LOD rung (near-surface detail shell). */
-export const LOD_MAX_LEVEL = 5;
+export const LOD_MAX_LEVEL = 6;
 
 /**
  * Promote from level i to i+1 when the projected radius reaches
- * LOD_PROMOTE_PX[i] pixels.
+ * LOD_PROMOTE_PX[i] pixels. The 700px top rung only engages when a body
+ * fills most of the viewport — skim altitude.
  */
-export const LOD_PROMOTE_PX: readonly number[] = [3, 20, 70, 180, 420];
+export const LOD_PROMOTE_PX: readonly number[] = [3, 20, 70, 180, 420, 700];
 
 /** Demote below promoteThreshold * this ratio — the hysteresis band. */
 export const LOD_DEMOTE_RATIO = 0.75;
@@ -63,4 +64,22 @@ export function selectLod(
   if (current < cap && px >= LOD_PROMOTE_PX[current]) return current + 1;
   if (current > 0 && px < LOD_PROMOTE_PX[current - 1] * LOD_DEMOTE_RATIO) return current - 1;
   return current;
+}
+
+/**
+ * Rung a COLD START lands on: the level a body's very first placement
+ * should jump to when its projected px already justifies it. A sector
+ * streaming in with the ship close must not spend LOD_MIN_DWELL_S per rung
+ * resolving dot → planet (a visible multi-second climb); the initial
+ * placement applies the promote thresholds directly — no hysteresis, no
+ * dwell. Every change AFTER placement goes through `selectLod` as usual.
+ *
+ * @param px        projected pixel radius (see projectedPixelRadius)
+ * @param maxLevel  cap for this body (archetype cap minus governor lodBias)
+ */
+export function coldStartLevel(px: number, maxLevel: number = LOD_MAX_LEVEL): number {
+  const cap = Math.min(Math.max(maxLevel, 0), LOD_MAX_LEVEL);
+  let level = 0;
+  while (level < cap && px >= LOD_PROMOTE_PX[level]) level++;
+  return level;
 }

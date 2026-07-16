@@ -1,7 +1,13 @@
 import * as THREE from 'three';
 import { hashCoords, mulberry32 } from 'engine/core/rng';
 import { diffSectors, parseSectorKey, sectorCenter } from 'engine/core/sectorGrid';
-import { buildSectorContent, type Poi, type SectorContent } from 'engine/world/sectorContent';
+import {
+  buildSectorContent,
+  UNIT_SCALE,
+  type Poi,
+  type SectorContent,
+  type WorldScale,
+} from 'engine/world/sectorContent';
 
 export interface SectorFieldOptions {
   /** Seed for the whole universe; every sector derives its PRNG from it. */
@@ -28,6 +34,13 @@ export interface SectorFieldOptions {
   onContentAdded?: (content: SectorContent) => void;
   /** Called just before a sector's content is removed and disposed. */
   onContentRemoved?: (content: SectorContent) => void;
+  /**
+   * Archetype size multipliers forwarded to `buildSectorContent` (default
+   * ×1 — the pre-scale world). Content identity and draw order are
+   * scale-independent, so consumers may differ (EPHEMERIS passes
+   * TRUE_SCALE) without breaking beacon parity or POI ids.
+   */
+  contentScale?: WorldScale;
   /**
    * Fade a freshly built sector's content in from black over this many
    * seconds instead of popping it in (0/omitted = instant). The sector's
@@ -100,6 +113,7 @@ export function createSectorField(scene: THREE.Scene, opts: SectorFieldOptions):
   const buildBudget = opts.buildBudgetPerFrame ?? 2;
   const reserved = opts.reserved ?? (() => false);
   const revealSeconds = opts.revealSeconds ?? 0;
+  const contentScale = opts.contentScale ?? UNIT_SCALE;
 
   // Render origin in absolute coordinates; grows by exact sector multiples
   // as the consumer rebases (floating origin). Built groups are positioned
@@ -174,6 +188,7 @@ export function createSectorField(scene: THREE.Scene, opts: SectorFieldOptions):
       rand,
       sectorSize,
       new THREE.Vector3(c.x - origin.x, c.y - origin.y, c.z - origin.z),
+      contentScale,
     );
     content.pois.forEach((poi, i) => { poi.id = `${key}:${i}`; });
     if (revealSeconds > 0) startReveal(content);
