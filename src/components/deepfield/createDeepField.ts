@@ -1,4 +1,11 @@
 import * as THREE from 'three';
+import {
+  attitudeFromDirection,
+  attitudeQuaternion,
+  CHASE_OFFSET,
+  chaseTarget,
+  PITCH_CLAMP,
+} from 'engine/core/flight';
 import { createLodManager } from 'engine/lod/lodManager';
 import { DODEC, ICO_MID, OCT, RING_THIN, wireMat } from 'engine/render/assets';
 import { createDustField } from 'engine/render/dust';
@@ -67,12 +74,33 @@ const GIANT_LAT_FADE_FAR = GIANT_SPREAD * 1.8;
 const GIANT_PARALLAX = 0.06;
 const GIANT_COUNT = 3;
 
+// ---- transition choreography ----
+/**
+ * Ship path through the engage blend, in the ship's own frame relative to
+ * the camera: it enters low and behind the near plane, passes under the
+ * view and docks at the exact inverse of the chase offset — so at full
+ * blend the chase equation closes on the camera with zero pop.
+ */
+const SHIP_ENTRY = new THREE.Vector3(0, -2.6, 18);
+const SHIP_DOCK = CHASE_OFFSET.clone().negate();
+/** The ship docks at this fraction of the blend, before the camera settles. */
+const DOCK_FRACTION = 0.85;
+/**
+ * While the ship frame is live (blend > 0) the heading's pitch is eased
+ * inside the play clamp: the roll-free YXZ attitude degenerates at the
+ * poles — yaw sweeps ~π as the heading crosses vertical, a barrel-roll the
+ * title rig's transported up absorbs but the chase pose would copy.
+ */
+const MAX_HEADING_Y = Math.sin(PITCH_CLAMP);
+
 export type DeepFieldMode = 'title' | 'engage' | 'play' | 'disengage';
 
 export interface DeepFieldHandle {
   dispose(): void;
   play(): void;
   exit(): void;
+  /** Dev-only state probe for browser-driven verification (removed in P5). */
+  debug(): { mode: DeepFieldMode; target: number; blend: number };
 }
 
 /**
@@ -258,6 +286,7 @@ export function createDeepField(
   const ENGAGE_S = 2.6;
   const DISENGAGE_S = 2.0;
   const easeInOutCubic = (x: number) => (x < 0.5 ? 4 * x ** 3 : 1 - (-2 * x + 2) ** 3 / 2);
+  const easeOutCubic = (x: number) => 1 - (1 - x) ** 3;
   let target = 0;
   let blend = 0;
   let s = 0;
@@ -273,9 +302,27 @@ export function createDeepField(
   const exit = () => {
     if (target === 0) return;
     target = 0;
+    // from settled play the rig has no weight, so the title roll restarts
+    // level (matching the roll-free ship frame); mid-blend the rig is still
+    // visible and its live roll must stay continuous
+    if (blend === 1) roll = 0;
+    // hand the ship's forward back to the drift law (a no-op while the ship
+    // follows the heading; load-bearing once play mode steers the ship)
+    if (blend > 0) heading.copy(FORWARD).applyQuaternion(ship.quaternion);
     onMode?.('disengage');
     if (blend === 0) onMode?.('title');
   };
+  const debug = () => ({
+    mode: (target === 1
+      ? blend === 1
+        ? 'play'
+        : 'engage'
+      : blend === 0
+        ? 'title'
+        : 'disengage') as DeepFieldMode,
+    target,
+    blend,
+  });
 
   // ---- input ----
   const raycaster = new THREE.Raycaster();
@@ -340,6 +387,15 @@ export function createDeepField(
   const dustVelocity = new THREE.Vector3();
   let roll = 0;
 
+  // The title rig's pose, computed every frame in every mode; the camera
+  // copies it in title mode and blends away from it through the transition.
+  // A camera (never rendered) rather than a plain Object3D so lookAt aims
+  // down -z exactly like the real one.
+  const rig = new THREE.PerspectiveCamera();
+  const attitude = { yaw: 0, pitch: 0 };
+  const offsetLocal = new THREE.Vector3();
+  const chasePos = new THREE.Vector3();
+
   // Bodies passing behind respawn ahead of the *current* heading, so the
   // view stays populated whichever way a long turn ends up pointing.
   const respawnAhead = (b: BodyState) => {
@@ -387,10 +443,10 @@ export function createDeepField(
       camera.updateProjectionMatrix();
     }
 
-    // camera: slow autonomous sway, never coupled to the cursor position
-    camera.position.x = Math.sin(t * 0.045) * 16;
-    camera.position.y = Math.cos(t * 0.036) * 10;
-    camera.position.z = 0;
+    // title rig: slow autonomous sway, never coupled to the cursor position
+    rig.position.x = Math.sin(t * 0.045) * 16;
+    rig.position.y = Math.cos(t * 0.036) * 10;
+    rig.position.z = 0;
 
     // steering: the heading turns slowly toward the cursor's ray. With the
     // camera looking along the heading, an off-center cursor is a constant
@@ -403,6 +459,23 @@ export function createDeepField(
     }
     heading.normalize();
 
+    // keep the heading off the poles while the ship frame consumes it (see
+    // MAX_HEADING_Y); eased rather than clamped so engaging from a steep
+    // title-mode climb pitches down gently instead of snapping
+    if (blend > 0 && Math.abs(heading.y) > MAX_HEADING_Y) {
+      heading.y += (Math.sign(heading.y) * MAX_HEADING_Y - heading.y) * Math.min(1, dt * 2);
+      if (Math.hypot(heading.x, heading.z) < 1e-6) {
+        // dead vertical leaves the descent direction arbitrary; pitch back
+        // the way the transported up frame came from (camUp ⊥ heading, so
+        // it is horizontal and unit length here)
+        heading.x = -camUp.x;
+        heading.z = -camUp.z;
+      }
+      const k = Math.sqrt(1 - heading.y ** 2) / Math.hypot(heading.x, heading.z);
+      heading.x *= k;
+      heading.z *= k;
+    }
+
     // parallel-transport the up basis: strip its heading component so the
     // view rolls smoothly through vertical flight instead of snapping at the
     // poles of lookAt's fixed world up
@@ -412,17 +485,38 @@ export function createDeepField(
       if (camUp.lengthSq() < 1e-6) camUp.crossVectors(heading, FORWARD);
     }
     camUp.normalize();
-    camera.up.copy(camUp);
+    rig.up.copy(camUp);
 
-    lookTarget.copy(camera.position).addScaledVector(heading, 520);
+    lookTarget.copy(rig.position).addScaledVector(heading, 520);
     lookTarget.x += Math.sin(t * 0.058) * 20;
     lookTarget.y += Math.cos(t * 0.049) * 12;
-    camera.lookAt(lookTarget);
+    rig.lookAt(lookTarget);
     // bank with the commanded turn, not the world direction — cruising along
     // any axis flies level
     const rollTarget = mouseActive ? THREE.MathUtils.clamp(-ndc.x * 0.3, -0.3, 0.3) : 0;
     roll += (rollTarget - roll) * Math.min(1, dt * 2);
-    if (roll !== 0) camera.rotateZ(roll);
+    if (roll !== 0) rig.rotateZ(roll);
+
+    // camera: the title rig verbatim, or a blend toward the chase pose. The
+    // ship follows the drift heading in a roll-free frame (the rig's roll
+    // winds out inside the slerp) and glides along its entry path relative
+    // to LAST frame's camera; both endpoints are live poses, so the blend is
+    // bit-identity at s = 0 and s = 1 — zero pop by construction. Holding
+    // the settled branch at blend == 1 keeps the exact chase pose each frame.
+    if (blend > 0) {
+      attitudeFromDirection(attitude, heading);
+      attitudeQuaternion(attitude, ship.quaternion);
+      const u = easeOutCubic(Math.min(1, blend / DOCK_FRACTION));
+      offsetLocal.lerpVectors(SHIP_ENTRY, SHIP_DOCK, u).applyQuaternion(ship.quaternion);
+      ship.position.copy(camera.position).add(offsetLocal);
+      chaseTarget(chasePos, ship.quaternion, ship.position);
+      camera.position.lerpVectors(rig.position, chasePos, s);
+      camera.quaternion.slerpQuaternions(rig.quaternion, ship.quaternion, s);
+    } else {
+      camera.position.copy(rig.position);
+      camera.quaternion.copy(rig.quaternion);
+    }
+    ship.visible = blend > 0;
 
     // bodies: the world slides past, opposite the heading
     for (const b of bodies) {
@@ -499,5 +593,5 @@ export function createDeepField(
     stage.dispose();
   };
 
-  return { dispose, play, exit };
+  return { dispose, play, exit, debug };
 }
