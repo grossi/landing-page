@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { createLodManager } from 'engine/lod/lodManager';
 import { DODEC, ICO_MID, OCT, RING_THIN, wireMat } from 'engine/render/assets';
 import { createDustField } from 'engine/render/dust';
+import { buildShipRig } from 'engine/render/shipRig';
 import { createStage } from 'engine/render/stage';
 import { createStarfield } from 'engine/render/starfield';
 import { attachStatsOverlay } from 'engine/render/statsOverlay';
@@ -244,6 +245,38 @@ export function createDeepField(
   );
   scene.add(dust.points);
 
+  // ---- ship (hidden until the transition engages) ----
+  const { ship } = buildShipRig(tracker);
+  ship.visible = false;
+  scene.add(ship);
+
+  // ---- transition state machine ----
+  // One reversible scalar: `target` flips between the title rig (0) and the
+  // chase cam (1), `blend` glides toward it, and the eased weight `s` is the
+  // pose blend the choreography consumes. Spamming play/exit just reverses
+  // the scalar mid-flight — there is nothing to cancel.
+  const ENGAGE_S = 2.6;
+  const DISENGAGE_S = 2.0;
+  const easeInOutCubic = (x: number) => (x < 0.5 ? 4 * x ** 3 : 1 - (-2 * x + 2) ** 3 / 2);
+  let target = 0;
+  let blend = 0;
+  let s = 0;
+
+  const play = () => {
+    if (target === 1) return;
+    target = 1;
+    onMode?.('engage');
+    // already settled at the far endpoint (flipped away and back between
+    // frames): the loop's arrival branch never runs, so land immediately
+    if (blend === 1) onMode?.('play');
+  };
+  const exit = () => {
+    if (target === 0) return;
+    target = 0;
+    onMode?.('disengage');
+    if (blend === 0) onMode?.('title');
+  };
+
   // ---- input ----
   const raycaster = new THREE.Raycaster();
   const ndc = new THREE.Vector2();
@@ -271,11 +304,27 @@ export function createDeepField(
   const onPointerUp = () => {
     throttleDown = false;
   };
+  const keys: Record<string, boolean> = {};
+  const onKeyDown = (e: KeyboardEvent) => {
+    keys[e.code] = true;
+    if (e.code === 'Escape') exit();
+  };
+  const onKeyUp = (e: KeyboardEvent) => {
+    keys[e.code] = false;
+  };
+  // keyup never arrives for keys held across a focus loss (Cmd-Tab etc.),
+  // which would leave a key stuck down.
+  const onBlur = () => {
+    for (const code in keys) keys[code] = false;
+  };
   window.addEventListener('mousemove', onMouseMove);
   document.addEventListener('mouseleave', onMouseLeave);
   window.addEventListener('pointerdown', onPointerDown);
   window.addEventListener('pointerup', onPointerUp);
   window.addEventListener('pointercancel', onPointerUp);
+  window.addEventListener('keydown', onKeyDown);
+  window.addEventListener('keyup', onKeyUp);
+  window.addEventListener('blur', onBlur);
 
   // ---- render loop ----
   const heading = new THREE.Vector3(0, 0, -1);
@@ -320,6 +369,14 @@ export function createDeepField(
   };
 
   stage.start((dt, t) => {
+    // transition: glide toward the target rig; mode edges fire exactly once
+    if (blend !== target) {
+      const step = dt / (target ? ENGAGE_S : DISENGAGE_S);
+      blend = target ? Math.min(1, blend + step) : Math.max(0, blend - step);
+      if (blend === target) onMode?.(blend === 1 ? 'play' : 'title');
+    }
+    s = easeInOutCubic(blend);
+
     // throttle: click kicks, hold burns, release coasts back to cruise
     if (throttleDown) boost += (8 - boost) * Math.min(1, dt * 1.6);
     else boost += (1 - boost) * Math.min(1, dt * 1.1);
@@ -433,14 +490,14 @@ export function createDeepField(
     window.removeEventListener('pointerdown', onPointerDown);
     window.removeEventListener('pointerup', onPointerUp);
     window.removeEventListener('pointercancel', onPointerUp);
+    window.removeEventListener('keydown', onKeyDown);
+    window.removeEventListener('keyup', onKeyUp);
+    window.removeEventListener('blur', onBlur);
     stats.dispose();
     lod.dispose();
     // stops the loop and frees every tracked geometry/material
     stage.dispose();
   };
-
-  const play = () => {};
-  const exit = () => {};
 
   return { dispose, play, exit };
 }
