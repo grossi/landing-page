@@ -102,8 +102,6 @@ export interface DeepFieldHandle {
   dispose(): void;
   play(): void;
   exit(): void;
-  /** Dev-only state probe for browser-driven verification (removed in P5). */
-  debug(): { mode: DeepFieldMode; target: number; blend: number };
 }
 
 /**
@@ -320,17 +318,6 @@ export function createDeepField(
     onMode?.('disengage');
     if (blend === 0) onMode?.('title');
   };
-  const debug = () => ({
-    mode: (target === 1
-      ? blend === 1
-        ? 'play'
-        : 'engage'
-      : blend === 0
-        ? 'title'
-        : 'disengage') as DeepFieldMode,
-    target,
-    blend,
-  });
 
   // ---- input ----
   const raycaster = new THREE.Raycaster();
@@ -637,5 +624,5 @@ export function createDeepField(
     stage.dispose();
   };
 
-  return { dispose, play, exit, debug };
+  return { dispose, play, exit };
 }
