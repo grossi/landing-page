@@ -66,9 +66,17 @@ const GIANT_LAT_FADE_FAR = GIANT_SPREAD * 1.8;
 const GIANT_PARALLAX = 0.06;
 const GIANT_COUNT = 3;
 
+export type DeepFieldMode = 'title' | 'engage' | 'play' | 'disengage';
+
+export interface DeepFieldHandle {
+  dispose(): void;
+  play(): void;
+  exit(): void;
+}
+
 /**
  * Mounts the DEEP FIELD backdrop into `container` and starts its render
- * loop. Returns a dispose function that stops the loop, removes listeners
+ * loop. Returns a handle whose `dispose` stops the loop, removes listeners
  * and frees all GPU resources.
  *
  * An endless drift through wireframe planets, asteroids and derelicts.
@@ -77,7 +85,11 @@ const GIANT_COUNT = 3;
  * straight — and the camera itself never jumps. Clicking kicks the drift
  * speed (the throttle); holding the button sustains a full burn.
  */
-export function createDeepField(container: HTMLElement): () => void {
+export function createDeepField(
+  container: HTMLElement,
+  opts?: { onMode?: (mode: DeepFieldMode) => void },
+): DeepFieldHandle {
+  const onMode = opts?.onMode;
   // far 20,000 gives the giants a deep corridor; nothing nests, so a
   // standard depth buffer at 4e4 far:near is comfortable (near raised to 0.5).
   // maxPixelRatio 2: full retina crispness for the 1px wireframes at quality
@@ -415,7 +427,7 @@ export function createDeepField(container: HTMLElement): () => void {
     lod.update(camera, container.clientHeight, dt);
   });
 
-  return () => {
+  const dispose = () => {
     window.removeEventListener('mousemove', onMouseMove);
     document.removeEventListener('mouseleave', onMouseLeave);
     window.removeEventListener('pointerdown', onPointerDown);
@@ -426,4 +438,9 @@ export function createDeepField(container: HTMLElement): () => void {
     // stops the loop and frees every tracked geometry/material
     stage.dispose();
   };
+
+  const play = () => {};
+  const exit = () => {};
+
+  return { dispose, play, exit };
 }

@@ -18,7 +18,12 @@ const Home = () => {
 
   useEffect(() => {
     if (!containerRef.current) return;
-    return createDeepField(containerRef.current);
+    const handle = createDeepField(containerRef.current);
+    (window as any).__DEEPFIELD = handle;
+    return () => {
+      delete (window as any).__DEEPFIELD;
+      handle.dispose();
+    };
   }, []);
 
   return (
