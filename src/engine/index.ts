@@ -17,6 +17,7 @@ export {
   CHASE_QUAT_RATE,
   chaseTarget,
   FORWARD,
+  KEY_STEER,
   PITCH_CLAMP,
   PITCH_RATE,
   steerAttitude,
@@ -24,6 +25,7 @@ export {
   YAW_RATE,
   type Attitude,
 } from 'engine/core/flight';
+export { createKeyTracker, type KeyTracker } from 'engine/core/keyTracker';
 export {
   BOOST_LIMIT_FACTOR,
   DECK_FLOOR,

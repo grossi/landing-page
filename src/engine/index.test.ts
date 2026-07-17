@@ -10,6 +10,7 @@ describe('engine barrel', () => {
     expect(engine.mulberry32).toBeTypeOf('function'); // rng
     expect(engine.computeRebase).toBeTypeOf('function'); // floatingOrigin
     expect(engine.steerAttitude).toBeTypeOf('function'); // flight
+    expect(engine.createKeyTracker).toBeTypeOf('function'); // keyTracker
     expect(engine.speedLimit).toBeTypeOf('function'); // motion
     expect(engine.BOOST_LIMIT_FACTOR).toBeGreaterThan(0); // motion (was missing)
     expect(engine.createGovernorState).toBeTypeOf('function'); // governor

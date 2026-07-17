@@ -5,10 +5,13 @@ import {
   bankBody,
   CHASE_OFFSET,
   chaseTarget,
+  FORWARD,
+  KEY_STEER,
   PITCH_CLAMP,
   steerAttitude,
   updateChaseCamera,
 } from 'engine/core/flight';
+import { createKeyTracker } from 'engine/core/keyTracker';
 import { createLodManager } from 'engine/lod/lodManager';
 import { DODEC, ICO_MID, OCT, RING_THIN, wireMat } from 'engine/render/assets';
 import { createDustField } from 'engine/render/dust';
@@ -88,6 +91,16 @@ const SHIP_ENTRY = new THREE.Vector3(0, -2.6, 18);
 const SHIP_DOCK = CHASE_OFFSET.clone().negate();
 /** The ship docks at this fraction of the blend, before the camera settles. */
 const DOCK_FRACTION = 0.85;
+/**
+ * On ESC from settled play the chase camera trails the nose mid-turn, so
+ * the ship pose re-derived from it differs from the ship's live pose by the
+ * lag residual (up to ~4 units / ~21°); that residual is eased out of the
+ * prop over this fraction of DISENGAGE_S in real time — gone well before
+ * the disengage endpoint, so the end-of-disengage math stays exact, and
+ * keyed to time rather than blend so a re-engage mid-fade keeps easing
+ * instead of snapping the prop.
+ */
+const RESIDUAL_FADE = 0.3;
 /**
  * While the ship frame is live (blend > 0) the heading's pitch is eased
  * inside the play clamp: the roll-free YXZ attitude degenerates at the
@@ -281,66 +294,58 @@ export function createDeepField(
 
   // ---- transition state machine ----
   // One reversible scalar: `target` flips between the title rig (0) and the
-  // chase cam (1), `blend` glides toward it, and the eased weight `s` is the
-  // pose blend the choreography consumes. Spamming play/exit just reverses
-  // the scalar mid-flight — there is nothing to cancel.
+  // chase cam (1) and `blend` glides toward it. play()/exit() ONLY flip the
+  // target; the frame loop derives the mode from (target, blend) and runs
+  // every edge action in one place — spamming play/exit just reverses the
+  // scalar mid-flight, and a target flipped away and back between frames
+  // settles as a no-op (no re-seed, no callbacks).
   const ENGAGE_S = 2.6;
   const DISENGAGE_S = 2.0;
   const easeInOutCubic = (x: number) => (x < 0.5 ? 4 * x ** 3 : 1 - (-2 * x + 2) ** 3 / 2);
   const easeOutCubic = (x: number) => 1 - (1 - x) ** 3;
   let target = 0;
   let blend = 0;
-  let s = 0;
+  let lastMode: DeepFieldMode = 'title';
 
   const play = () => {
-    if (target === 1) return;
     target = 1;
-    onMode?.('engage');
-    // already settled at the far endpoint (flipped away and back between
-    // frames): the loop's arrival branch never runs, so seed and land here
-    if (blend === 1) {
-      attitudeFromDirection(attitude, heading);
-      onMode?.('play');
-    }
   };
   const exit = () => {
-    if (target === 0) return;
     target = 0;
-    if (blend === 1) {
-      // from settled play the rig has no weight, so the title roll restarts
-      // level (matching the roll-free ship frame)
-      roll = 0;
-      // hand the drift law the direction the chase camera actually faces:
-      // its trailing slerp lags the nose mid-turn, and seeding from the
-      // ship would snap the whole view by that residual
-      heading.copy(FORWARD).applyQuaternion(camera.quaternion);
-    }
-    onMode?.('disengage');
-    if (blend === 0) onMode?.('title');
   };
 
   // ---- input ----
   const raycaster = new THREE.Raycaster();
   const ndc = new THREE.Vector2();
-  // play-mode steer keeps the ephemeris pointer convention (screen-down is
-  // +y), the opposite of the raycaster's NDC — never reuse ndc.y for steer
-  const pointer = { x: 0, y: 0 };
   let mouseActive = false;
+  // stale-deflection guard: play steer reads zero until a fresh move
+  // arrives, so entering play or losing the cursor never consumes an old
+  // position
+  let steerLive = false;
   let throttleDown = false;
   let boost = 1;
 
-  const onMouseMove = (e: MouseEvent) => {
+  // mutates the stable `ndc` — move events fire every frame while steering,
+  // and a fresh object per event is per-frame garbage
+  const toNdc = (clientX: number, clientY: number) => {
     const rect = renderer.domElement.getBoundingClientRect();
     ndc.set(
-      ((e.clientX - rect.left) / rect.width) * 2 - 1,
-      -((e.clientY - rect.top) / rect.height) * 2 + 1,
+      ((clientX - rect.left) / rect.width) * 2 - 1,
+      -((clientY - rect.top) / rect.height) * 2 + 1,
     );
-    pointer.x = ndc.x;
-    pointer.y = -ndc.y;
+  };
+  const onMouseMove = (e: MouseEvent) => {
+    toNdc(e.clientX, e.clientY);
     mouseActive = true;
+    steerLive = true;
   };
   const onMouseLeave = () => {
     mouseActive = false;
+    steerLive = false;
+  };
+  const onTouchMove = (e: TouchEvent) => {
+    toNdc(e.touches[0].clientX, e.touches[0].clientY);
+    steerLive = true;
   };
   const onPointerDown = (e: PointerEvent) => {
     // Links and buttons layered over the backdrop keep their normal clicks.
@@ -351,18 +356,14 @@ export function createDeepField(
   const onPointerUp = () => {
     throttleDown = false;
   };
-  const keys: Record<string, boolean> = {};
+  // pointerup never arrives for a button held across a focus loss, so blur
+  // drops the throttle along with the tracked keys
+  const keyTracker = createKeyTracker(window, () => {
+    throttleDown = false;
+  });
+  const { keys } = keyTracker;
   const onKeyDown = (e: KeyboardEvent) => {
-    keys[e.code] = true;
     if (e.code === 'Escape') exit();
-  };
-  const onKeyUp = (e: KeyboardEvent) => {
-    keys[e.code] = false;
-  };
-  // keyup never arrives for keys held across a focus loss (Cmd-Tab etc.),
-  // which would leave a key stuck down.
-  const onBlur = () => {
-    for (const code in keys) keys[code] = false;
   };
   window.addEventListener('mousemove', onMouseMove);
   document.addEventListener('mouseleave', onMouseLeave);
@@ -370,12 +371,10 @@ export function createDeepField(
   window.addEventListener('pointerup', onPointerUp);
   window.addEventListener('pointercancel', onPointerUp);
   window.addEventListener('keydown', onKeyDown);
-  window.addEventListener('keyup', onKeyUp);
-  window.addEventListener('blur', onBlur);
+  container.addEventListener('touchmove', onTouchMove, { passive: true });
 
   // ---- render loop ----
   const heading = new THREE.Vector3(0, 0, -1);
-  const FORWARD = new THREE.Vector3(0, 0, -1);
   const X_AXIS = new THREE.Vector3(1, 0, 0);
   // camera up, parallel-transported to stay perpendicular to the heading
   const camUp = new THREE.Vector3(0, 1, 0);
@@ -387,14 +386,35 @@ export function createDeepField(
   const dustVelocity = new THREE.Vector3();
   let roll = 0;
 
-  // The title rig's pose, computed every frame in every mode; the camera
-  // copies it in title mode and blends away from it through the transition.
-  // A camera (never rendered) rather than a plain Object3D so lookAt aims
-  // down -z exactly like the real one.
+  // The title rig's pose, computed every frame the blend has weight; the
+  // camera copies it in title mode and blends away from it through the
+  // transition. A camera (never rendered) rather than a plain Object3D so
+  // lookAt aims down -z exactly like the real one.
   const rig = new THREE.PerspectiveCamera();
   const attitude = { yaw: 0, pitch: 0 };
   const offsetLocal = new THREE.Vector3();
   const chasePos = new THREE.Vector3();
+  // the ship's live pose captured on ESC from settled play (see RESIDUAL_FADE)
+  const exitPos = new THREE.Vector3();
+  const exitQuat = new THREE.Quaternion();
+  const shipRawPos = new THREE.Vector3();
+  let exitResidual = false;
+  let exitFade = 0;
+  // prop-only correction, applied after the camera consumed the raw pose:
+  // the camera path stays exact while the visible ship eases from its
+  // captured live pose onto wherever the current mode drives it. The raw
+  // position is stashed so play mode — which never rewrites it — can
+  // restore the authority before the next chase read.
+  const applyExitResidual = () => {
+    const r = 1 - easeOutCubic(Math.min(1, exitFade / (RESIDUAL_FADE * DISENGAGE_S)));
+    if (r > 0) {
+      shipRawPos.copy(ship.position);
+      ship.position.lerp(exitPos, r);
+      ship.quaternion.slerp(exitQuat, r);
+    } else {
+      exitResidual = false;
+    }
+  };
 
   // Bodies passing behind respawn ahead of the *current* heading, so the
   // view stays populated whichever way a long turn ends up pointing.
@@ -425,19 +445,41 @@ export function createDeepField(
   };
 
   stage.start((dt, t) => {
-    // transition: glide toward the target rig; mode edges fire exactly once
+    // transition: glide toward the target rig, derive the mode, and run the
+    // edge actions exactly once, all in this one site
     if (blend !== target) {
       const step = dt / (target ? ENGAGE_S : DISENGAGE_S);
       blend = target ? Math.min(1, blend + step) : Math.max(0, blend - step);
-      if (blend === target) {
-        // settling into play arms the controls: seed the control frame from
-        // the drift heading so steering starts from a well-defined attitude
-        if (blend === 1) attitudeFromDirection(attitude, heading);
-        onMode?.(blend === 1 ? 'play' : 'title');
-      }
     }
-    s = easeInOutCubic(blend);
-    const playing = target === 1 && blend === 1;
+    const mode: DeepFieldMode =
+      blend === 1 ? 'play' : target === 1 ? 'engage' : blend > 0 ? 'disengage' : 'title';
+    if (mode !== lastMode) {
+      if (mode === 'play') {
+        // settling into play arms the controls: seed the control frame from
+        // the drift heading, and drop the deflection recorded before the
+        // press — steering resumes on the next fresh move
+        attitudeFromDirection(attitude, heading);
+        steerLive = false;
+      }
+      if (mode === 'disengage' && lastMode === 'play') {
+        // from settled play the rig has no weight, so the title roll
+        // restarts level (matching the roll-free ship frame)
+        roll = 0;
+        // hand the drift law the direction the chase camera actually faces:
+        // its trailing slerp lags the nose mid-turn, and seeding from the
+        // ship would snap the whole view by that residual — the ship prop
+        // instead keeps its live pose and eases onto the dock path
+        heading.copy(FORWARD).applyQuaternion(camera.quaternion);
+        exitPos.copy(ship.position);
+        exitQuat.copy(ship.quaternion);
+        exitResidual = true;
+        exitFade = 0;
+      }
+      lastMode = mode;
+      onMode?.(mode);
+    }
+    const playing = mode === 'play';
+    if (exitResidual) exitFade += dt;
 
     // throttle: click kicks, holding burns, release coasts back to cruise.
     // The pointer works in every mode; the burn keys (W / ArrowUp / Space)
@@ -452,11 +494,6 @@ export function createDeepField(
       camera.updateProjectionMatrix();
     }
 
-    // title rig: slow autonomous sway, never coupled to the cursor position
-    rig.position.x = Math.sin(t * 0.045) * 16;
-    rig.position.y = Math.cos(t * 0.036) * 10;
-    rig.position.z = 0;
-
     // steering: in play the ship is the authority — pointer deflection
     // integrates the attitude at game rates and the heading follows the
     // nose, so flying is steering the stream. Otherwise the heading turns
@@ -464,10 +501,12 @@ export function createDeepField(
     // heading, an off-center cursor is a constant angular offset — a
     // steady, gentle turn; recentering flies straight.
     if (playing) {
-      let steerX = pointer.x;
-      let steerY = pointer.y;
-      if (keys.ArrowLeft || keys.KeyA) steerX = -0.7;
-      if (keys.ArrowRight || keys.KeyD) steerX = 0.7;
+      // steer flips ndc.y back to the ephemeris screen-down convention, and
+      // clamps: window-level moves over the site header land past ±1
+      let steerX = steerLive ? THREE.MathUtils.clamp(ndc.x, -1, 1) : 0;
+      let steerY = steerLive ? THREE.MathUtils.clamp(-ndc.y, -1, 1) : 0;
+      if (keys.ArrowLeft || keys.KeyA) steerX = -KEY_STEER;
+      if (keys.ArrowRight || keys.KeyD) steerX = KEY_STEER;
       steerAttitude(attitude, steerX, steerY, dt);
       attitudeQuaternion(attitude, ship.quaternion);
       bankBody(shipBody, steerX, dt);
@@ -487,14 +526,16 @@ export function createDeepField(
     // — gated off so the two mechanisms never fight
     if (blend > 0 && blend < 1 && Math.abs(heading.y) > MAX_HEADING_Y) {
       heading.y += (Math.sign(heading.y) * MAX_HEADING_Y - heading.y) * Math.min(1, dt * 2);
-      if (Math.hypot(heading.x, heading.z) < 1e-6) {
+      let horizontal = Math.hypot(heading.x, heading.z);
+      if (horizontal < 1e-6) {
         // dead vertical leaves the descent direction arbitrary; pitch back
         // the way the transported up frame came from (camUp ⊥ heading, so
-        // it is horizontal and unit length here)
+        // it is horizontal here — but only approximately unit, so remeasure)
         heading.x = -camUp.x;
         heading.z = -camUp.z;
+        horizontal = Math.hypot(heading.x, heading.z);
       }
-      const k = Math.sqrt(1 - heading.y ** 2) / Math.hypot(heading.x, heading.z);
+      const k = Math.sqrt(1 - heading.y ** 2) / horizontal;
       heading.x *= k;
       heading.z *= k;
     }
@@ -508,17 +549,26 @@ export function createDeepField(
       if (camUp.lengthSq() < 1e-6) camUp.crossVectors(heading, FORWARD);
     }
     camUp.normalize();
-    rig.up.copy(camUp);
 
-    lookTarget.copy(rig.position).addScaledVector(heading, 520);
-    lookTarget.x += Math.sin(t * 0.058) * 20;
-    lookTarget.y += Math.cos(t * 0.049) * 12;
-    rig.lookAt(lookTarget);
-    // bank with the commanded turn, not the world direction — cruising along
-    // any axis flies level
-    const rollTarget = mouseActive ? THREE.MathUtils.clamp(-ndc.x * 0.3, -0.3, 0.3) : 0;
-    roll += (rollTarget - roll) * Math.min(1, dt * 2);
-    if (roll !== 0) rig.rotateZ(roll);
+    // title rig pose: slow autonomous sway, never coupled to the cursor
+    // position. Dead weight once play settles, so it is skipped there; the
+    // blend just updated above, so the first disengage frame recomputes a
+    // fresh pose before the camera blend reads it.
+    if (blend < 1) {
+      rig.position.x = Math.sin(t * 0.045) * 16;
+      rig.position.y = Math.cos(t * 0.036) * 10;
+      rig.position.z = 0;
+      rig.up.copy(camUp);
+      lookTarget.copy(rig.position).addScaledVector(heading, 520);
+      lookTarget.x += Math.sin(t * 0.058) * 20;
+      lookTarget.y += Math.cos(t * 0.049) * 12;
+      rig.lookAt(lookTarget);
+      // bank with the commanded turn, not the world direction — cruising
+      // along any axis flies level
+      const rollTarget = mouseActive ? THREE.MathUtils.clamp(-ndc.x * 0.3, -0.3, 0.3) : 0;
+      roll += (rollTarget - roll) * Math.min(1, dt * 2);
+      if (roll !== 0) rig.rotateZ(roll);
+    }
 
     // camera: the title rig verbatim, a blend toward the chase pose, or —
     // settled in play — the verbatim chase cam. Through the blend the ship
@@ -531,18 +581,22 @@ export function createDeepField(
     // converged; it only works during turns, trailing the chase offset as
     // it swings with the nose.
     if (playing) {
+      if (exitResidual) ship.position.copy(shipRawPos);
       chaseTarget(chasePos, ship.quaternion, ship.position);
       updateChaseCamera(camera, chasePos, ship.quaternion, dt);
+      if (exitResidual) applyExitResidual();
     } else if (blend > 0) {
       attitudeFromDirection(attitude, heading);
       attitudeQuaternion(attitude, ship.quaternion);
       bankBody(shipBody, 0, dt);
+      const s = easeInOutCubic(blend);
       const u = easeOutCubic(Math.min(1, blend / DOCK_FRACTION));
       offsetLocal.lerpVectors(SHIP_ENTRY, SHIP_DOCK, u).applyQuaternion(ship.quaternion);
       ship.position.copy(camera.position).add(offsetLocal);
       chaseTarget(chasePos, ship.quaternion, ship.position);
       camera.position.lerpVectors(rig.position, chasePos, s);
       camera.quaternion.slerpQuaternions(rig.quaternion, ship.quaternion, s);
+      if (exitResidual) applyExitResidual();
     } else {
       camera.position.copy(rig.position);
       camera.quaternion.copy(rig.quaternion);
@@ -616,8 +670,8 @@ export function createDeepField(
     window.removeEventListener('pointerup', onPointerUp);
     window.removeEventListener('pointercancel', onPointerUp);
     window.removeEventListener('keydown', onKeyDown);
-    window.removeEventListener('keyup', onKeyUp);
-    window.removeEventListener('blur', onBlur);
+    container.removeEventListener('touchmove', onTouchMove);
+    keyTracker.dispose();
     stats.dispose();
     lod.dispose();
     // stops the loop and frees every tracked geometry/material

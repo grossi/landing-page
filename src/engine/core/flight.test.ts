@@ -4,16 +4,11 @@ import {
   attitudeFromDirection,
   attitudeQuaternion,
   bankBody,
-  BANK_PER_STEER,
-  CAMERA_MAX_LAG,
-  CHASE_OFFSET,
   chaseTarget,
   FORWARD,
-  PITCH_CLAMP,
-  PITCH_RATE,
+  KEY_STEER,
   steerAttitude,
   updateChaseCamera,
-  YAW_RATE,
   type Attitude,
 } from 'engine/core/flight';
 
@@ -21,17 +16,21 @@ describe('steerAttitude', () => {
   it('integrates the ephemeris steering rates', () => {
     const attitude: Attitude = { yaw: 0, pitch: 0 };
     steerAttitude(attitude, 0.5, -0.25, 0.1);
-    expect(attitude.yaw).toBeCloseTo(-0.5 * YAW_RATE * 0.1, 12);
-    expect(attitude.pitch).toBeCloseTo(0.25 * PITCH_RATE * 0.1, 12);
+    expect(attitude.yaw).toBeCloseTo(-0.11, 12); // 0.5 · 2.2 rad/s · 0.1 s
+    expect(attitude.pitch).toBeCloseTo(0.0425, 12); // 0.25 · 1.7 rad/s · 0.1 s
   });
 
-  it('clamps pitch to ±PITCH_CLAMP but never yaw', () => {
+  it('clamps pitch to ±1.35 rad but never yaw', () => {
     const attitude: Attitude = { yaw: 0, pitch: 0 };
     for (let i = 0; i < 100; i++) steerAttitude(attitude, 1, -1, 0.1);
-    expect(attitude.pitch).toBe(PITCH_CLAMP);
-    expect(attitude.yaw).toBeCloseTo(-YAW_RATE * 10, 9);
+    expect(attitude.pitch).toBe(1.35);
+    expect(attitude.yaw).toBeCloseTo(-22, 9); // 2.2 rad/s · 10 s
     for (let i = 0; i < 200; i++) steerAttitude(attitude, 0, 1, 0.1);
-    expect(attitude.pitch).toBe(-PITCH_CLAMP);
+    expect(attitude.pitch).toBe(-1.35);
+  });
+
+  it('keys deflect at 0.7 of full steer', () => {
+    expect(KEY_STEER).toBe(0.7);
   });
 });
 
@@ -48,6 +47,14 @@ describe('attitude ↔ direction', () => {
     }
   });
 
+  it('clamps near-vertical directions to the pitch envelope', () => {
+    const attitude: Attitude = { yaw: 0, pitch: 0 };
+    attitudeFromDirection(attitude, new THREE.Vector3(0.05, 1, -0.05).normalize());
+    expect(attitude.pitch).toBe(1.35);
+    attitudeFromDirection(attitude, new THREE.Vector3(0, -1, 0));
+    expect(attitude.pitch).toBe(-1.35);
+  });
+
   it('produces a roll-free frame (pitch/yaw only)', () => {
     const attitude: Attitude = { yaw: 0.7, pitch: -0.3 };
     const e = new THREE.Euler(0, 0, 0, 'YXZ');
@@ -59,20 +66,20 @@ describe('attitude ↔ direction', () => {
 });
 
 describe('bankBody', () => {
-  it('eases toward -steerX·BANK_PER_STEER and settles there', () => {
+  it('eases toward -steerX·0.9 and settles there', () => {
     const body = new THREE.Group();
     for (let i = 0; i < 300; i++) bankBody(body, 0.5, 1 / 60);
-    expect(body.rotation.z).toBeCloseTo(-0.5 * BANK_PER_STEER, 6);
+    expect(body.rotation.z).toBeCloseTo(-0.45, 6);
   });
 });
 
 describe('chase camera', () => {
-  it('chaseTarget applies the ship-frame offset', () => {
+  it('chaseTarget applies the (0, 2.6, 9) ship-frame offset', () => {
     const attitude: Attitude = { yaw: Math.PI / 3, pitch: 0.4 };
     const q = attitudeQuaternion(attitude, new THREE.Quaternion());
     const pos = new THREE.Vector3(10, -4, 25);
     const target = chaseTarget(new THREE.Vector3(), q, pos);
-    const expected = CHASE_OFFSET.clone().applyQuaternion(q).add(pos);
+    const expected = new THREE.Vector3(0, 2.6, 9).applyQuaternion(q).add(pos);
     expect(target.distanceTo(expected)).toBeLessThan(1e-12);
   });
 
@@ -88,11 +95,11 @@ describe('chase camera', () => {
     expect(camera.position.distanceTo(before)).toBeLessThan(1e-9);
   });
 
-  it('clamps the trail to CAMERA_MAX_LAG', () => {
+  it('clamps the trail to 12 units', () => {
     const camera = new THREE.Object3D();
     camera.position.set(0, 0, 100);
     const q = new THREE.Quaternion();
     updateChaseCamera(camera, new THREE.Vector3(0, 0, 0), q, 1e-9);
-    expect(camera.position.length()).toBeLessThanOrEqual(CAMERA_MAX_LAG + 1e-9);
+    expect(camera.position.length()).toBeCloseTo(12, 6);
   });
 });

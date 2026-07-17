@@ -109,7 +109,13 @@ const Home = () => {
           </Box>
         </Flex>
 
-        <Text
+        <Box
+          as="button"
+          onClick={(e) => {
+            e.currentTarget.blur();
+            handleRef.current?.exit();
+          }}
+          aria-label="Exit to title"
           position="absolute"
           bottom="16px"
           right="22px"
@@ -117,13 +123,17 @@ const Home = () => {
           fontSize="12px"
           letterSpacing="0.25em"
           color="#71717a"
-          pointerEvents="none"
+          bg="transparent"
+          pointerEvents={mode === 'play' ? 'auto' : 'none'}
+          tabIndex={mode === 'play' ? 0 : -1}
+          aria-hidden={mode !== 'play'}
+          cursor="pointer"
           userSelect="none"
           opacity={mode === 'play' ? 1 : 0}
           transition="opacity 600ms ease"
         >
           EXIT — ESC
-        </Text>
+        </Box>
       </Box>
     </Flex>
   );

@@ -18,6 +18,8 @@ export const YAW_RATE = 2.2;
 export const PITCH_RATE = 1.7;
 /** Pitch clamp (rad) — keeps the nose off the poles, where yaw degenerates. */
 export const PITCH_CLAMP = 1.35;
+/** Steer deflection commanded by the A/D and arrow keys. */
+export const KEY_STEER = 0.7;
 /** Visual bank angle per unit of steer (rad), leaning into the turn. */
 export const BANK_PER_STEER = 0.9;
 /** Bank easing rate (1/s). */
@@ -58,10 +60,13 @@ export function attitudeQuaternion(attitude: Attitude, out: THREE.Quaternion): T
 /**
  * Seeds the attitude so `FORWARD · attitudeQuaternion` equals `dir` (unit
  * length assumed) — the inverse of the control frame, used to hand an
- * external heading to the rig without a pose jump.
+ * external heading to the rig without a pose jump. Pitch is clamped to the
+ * steering envelope, so exactness holds while `|dir.y|` stays inside
+ * `sin(PITCH_CLAMP)`; steeper directions seed the nearest legal pitch.
  */
 export function attitudeFromDirection(attitude: Attitude, dir: { x: number; y: number; z: number }): void {
-  attitude.pitch = Math.asin(Math.max(-1, Math.min(1, dir.y)));
+  const pitch = Math.asin(Math.max(-1, Math.min(1, dir.y)));
+  attitude.pitch = Math.max(-PITCH_CLAMP, Math.min(PITCH_CLAMP, pitch));
   attitude.yaw = Math.atan2(-dir.x, -dir.z);
 }
 

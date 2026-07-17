@@ -5,10 +5,12 @@ import {
   bankBody,
   chaseTarget,
   FORWARD,
+  KEY_STEER,
   steerAttitude,
   updateChaseCamera,
 } from 'engine/core/flight';
 import { computeRebase } from 'engine/core/floatingOrigin';
+import { createKeyTracker } from 'engine/core/keyTracker';
 import {
   BOOST_LIMIT_FACTOR,
   diffuseDrag,
@@ -271,9 +273,12 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
   scene.add(ship);
 
   // ---- input ----
-  const keys: Record<string, boolean> = {};
   const pointer = { x: 0, y: 0 };
   let pointerDown = false;
+  // blur also drops the pointer hold — pointerup never arrives for a button
+  // held across a focus loss, which would leave the ship burning forever
+  const keyTracker = createKeyTracker(window, () => { pointerDown = false; });
+  const { keys } = keyTracker;
 
   // mutates the stable `pointer` — pointermove fires every frame while
   // steering, and a fresh object per event is per-frame garbage
@@ -282,18 +287,10 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
     pointer.x = ((clientX - rect.left) / rect.width) * 2 - 1;
     pointer.y = ((clientY - rect.top) / rect.height) * 2 - 1;
   };
-  const onKeyDown = (e: KeyboardEvent) => { keys[e.code] = true; };
-  const onKeyUp = (e: KeyboardEvent) => { keys[e.code] = false; };
-  // keyup never arrives for keys held across a focus loss (Cmd-Tab etc.),
-  // which would leave the ship burning forever.
-  const onBlur = () => { for (const code in keys) keys[code] = false; };
   const onPointerMove = (e: PointerEvent) => { toLocal(e.clientX, e.clientY); };
   const onPointerDown = () => { pointerDown = true; };
   const onPointerUp = () => { pointerDown = false; };
   const onTouchMove = (e: TouchEvent) => { toLocal(e.touches[0].clientX, e.touches[0].clientY); };
-  window.addEventListener('keydown', onKeyDown);
-  window.addEventListener('keyup', onKeyUp);
-  window.addEventListener('blur', onBlur);
   container.addEventListener('pointermove', onPointerMove);
   container.addEventListener('pointerdown', onPointerDown);
   window.addEventListener('pointerup', onPointerUp);
@@ -409,8 +406,8 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
     let steerX = pointer.x;
     let steerY = pointer.y;
     const boost = pointerDown || keys.KeyW || keys.ArrowUp || keys.Space;
-    if (keys.ArrowLeft || keys.KeyA) steerX = -0.7;
-    if (keys.ArrowRight || keys.KeyD) steerX = 0.7;
+    if (keys.ArrowLeft || keys.KeyA) steerX = -KEY_STEER;
+    if (keys.ArrowRight || keys.KeyD) steerX = KEY_STEER;
     steerAttitude(attitude, steerX, steerY, dt);
     attitudeQuaternion(attitude, ship.quaternion);
     bankBody(shipBody, steerX, dt);
@@ -654,9 +651,7 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
 
   return () => {
     if (globalHost.__EPHEMERIS === debugHandle) delete globalHost.__EPHEMERIS;
-    window.removeEventListener('keydown', onKeyDown);
-    window.removeEventListener('keyup', onKeyUp);
-    window.removeEventListener('blur', onBlur);
+    keyTracker.dispose();
     container.removeEventListener('pointermove', onPointerMove);
     container.removeEventListener('pointerdown', onPointerDown);
     window.removeEventListener('pointerup', onPointerUp);
