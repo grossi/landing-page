@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { GOVERNOR_LEVELS } from 'engine/core/governor';
-import { clampDt, isPaused, MAX_DT, pixelRatioCap, type PauseSource } from 'engine/render/stage';
+import {
+  applyQuality,
+  clampDt,
+  isPaused,
+  MAX_DT,
+  pixelRatioCap,
+  type PauseSource,
+} from 'engine/render/stage';
 
 describe('clampDt', () => {
   it('converts a normal frame gap from ms to seconds', () => {
@@ -69,5 +76,33 @@ describe('isPaused', () => {
 
   it('pauses while several sources are active', () => {
     expect(isPaused(new Set<PauseSource>(['hidden', 'explicit']))).toBe(true);
+  });
+});
+
+describe('applyQuality', () => {
+  it('drives the dust and LOD knobs from stage.quality()', () => {
+    const stage = { quality: () => GOVERNOR_LEVELS[1] };
+    let density = -1;
+    let bias = -1;
+    applyQuality(
+      stage,
+      { setDensity: (fraction) => { density = fraction; } },
+      { setLodBias: (b) => { bias = b; } },
+    );
+    expect(density).toBe(0.66); // level-1 dustFraction
+    expect(bias).toBe(1); // level-1 lodBias
+  });
+
+  it('is identity at level 0', () => {
+    const stage = { quality: () => GOVERNOR_LEVELS[0] };
+    let density = -1;
+    let bias = -1;
+    applyQuality(
+      stage,
+      { setDensity: (fraction) => { density = fraction; } },
+      { setLodBias: (b) => { bias = b; } },
+    );
+    expect(density).toBe(1);
+    expect(bias).toBe(0);
   });
 });

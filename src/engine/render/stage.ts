@@ -41,6 +41,22 @@ export function pixelRatioCap(level: number, maxPixelRatio?: number): number {
   return Math.max(table, maxPixelRatio);
 }
 
+/**
+ * Applies the governor's per-frame quality knobs — THE list of what the
+ * adaptive-quality governor drives beyond the stage's own pixelRatio cap:
+ * dust density and the LOD rung bias. Call once per frame at the end of a
+ * scene's loop; both knobs are identity at level 0.
+ */
+export function applyQuality(
+  stage: Pick<Stage, 'quality'>,
+  dust: { setDensity(fraction: number): void },
+  lod: { setLodBias(bias: number): void },
+): void {
+  const quality = stage.quality();
+  dust.setDensity(quality.dustFraction);
+  lod.setLodBias(quality.lodBias);
+}
+
 export interface StageOptions {
   fov?: number;
   near?: number;

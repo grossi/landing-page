@@ -3,10 +3,11 @@ import {
   attitudeFromDirection,
   attitudeQuaternion,
   bankBody,
+  burnKeysDown,
   chaseTarget,
   CRUISE_FOV,
   FORWARD,
-  KEY_STEER,
+  resolveSteer,
   speedResponseRate,
   steerAttitude,
   updateChaseCamera,
@@ -14,6 +15,7 @@ import {
 } from 'engine/core/flight';
 import { computeRebase } from 'engine/core/floatingOrigin';
 import { createKeyTracker } from 'engine/core/keyTracker';
+import { createListenerGroup } from 'engine/core/listenerGroup';
 import {
   BOOST_LIMIT_FACTOR,
   diffuseDrag,
@@ -22,6 +24,7 @@ import {
   envelopeCap,
   speedLimit,
 } from 'engine/core/motion';
+import { pointerToNdc } from 'engine/core/pointerNdc';
 import { mulberry32 } from 'engine/core/rng';
 import { KIND_PRESETS } from 'engine/lod/displacement';
 import { createLodManager, type LodBeacon, type LodBodyHandle } from 'engine/lod/lodManager';
@@ -33,7 +36,7 @@ import {
 } from 'engine/lod/surfaceFloor';
 import { createDustField } from 'engine/render/dust';
 import { buildShipRig } from 'engine/render/shipRig';
-import { createStage } from 'engine/render/stage';
+import { applyQuality, createStage } from 'engine/render/stage';
 import { createStarfield } from 'engine/render/starfield';
 import { attachStatsOverlay } from 'engine/render/statsOverlay';
 import {
@@ -269,6 +272,8 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
   scene.add(ship);
 
   // ---- input ----
+  // last pointer position in standard GL NDC (y up); resolveSteer flips it
+  // to the screen-down steer sense at the consumption site
   const pointer = { x: 0, y: 0 };
   let pointerDown = false;
   // blur also drops the pointer hold — pointerup never arrives for a button
@@ -276,21 +281,22 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
   const keyTracker = createKeyTracker(window, () => { pointerDown = false; });
   const { keys } = keyTracker;
 
-  // mutates the stable `pointer` — pointermove fires every frame while
-  // steering, and a fresh object per event is per-frame garbage
-  const toLocal = (clientX: number, clientY: number) => {
-    const rect = container.getBoundingClientRect();
-    pointer.x = ((clientX - rect.left) / rect.width) * 2 - 1;
-    pointer.y = ((clientY - rect.top) / rect.height) * 2 - 1;
-  };
-  const onPointerMove = (e: PointerEvent) => { toLocal(e.clientX, e.clientY); };
+  // pointerToNdc mutates the stable `pointer` — pointermove fires every
+  // frame while steering, and a fresh object per event is per-frame garbage
+  const onPointerMove = (e: PointerEvent) => { pointerToNdc(pointer, e.clientX, e.clientY, container); };
   const onPointerDown = () => { pointerDown = true; };
   const onPointerUp = () => { pointerDown = false; };
-  const onTouchMove = (e: TouchEvent) => { toLocal(e.touches[0].clientX, e.touches[0].clientY); };
-  container.addEventListener('pointermove', onPointerMove);
-  container.addEventListener('pointerdown', onPointerDown);
-  window.addEventListener('pointerup', onPointerUp);
-  container.addEventListener('touchmove', onTouchMove, { passive: true });
+  const onTouchMove = (e: TouchEvent) => {
+    pointerToNdc(pointer, e.touches[0].clientX, e.touches[0].clientY, container);
+  };
+  const listeners = createListenerGroup();
+  listeners.add(container, 'pointermove', onPointerMove);
+  listeners.add(container, 'pointerdown', onPointerDown);
+  listeners.add(window, 'pointerup', onPointerUp);
+  // a browser-canceled touch (scroll takeover, system gesture) never sends
+  // pointerup — without this the ship burns forever
+  listeners.add(window, 'pointercancel', onPointerUp);
+  listeners.add(container, 'touchmove', onTouchMove, { passive: true });
 
   // ---- HUD (write only on change; per-frame DOM writes cause layout churn) ----
   const hudCache = new Map<HTMLElement, string>();
@@ -380,6 +386,7 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
 
   // ---- simulation loop ----
   const velocity = new THREE.Vector3();
+  const steer = { x: 0, y: 0 };
   const attitude = { yaw: 0, pitch: -0.04 };
   const forward = new THREE.Vector3();
   const scratch = new THREE.Vector3();
@@ -398,15 +405,14 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
   field.sync(shipAbs.copy(ship.position).add(origin), true);
 
   stage.start((dt, t) => {
-    // steering
-    let steerX = pointer.x;
-    let steerY = pointer.y;
-    const boost = pointerDown || keys.KeyW || keys.ArrowUp || keys.Space;
-    if (keys.ArrowLeft || keys.KeyA) steerX = -KEY_STEER;
-    if (keys.ArrowRight || keys.KeyD) steerX = KEY_STEER;
-    steerAttitude(attitude, steerX, steerY, dt);
+    // steering — resolveSteer also clamps to ±1, which the raw pointer read
+    // never did: a captured pointer dragged past the canvas edge used to
+    // command super-unit deflection
+    resolveSteer(steer, pointer.x, pointer.y, keys);
+    const boost = pointerDown || burnKeysDown(keys);
+    steerAttitude(attitude, steer.x, steer.y, dt);
     attitudeQuaternion(attitude, ship.quaternion);
-    bankBody(shipBody, steerX, dt);
+    bankBody(shipBody, steer.x, dt);
 
     // distance-proportional speed law: time-to-contact stays roughly
     // constant, so approaches decelerate into a skim automatically. The cap
@@ -457,10 +463,8 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
     field.updateContents(dt, t);
 
     // adaptive quality: under sustained load the governor sheds dust and
-    // LOD rungs alongside pixels; both knobs are identity at level 0
-    const quality = stage.quality();
-    dust.setDensity(quality.dustFraction);
-    lod.setLodBias(quality.lodBias);
+    // LOD rungs alongside pixels
+    applyQuality(stage, dust, lod);
 
     // backdrop + dust follow the ship (render-local; a rebase wraps the dust
     // by whole sector multiples, which the modulo wrap absorbs in one step)
@@ -642,10 +646,7 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
   return () => {
     if (globalHost.__EPHEMERIS === debugHandle) delete globalHost.__EPHEMERIS;
     keyTracker.dispose();
-    container.removeEventListener('pointermove', onPointerMove);
-    container.removeEventListener('pointerdown', onPointerDown);
-    window.removeEventListener('pointerup', onPointerUp);
-    container.removeEventListener('touchmove', onTouchMove);
+    listeners.dispose();
     field.dispose(); // unregisters sector LOD bodies via onContentRemoved
     home.dispose();
     lod.dispose();

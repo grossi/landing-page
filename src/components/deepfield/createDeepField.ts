@@ -3,24 +3,28 @@ import {
   attitudeFromDirection,
   attitudeQuaternion,
   bankBody,
+  burnKeysDown,
   CAMERA_MAX_LAG,
   CHASE_OFFSET,
   CHASE_POS_RATE,
   chaseTarget,
+  easeFov,
   FORWARD,
-  KEY_STEER,
   PITCH_CLAMP,
+  resolveSteer,
   speedResponseRate,
   steerAttitude,
   updateChaseCamera,
   updateFov,
 } from 'engine/core/flight';
 import { createKeyTracker } from 'engine/core/keyTracker';
+import { createListenerGroup } from 'engine/core/listenerGroup';
+import { pointerToNdc } from 'engine/core/pointerNdc';
 import { createLodManager } from 'engine/lod/lodManager';
 import { DODEC, ICO_MID, OCT, RING_THIN, wireMat } from 'engine/render/assets';
 import { createDustField } from 'engine/render/dust';
 import { buildShipRig } from 'engine/render/shipRig';
-import { createStage } from 'engine/render/stage';
+import { applyQuality, createStage } from 'engine/render/stage';
 import { createStarfield } from 'engine/render/starfield';
 import { attachStatsOverlay } from 'engine/render/statsOverlay';
 
@@ -333,17 +337,10 @@ export function createDeepField(
   let throttleDown = false;
   let boost = 1;
 
-  // mutates the stable `ndc` — move events fire every frame while steering,
-  // and a fresh object per event is per-frame garbage
-  const toNdc = (clientX: number, clientY: number) => {
-    const rect = renderer.domElement.getBoundingClientRect();
-    ndc.set(
-      ((clientX - rect.left) / rect.width) * 2 - 1,
-      -((clientY - rect.top) / rect.height) * 2 + 1,
-    );
-  };
   const onMouseMove = (e: MouseEvent) => {
-    toNdc(e.clientX, e.clientY);
+    // pointerToNdc mutates the stable `ndc` — move events fire every frame
+    // while steering, and a fresh object per event is per-frame garbage
+    pointerToNdc(ndc, e.clientX, e.clientY, renderer.domElement);
     mouseActive = true;
     steerLive = true;
   };
@@ -352,7 +349,7 @@ export function createDeepField(
     steerLive = false;
   };
   const onTouchMove = (e: TouchEvent) => {
-    toNdc(e.touches[0].clientX, e.touches[0].clientY);
+    pointerToNdc(ndc, e.touches[0].clientX, e.touches[0].clientY, renderer.domElement);
     steerLive = true;
   };
   const onPointerDown = (e: PointerEvent) => {
@@ -377,13 +374,14 @@ export function createDeepField(
   const onKeyDown = (e: KeyboardEvent) => {
     if (e.code === 'Escape') exit();
   };
-  window.addEventListener('mousemove', onMouseMove);
-  document.addEventListener('mouseleave', onMouseLeave);
-  window.addEventListener('pointerdown', onPointerDown);
-  window.addEventListener('pointerup', onPointerUp);
-  window.addEventListener('pointercancel', onPointerUp);
-  window.addEventListener('keydown', onKeyDown);
-  container.addEventListener('touchmove', onTouchMove, { passive: true });
+  const listeners = createListenerGroup();
+  listeners.add(window, 'mousemove', onMouseMove);
+  listeners.add(document, 'mouseleave', onMouseLeave);
+  listeners.add(window, 'pointerdown', onPointerDown);
+  listeners.add(window, 'pointerup', onPointerUp);
+  listeners.add(window, 'pointercancel', onPointerUp);
+  listeners.add(window, 'keydown', onKeyDown);
+  listeners.add(container, 'touchmove', onTouchMove, { passive: true });
 
   // ---- render loop ----
   const heading = new THREE.Vector3(0, 0, -1);
@@ -404,6 +402,7 @@ export function createDeepField(
   // lookAt aims down -z exactly like the real one.
   const rig = new THREE.PerspectiveCamera();
   const attitude = { yaw: 0, pitch: 0 };
+  const steer = { x: 0, y: 0 };
   const offsetLocal = new THREE.Vector3();
   const dockLocal = new THREE.Vector3();
   const chasePos = new THREE.Vector3();
@@ -497,7 +496,7 @@ export function createDeepField(
     // throttle: click kicks, holding burns, release coasts back to cruise.
     // The pointer works in every mode; the burn keys (W / ArrowUp / Space)
     // arm with the rest of the game controls at settle
-    const burn = throttleDown || (playing && (keys.KeyW || keys.ArrowUp || keys.Space));
+    const burn = throttleDown || (playing && burnKeysDown(keys));
     if (playing) {
       // play runs the shared EPHEMERIS boost feel (flight.ts response rates
       // and cruise/boost FOV cue) on the stream-speed multiplier — the ×8
@@ -509,11 +508,9 @@ export function createDeepField(
     } else {
       if (burn) boost += (8 - boost) * Math.min(1, dt * 1.6);
       else boost += (1 - boost) * Math.min(1, dt * 1.1);
-      const targetFov = 62 + (boost - 1) * 1.9;
-      if (Math.abs(camera.fov - targetFov) > 0.01) {
-        camera.fov += (targetFov - camera.fov) * Math.min(1, dt * 5);
-        camera.updateProjectionMatrix();
-      }
+      // the title look deliberately targets its own 62 base (design-locked),
+      // not the shared CRUISE_FOV — only the easing primitive is shared
+      easeFov(camera, 62 + (boost - 1) * 1.9, dt);
     }
     const speed = BASE_SPEED * boost;
 
@@ -535,15 +532,14 @@ export function createDeepField(
     // heading, an off-center cursor is a constant angular offset — a
     // steady, gentle turn; recentering flies straight.
     if (playing) {
-      // steer flips ndc.y back to the ephemeris screen-down convention, and
-      // clamps: window-level moves over the site header land past ±1
-      let steerX = steerLive ? THREE.MathUtils.clamp(ndc.x, -1, 1) : 0;
-      let steerY = steerLive ? THREE.MathUtils.clamp(-ndc.y, -1, 1) : 0;
-      if (keys.ArrowLeft || keys.KeyA) steerX = -KEY_STEER;
-      if (keys.ArrowRight || keys.KeyD) steerX = KEY_STEER;
-      steerAttitude(attitude, steerX, steerY, dt);
+      // resolveSteer flips ndc.y to the ephemeris screen-down sense and
+      // clamps (window-level moves over the site header land past ±1); the
+      // steerLive gate zeroes only the pointer — keys still steer while the
+      // deflection is stale
+      resolveSteer(steer, steerLive ? ndc.x : 0, steerLive ? ndc.y : 0, keys);
+      steerAttitude(attitude, steer.x, steer.y, dt);
       attitudeQuaternion(attitude, ship.quaternion);
-      bankBody(shipBody, steerX, dt);
+      bankBody(shipBody, steer.x, dt);
       heading.copy(FORWARD).applyQuaternion(ship.quaternion);
     } else if (mouseActive) {
       raycaster.setFromCamera(ndc, camera);
@@ -689,10 +685,8 @@ export function createDeepField(
     }
 
     // adaptive quality: under sustained load the governor sheds dust and
-    // LOD rungs alongside pixels; both knobs are identity at level 0
-    const quality = stage.quality();
-    dust.setDensity(quality.dustFraction);
-    lod.setLodBias(quality.lodBias);
+    // LOD rungs alongside pixels
+    applyQuality(stage, dust, lod);
 
     // dust: streams past opposite the heading; the wrap cube is centered 60
     // units ahead along it so most particles stay in front of the camera
@@ -707,13 +701,7 @@ export function createDeepField(
   });
 
   const dispose = () => {
-    window.removeEventListener('mousemove', onMouseMove);
-    document.removeEventListener('mouseleave', onMouseLeave);
-    window.removeEventListener('pointerdown', onPointerDown);
-    window.removeEventListener('pointerup', onPointerUp);
-    window.removeEventListener('pointercancel', onPointerUp);
-    window.removeEventListener('keydown', onKeyDown);
-    container.removeEventListener('touchmove', onTouchMove);
+    listeners.dispose();
     keyTracker.dispose();
     stats.dispose();
     lod.dispose();

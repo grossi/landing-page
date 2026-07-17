@@ -57,6 +57,31 @@ export interface Attitude {
 const scratchEuler = new THREE.Euler(0, 0, 0, 'YXZ');
 const scratchLag = new THREE.Vector3();
 
+/**
+ * Resolves the frame's steer deflection from pointer + keys. Input is
+ * standard GL NDC (y up); the output steer is screen-down (pointer below
+ * center pitches down) — the y flip lives here and nowhere else. Both axes
+ * clamp to ±1: window-level listeners and captured pointers keep reporting
+ * past the canvas edge. The A/D and arrow keys override the pointer's x
+ * at the fixed KEY_STEER deflection.
+ */
+export function resolveSteer(
+  out: { x: number; y: number },
+  ndcX: number,
+  ndcY: number,
+  keys: Record<string, boolean>,
+): void {
+  out.x = Math.max(-1, Math.min(1, ndcX));
+  out.y = Math.max(-1, Math.min(1, -ndcY));
+  if (keys.ArrowLeft || keys.KeyA) out.x = -KEY_STEER;
+  if (keys.ArrowRight || keys.KeyD) out.x = KEY_STEER;
+}
+
+/** True while any burn key (W / ArrowUp / Space) is held. */
+export function burnKeysDown(keys: Record<string, boolean>): boolean {
+  return !!(keys.KeyW || keys.ArrowUp || keys.Space);
+}
+
 /** Integrates one steering frame: pointer deflection into the attitude. */
 export function steerAttitude(attitude: Attitude, steerX: number, steerY: number, dt: number): void {
   attitude.yaw -= steerX * YAW_RATE * dt;
@@ -138,16 +163,23 @@ export function updateChaseCamera(
 }
 
 /**
- * Eases the camera FOV toward the boost/cruise target; call once per frame.
- * Boost widens the view a touch — the shared speed cue. Inert (and skips the
- * projection-matrix rebuild) within 0.01 of the target.
+ * Eases the camera FOV toward `targetFov` at the shared FOV_RATE; call once
+ * per frame. Inert (and skips the projection-matrix rebuild) within 0.01 of
+ * the target.
  */
-export function updateFov(camera: THREE.PerspectiveCamera, boost: boolean, dt: number): void {
-  const targetFov = boost ? BOOST_FOV : CRUISE_FOV;
+export function easeFov(camera: THREE.PerspectiveCamera, targetFov: number, dt: number): void {
   if (Math.abs(camera.fov - targetFov) > 0.01) {
     camera.fov += (targetFov - camera.fov) * Math.min(1, dt * FOV_RATE);
     camera.updateProjectionMatrix();
   }
+}
+
+/**
+ * Eases the camera FOV toward the boost/cruise target; call once per frame.
+ * Boost widens the view a touch — the shared speed cue.
+ */
+export function updateFov(camera: THREE.PerspectiveCamera, boost: boolean, dt: number): void {
+  easeFov(camera, boost ? BOOST_FOV : CRUISE_FOV, dt);
 }
 
 /** Selects the asymmetric velocity response rate: accelerating chases the target (harder under boost), decelerating always eases. */

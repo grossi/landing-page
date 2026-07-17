@@ -14,6 +14,7 @@ export {
   BANK_RATE,
   bankBody,
   BOOST_FOV,
+  burnKeysDown,
   CAMERA_MAX_LAG,
   CHASE_OFFSET,
   CHASE_POS_RATE,
@@ -22,11 +23,13 @@ export {
   chaseTarget,
   CRUISE_FOV,
   DECEL_RATE,
+  easeFov,
   FORWARD,
   FOV_RATE,
   KEY_STEER,
   PITCH_CLAMP,
   PITCH_RATE,
+  resolveSteer,
   speedResponseRate,
   steerAttitude,
   updateChaseCamera,
@@ -35,6 +38,8 @@ export {
   type Attitude,
 } from 'engine/core/flight';
 export { createKeyTracker, type KeyTracker } from 'engine/core/keyTracker';
+export { createListenerGroup, type ListenerGroup } from 'engine/core/listenerGroup';
+export { pointerToNdc } from 'engine/core/pointerNdc';
 export {
   BOOST_LIMIT_FACTOR,
   DECK_FLOOR,
@@ -166,6 +171,7 @@ export {
   type LodRegistration,
 } from 'engine/lod/lodManager';
 export {
+  applyQuality,
   clampDt,
   createStage,
   isPaused,

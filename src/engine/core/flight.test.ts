@@ -7,13 +7,16 @@ import {
   attitudeQuaternion,
   bankBody,
   BOOST_FOV,
+  burnKeysDown,
   chaseLag,
   chaseTarget,
   CRUISE_FOV,
   DECEL_RATE,
+  easeFov,
   FORWARD,
   FOV_RATE,
   KEY_STEER,
+  resolveSteer,
   speedResponseRate,
   steerAttitude,
   updateChaseCamera,
@@ -40,6 +43,57 @@ describe('steerAttitude', () => {
 
   it('keys deflect at 0.7 of full steer', () => {
     expect(KEY_STEER).toBe(0.7);
+  });
+});
+
+describe('resolveSteer', () => {
+  it('passes in-range NDC through, flipping y from GL (up) to screen-down', () => {
+    const out = { x: 0, y: 0 };
+    resolveSteer(out, 0.4, 0.25, {});
+    expect(out.x).toBe(0.4);
+    expect(out.y).toBe(-0.25); // pointer above center (GL +y) pitches up
+    resolveSteer(out, -0.1, -0.6, {});
+    expect(out.x).toBe(-0.1);
+    expect(out.y).toBe(0.6); // pointer below center pitches down
+  });
+
+  it('clamps both axes to ±1 (window-level listeners run past the canvas)', () => {
+    const out = { x: 0, y: 0 };
+    resolveSteer(out, 3.2, -1.8, {});
+    expect(out.x).toBe(1);
+    expect(out.y).toBe(1); // flip then clamp: -(-1.8) = 1.8 → 1
+    resolveSteer(out, -2.5, 4, {});
+    expect(out.x).toBe(-1);
+    expect(out.y).toBe(-1);
+  });
+
+  it('key overrides win over the pointer at ±KEY_STEER, x only', () => {
+    const out = { x: 0, y: 0 };
+    resolveSteer(out, 0.9, 0.5, { ArrowLeft: true });
+    expect(out.x).toBe(-0.7); // -KEY_STEER
+    expect(out.y).toBe(-0.5); // y untouched by keys
+    resolveSteer(out, -0.9, 0, { KeyA: true });
+    expect(out.x).toBe(-0.7);
+    resolveSteer(out, -0.9, 0, { ArrowRight: true });
+    expect(out.x).toBe(0.7); // KEY_STEER
+    resolveSteer(out, 0, 0, { KeyD: true });
+    expect(out.x).toBe(0.7);
+    // right wins when both are held — the override order
+    resolveSteer(out, 0, 0, { KeyA: true, KeyD: true });
+    expect(out.x).toBe(0.7);
+  });
+});
+
+describe('burnKeysDown', () => {
+  it('is true for each burn key alone', () => {
+    expect(burnKeysDown({ KeyW: true })).toBe(true);
+    expect(burnKeysDown({ ArrowUp: true })).toBe(true);
+    expect(burnKeysDown({ Space: true })).toBe(true);
+  });
+
+  it('is false with no burn key held (including released entries)', () => {
+    expect(burnKeysDown({})).toBe(false);
+    expect(burnKeysDown({ KeyW: false, KeyA: true, ArrowDown: true })).toBe(false);
   });
 });
 
@@ -161,6 +215,22 @@ describe('boost dynamics', () => {
     const camera = new THREE.PerspectiveCamera(CRUISE_FOV + 0.005);
     updateFov(camera, false, 1 / 60);
     expect(camera.fov).toBe(CRUISE_FOV + 0.005);
+  });
+
+  it('easeFov eases toward an arbitrary target (the DEEP FIELD title base)', () => {
+    const camera = new THREE.PerspectiveCamera(62);
+    for (let i = 0; i < 300; i++) easeFov(camera, 75.3, 1 / 60);
+    expect(Math.abs(camera.fov - 75.3)).toBeLessThanOrEqual(0.011);
+    easeFov(camera, 75.3, 1 / 60); // dead band: inert once converged
+    const settled = camera.fov;
+    easeFov(camera, 75.3, 1 / 60);
+    expect(camera.fov).toBe(settled);
+  });
+
+  it('easeFov single step moves at FOV_RATE toward the target', () => {
+    const camera = new THREE.PerspectiveCamera(62);
+    easeFov(camera, 63, 0.1);
+    expect(camera.fov).toBeCloseTo(62 + 1 * 0.1 * FOV_RATE, 12); // 62.5
   });
 
   it('speedResponseRate is asymmetric: accel chases, decel always eases', () => {

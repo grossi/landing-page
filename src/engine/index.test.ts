@@ -13,7 +13,12 @@ describe('engine barrel', () => {
     expect(engine.speedResponseRate).toBeTypeOf('function'); // flight (boost dynamics)
     expect(engine.CRUISE_FOV).toBeGreaterThan(0); // flight (FOV cue)
     expect(engine.chaseLag).toBeTypeOf('function'); // flight (stream-lag emulation)
+    expect(engine.resolveSteer).toBeTypeOf('function'); // flight (steer resolution)
+    expect(engine.burnKeysDown).toBeTypeOf('function'); // flight (burn predicate)
+    expect(engine.easeFov).toBeTypeOf('function'); // flight (FOV ease primitive)
     expect(engine.createKeyTracker).toBeTypeOf('function'); // keyTracker
+    expect(engine.createListenerGroup).toBeTypeOf('function'); // listenerGroup
+    expect(engine.pointerToNdc).toBeTypeOf('function'); // pointerNdc
     expect(engine.speedLimit).toBeTypeOf('function'); // motion
     expect(engine.BOOST_LIMIT_FACTOR).toBeGreaterThan(0); // motion (was missing)
     expect(engine.createGovernorState).toBeTypeOf('function'); // governor
@@ -28,6 +33,7 @@ describe('engine barrel', () => {
     expect(engine.makeSurfaceFloor).toBeTypeOf('function'); // surfaceFloor
     // render
     expect(engine.createStage).toBeTypeOf('function'); // stage
+    expect(engine.applyQuality).toBeTypeOf('function'); // stage (governor knobs)
     expect(engine.createResourceTracker).toBeTypeOf('function'); // resourceTracker
     expect(engine.createStarfield).toBeTypeOf('function'); // starfield
     expect(engine.buildShipRig).toBeTypeOf('function'); // shipRig
