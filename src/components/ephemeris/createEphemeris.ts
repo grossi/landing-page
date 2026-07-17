@@ -4,10 +4,13 @@ import {
   attitudeQuaternion,
   bankBody,
   chaseTarget,
+  CRUISE_FOV,
   FORWARD,
   KEY_STEER,
+  speedResponseRate,
   steerAttitude,
   updateChaseCamera,
+  updateFov,
 } from 'engine/core/flight';
 import { computeRebase } from 'engine/core/floatingOrigin';
 import { createKeyTracker } from 'engine/core/keyTracker';
@@ -104,13 +107,6 @@ const BEACON_RANGE = 2;
  */
 const CRUISE_SPEED = 100;
 const BOOST_FACTOR = 40;
-/** Camera FOV at cruise / under boost (the DEEP FIELD throttle-widen cue). */
-const CRUISE_FOV = 64;
-const BOOST_FOV = 71;
-/** Velocity response rates (1/s): a boost kicks, a slowdown eases. */
-const ACCEL_RATE = 2.2;
-const ACCEL_RATE_BOOST = 3.4;
-const DECEL_RATE = 1.4;
 /**
  * First close approach inside this surface distance logs a POI. The cap
  * binds for the sprawling diffuse volumes — nebulae reach 2,940, clusters
@@ -434,17 +430,11 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
         ? Math.min(solidLimit, envelopeCap(nearestSolid.dist, nearestSolid.radius))
         : solidLimit) * (boost ? BOOST_LIMIT_FACTOR : 1);
     const targetSpeed = Math.min(boost ? CRUISE_SPEED * BOOST_FACTOR : CRUISE_SPEED, limit) * dragFactor;
-    // asymmetric response: the boost kick is felt, the slowdown never slams
-    const rate = velocity.length() < targetSpeed ? (boost ? ACCEL_RATE_BOOST : ACCEL_RATE) : DECEL_RATE;
+    const rate = speedResponseRate(velocity.length(), targetSpeed, boost);
     velocity.lerp(scratch.copy(forward).multiplyScalar(targetSpeed), Math.min(1, dt * rate));
     ship.position.addScaledVector(velocity, dt);
 
-    // boost widens the FOV a touch (same cue as the Home throttle burn)
-    const targetFov = boost ? BOOST_FOV : CRUISE_FOV;
-    if (Math.abs(camera.fov - targetFov) > 0.01) {
-      camera.fov += (targetFov - camera.fov) * Math.min(1, dt * 5);
-      camera.updateProjectionMatrix();
-    }
+    updateFov(camera, boost, dt);
 
     // floating origin: once the ship strays a sector from the render origin,
     // shift the whole render-local scene by an exact sector multiple — same

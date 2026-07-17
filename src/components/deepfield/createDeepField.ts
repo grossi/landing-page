@@ -8,8 +8,10 @@ import {
   FORWARD,
   KEY_STEER,
   PITCH_CLAMP,
+  speedResponseRate,
   steerAttitude,
   updateChaseCamera,
+  updateFov,
 } from 'engine/core/flight';
 import { createKeyTracker } from 'engine/core/keyTracker';
 import { createLodManager } from 'engine/lod/lodManager';
@@ -351,7 +353,11 @@ export function createDeepField(
     // Links and buttons layered over the backdrop keep their normal clicks.
     if (e.target instanceof Element && e.target.closest('a,button')) return;
     throttleDown = true;
-    boost = Math.min(boost + 2.6, 8);
+    // the click kick is a title-throttle gimmick; in play (like EPHEMERIS)
+    // pointer hold is just a burn, no impulse. Checking target too covers
+    // the sub-frame after ESC flips it, where blend still reads 1 but the
+    // mode is effectively disengage — the kick applies again there
+    if (!(blend === 1 && target === 1)) boost = Math.min(boost + 2.6, 8);
   };
   const onPointerUp = () => {
     throttleDown = false;
@@ -485,14 +491,24 @@ export function createDeepField(
     // The pointer works in every mode; the burn keys (W / ArrowUp / Space)
     // arm with the rest of the game controls at settle
     const burn = throttleDown || (playing && (keys.KeyW || keys.ArrowUp || keys.Space));
-    if (burn) boost += (8 - boost) * Math.min(1, dt * 1.6);
-    else boost += (1 - boost) * Math.min(1, dt * 1.1);
-    const speed = BASE_SPEED * boost;
-    const targetFov = 62 + (boost - 1) * 1.9;
-    if (Math.abs(camera.fov - targetFov) > 0.01) {
-      camera.fov += (targetFov - camera.fov) * Math.min(1, dt * 5);
-      camera.updateProjectionMatrix();
+    if (playing) {
+      // play runs the shared EPHEMERIS boost feel (flight.ts response rates
+      // and cruise/boost FOV cue) on the stream-speed multiplier — the ×8
+      // target is map-scale, not feel, so it stays deep-field. Both FOV laws
+      // ease at the same rate toward their targets, so mode edges glide.
+      const targetBoost = burn ? 8 : 1;
+      boost += (targetBoost - boost) * Math.min(1, dt * speedResponseRate(boost, targetBoost, burn));
+      updateFov(camera, burn, dt);
+    } else {
+      if (burn) boost += (8 - boost) * Math.min(1, dt * 1.6);
+      else boost += (1 - boost) * Math.min(1, dt * 1.1);
+      const targetFov = 62 + (boost - 1) * 1.9;
+      if (Math.abs(camera.fov - targetFov) > 0.01) {
+        camera.fov += (targetFov - camera.fov) * Math.min(1, dt * 5);
+        camera.updateProjectionMatrix();
+      }
     }
+    const speed = BASE_SPEED * boost;
 
     // steering: in play the ship is the authority — pointer deflection
     // integrates the attitude at game rates and the heading follows the

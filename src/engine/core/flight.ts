@@ -35,6 +35,18 @@ export const CAMERA_MAX_LAG = 12;
 export const CHASE_POS_RATE = 5;
 /** Chase-camera orientation slerp rate (1/s). */
 export const CHASE_QUAT_RATE = 6;
+/** Camera FOV at cruise / under boost (the DEEP FIELD throttle-widen cue). */
+export const CRUISE_FOV = 64;
+export const BOOST_FOV = 71;
+/** FOV easing rate (1/s). */
+export const FOV_RATE = 5;
+/**
+ * Velocity response rates (1/s), asymmetric on purpose: the boost kick is
+ * felt, the slowdown never slams.
+ */
+export const ACCEL_RATE = 2.2;
+export const ACCEL_RATE_BOOST = 3.4;
+export const DECEL_RATE = 1.4;
 
 export interface Attitude {
   yaw: number;
@@ -103,4 +115,22 @@ export function updateChaseCamera(
     camera.position.copy(camTarget).addScaledVector(scratchLag, CAMERA_MAX_LAG / lag);
   }
   camera.quaternion.slerp(shipQuaternion, Math.min(1, dt * CHASE_QUAT_RATE));
+}
+
+/**
+ * Eases the camera FOV toward the boost/cruise target; call once per frame.
+ * Boost widens the view a touch — the shared speed cue. Inert (and skips the
+ * projection-matrix rebuild) within 0.01 of the target.
+ */
+export function updateFov(camera: THREE.PerspectiveCamera, boost: boolean, dt: number): void {
+  const targetFov = boost ? BOOST_FOV : CRUISE_FOV;
+  if (Math.abs(camera.fov - targetFov) > 0.01) {
+    camera.fov += (targetFov - camera.fov) * Math.min(1, dt * FOV_RATE);
+    camera.updateProjectionMatrix();
+  }
+}
+
+/** Selects the asymmetric velocity response rate: accelerating chases the target (harder under boost), decelerating always eases. */
+export function speedResponseRate(currentSpeed: number, targetSpeed: number, boost: boolean): number {
+  return currentSpeed < targetSpeed ? (boost ? ACCEL_RATE_BOOST : ACCEL_RATE) : DECEL_RATE;
 }

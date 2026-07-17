@@ -1,14 +1,22 @@
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
 import {
+  ACCEL_RATE,
+  ACCEL_RATE_BOOST,
   attitudeFromDirection,
   attitudeQuaternion,
   bankBody,
+  BOOST_FOV,
   chaseTarget,
+  CRUISE_FOV,
+  DECEL_RATE,
   FORWARD,
+  FOV_RATE,
   KEY_STEER,
+  speedResponseRate,
   steerAttitude,
   updateChaseCamera,
+  updateFov,
   type Attitude,
 } from 'engine/core/flight';
 
@@ -101,5 +109,40 @@ describe('chase camera', () => {
     const q = new THREE.Quaternion();
     updateChaseCamera(camera, new THREE.Vector3(0, 0, 0), q, 1e-9);
     expect(camera.position.length()).toBeCloseTo(12, 6);
+  });
+});
+
+describe('boost dynamics', () => {
+  it('keeps the shared feel constants', () => {
+    expect(CRUISE_FOV).toBe(64);
+    expect(BOOST_FOV).toBe(71);
+    expect(FOV_RATE).toBe(5);
+    expect(ACCEL_RATE).toBe(2.2);
+    expect(ACCEL_RATE_BOOST).toBe(3.4);
+    expect(DECEL_RATE).toBe(1.4);
+  });
+
+  it('updateFov eases toward 71 under boost, back to 64 at cruise', () => {
+    const camera = new THREE.PerspectiveCamera(CRUISE_FOV);
+    // convergence lands just inside the 0.01 dead band, never tighter
+    for (let i = 0; i < 300; i++) updateFov(camera, true, 1 / 60);
+    expect(Math.abs(camera.fov - BOOST_FOV)).toBeLessThanOrEqual(0.011);
+    for (let i = 0; i < 300; i++) updateFov(camera, false, 1 / 60);
+    expect(Math.abs(camera.fov - CRUISE_FOV)).toBeLessThanOrEqual(0.011);
+  });
+
+  it('updateFov is inert within 0.01 of the target', () => {
+    const camera = new THREE.PerspectiveCamera(CRUISE_FOV + 0.005);
+    updateFov(camera, false, 1 / 60);
+    expect(camera.fov).toBe(CRUISE_FOV + 0.005);
+  });
+
+  it('speedResponseRate is asymmetric: accel chases, decel always eases', () => {
+    expect(speedResponseRate(50, 100, false)).toBe(ACCEL_RATE);
+    expect(speedResponseRate(50, 100, true)).toBe(ACCEL_RATE_BOOST);
+    expect(speedResponseRate(100, 50, false)).toBe(DECEL_RATE);
+    expect(speedResponseRate(100, 50, true)).toBe(DECEL_RATE);
+    // strict `<`: exactly at target counts as decel, boost or not
+    expect(speedResponseRate(100, 100, true)).toBe(DECEL_RATE);
   });
 });
