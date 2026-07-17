@@ -3,7 +3,9 @@ import {
   attitudeFromDirection,
   attitudeQuaternion,
   bankBody,
+  CAMERA_MAX_LAG,
   CHASE_OFFSET,
+  CHASE_POS_RATE,
   chaseTarget,
   FORWARD,
   KEY_STEER,
@@ -308,6 +310,10 @@ export function createDeepField(
   let target = 0;
   let blend = 0;
   let lastMode: DeepFieldMode = 'title';
+  // stand-in for the chase lerp's trail: here the ship never translates
+  // (the world streams past), so the lerp converges and would park the
+  // camera at the raw chase offset — twice as close as EPHEMERIS at cruise
+  let streamLag = 0;
 
   const play = () => {
     target = 1;
@@ -399,6 +405,7 @@ export function createDeepField(
   const rig = new THREE.PerspectiveCamera();
   const attitude = { yaw: 0, pitch: 0 };
   const offsetLocal = new THREE.Vector3();
+  const dockLocal = new THREE.Vector3();
   const chasePos = new THREE.Vector3();
   // the ship's live pose captured on ESC from settled play (see RESIDUAL_FADE)
   const exitPos = new THREE.Vector3();
@@ -510,6 +517,17 @@ export function createDeepField(
     }
     const speed = BASE_SPEED * boost;
 
+    // stream lag: reproduces, in the ship-static frame, the trail the
+    // ephemeris chase lerp develops while the ship translates — same
+    // dynamics, so the apparent ship distance and the boost pull-ahead cue
+    // match, and the trail winds out at the same rate through a disengage.
+    // The ease targets the PRE-clamp steady state (speed/rate) and clamps
+    // after, like the real lerp: under a burn the trail ramps at full rate
+    // into the cap instead of slowing asymptotically toward it.
+    const lagTarget = playing ? speed / CHASE_POS_RATE : 0;
+    streamLag += (lagTarget - streamLag) * Math.min(1, dt * CHASE_POS_RATE);
+    streamLag = Math.min(streamLag, CAMERA_MAX_LAG);
+
     // steering: in play the ship is the authority — pointer deflection
     // integrates the attitude at game rates and the heading follows the
     // nose, so flying is steering the stream. Otherwise the heading turns
@@ -598,7 +616,7 @@ export function createDeepField(
     // it swings with the nose.
     if (playing) {
       if (exitResidual) ship.position.copy(shipRawPos);
-      chaseTarget(chasePos, ship.quaternion, ship.position);
+      chaseTarget(chasePos, ship.quaternion, ship.position, streamLag);
       updateChaseCamera(camera, chasePos, ship.quaternion, dt);
       if (exitResidual) applyExitResidual();
     } else if (blend > 0) {
@@ -607,9 +625,18 @@ export function createDeepField(
       bankBody(shipBody, 0, dt);
       const s = easeInOutCubic(blend);
       const u = easeOutCubic(Math.min(1, blend / DOCK_FRACTION));
-      offsetLocal.lerpVectors(SHIP_ENTRY, SHIP_DOCK, u).applyQuaternion(ship.quaternion);
+      // lag-adjusted dock: dockLocal = −(CHASE_OFFSET + (0,0,streamLag)), the
+      // exact inverse of the lagged chase offset — so at u = 1 the chase read
+      // below closes on last frame's camera position for ANY streamLag:
+      // ship = cam + R·dockLocal, chase = ship + R·(CHASE_OFFSET+(0,0,lag))
+      // = cam. On a first engage streamLag is 0 (lagTarget is 0 outside
+      // play) and this is the original path; it only carries value briefly
+      // on an ESC from play, decaying at CHASE_POS_RATE.
+      dockLocal.copy(SHIP_DOCK);
+      dockLocal.z -= streamLag;
+      offsetLocal.lerpVectors(SHIP_ENTRY, dockLocal, u).applyQuaternion(ship.quaternion);
       ship.position.copy(camera.position).add(offsetLocal);
-      chaseTarget(chasePos, ship.quaternion, ship.position);
+      chaseTarget(chasePos, ship.quaternion, ship.position, streamLag);
       camera.position.lerpVectors(rig.position, chasePos, s);
       camera.quaternion.slerpQuaternions(rig.quaternion, ship.quaternion, s);
       if (exitResidual) applyExitResidual();

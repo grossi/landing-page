@@ -12,6 +12,7 @@ describe('engine barrel', () => {
     expect(engine.steerAttitude).toBeTypeOf('function'); // flight
     expect(engine.speedResponseRate).toBeTypeOf('function'); // flight (boost dynamics)
     expect(engine.CRUISE_FOV).toBeGreaterThan(0); // flight (FOV cue)
+    expect(engine.chaseLag).toBeTypeOf('function'); // flight (stream-lag emulation)
     expect(engine.createKeyTracker).toBeTypeOf('function'); // keyTracker
     expect(engine.speedLimit).toBeTypeOf('function'); // motion
     expect(engine.BOOST_LIMIT_FACTOR).toBeGreaterThan(0); // motion (was missing)

@@ -7,6 +7,7 @@ import {
   attitudeQuaternion,
   bankBody,
   BOOST_FOV,
+  chaseLag,
   chaseTarget,
   CRUISE_FOV,
   DECEL_RATE,
@@ -89,6 +90,31 @@ describe('chase camera', () => {
     const target = chaseTarget(new THREE.Vector3(), q, pos);
     const expected = new THREE.Vector3(0, 2.6, 9).applyQuaternion(q).add(pos);
     expect(target.distanceTo(expected)).toBeLessThan(1e-12);
+  });
+
+  it('chaseTarget with lag trails the no-lag target by (0, 0, lag) in the ship frame', () => {
+    const attitude: Attitude = { yaw: -0.9, pitch: 0.6 };
+    const q = attitudeQuaternion(attitude, new THREE.Quaternion());
+    const pos = new THREE.Vector3(-7, 3, 12);
+    const lagged = chaseTarget(new THREE.Vector3(), q, pos, 6.8);
+    const plain = chaseTarget(new THREE.Vector3(), q, pos);
+    const expected = plain.add(new THREE.Vector3(0, 0, 6.8).applyQuaternion(q));
+    expect(lagged.distanceTo(expected)).toBeLessThan(1e-12);
+  });
+
+  it('chaseTarget with lag 0 matches the 3-arg call exactly', () => {
+    const q = attitudeQuaternion({ yaw: 2.1, pitch: -0.5 }, new THREE.Quaternion());
+    const pos = new THREE.Vector3(4, -1, -30);
+    const explicit = chaseTarget(new THREE.Vector3(), q, pos, 0);
+    const implicit = chaseTarget(new THREE.Vector3(), q, pos);
+    expect(explicit.equals(implicit)).toBe(true);
+  });
+
+  it('chaseLag is the steady-state trail speed/5, clamped to 12', () => {
+    expect(chaseLag(34)).toBeCloseTo(6.8, 12); // deep-field cruise
+    expect(chaseLag(60)).toBe(12); // clamp knee: CHASE_POS_RATE · CAMERA_MAX_LAG
+    expect(chaseLag(100)).toBe(12); // 100/5 = 20 > CAMERA_MAX_LAG
+    expect(chaseLag(0)).toBe(0);
   });
 
   it('converges onto the target pose and is identity once there', () => {

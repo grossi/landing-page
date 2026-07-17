@@ -18,6 +18,7 @@ export {
   CHASE_OFFSET,
   CHASE_POS_RATE,
   CHASE_QUAT_RATE,
+  chaseLag,
   chaseTarget,
   CRUISE_FOV,
   DECEL_RATE,
