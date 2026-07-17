@@ -2,9 +2,12 @@ import * as THREE from 'three';
 import {
   attitudeFromDirection,
   attitudeQuaternion,
+  bankBody,
   CHASE_OFFSET,
   chaseTarget,
   PITCH_CLAMP,
+  steerAttitude,
+  updateChaseCamera,
 } from 'engine/core/flight';
 import { createLodManager } from 'engine/lod/lodManager';
 import { DODEC, ICO_MID, OCT, RING_THIN, wireMat } from 'engine/render/assets';
@@ -274,7 +277,7 @@ export function createDeepField(
   scene.add(dust.points);
 
   // ---- ship (hidden until the transition engages) ----
-  const { ship } = buildShipRig(tracker);
+  const { ship, shipBody } = buildShipRig(tracker);
   ship.visible = false;
   scene.add(ship);
 
@@ -296,19 +299,24 @@ export function createDeepField(
     target = 1;
     onMode?.('engage');
     // already settled at the far endpoint (flipped away and back between
-    // frames): the loop's arrival branch never runs, so land immediately
-    if (blend === 1) onMode?.('play');
+    // frames): the loop's arrival branch never runs, so seed and land here
+    if (blend === 1) {
+      attitudeFromDirection(attitude, heading);
+      onMode?.('play');
+    }
   };
   const exit = () => {
     if (target === 0) return;
     target = 0;
-    // from settled play the rig has no weight, so the title roll restarts
-    // level (matching the roll-free ship frame); mid-blend the rig is still
-    // visible and its live roll must stay continuous
-    if (blend === 1) roll = 0;
-    // hand the ship's forward back to the drift law (a no-op while the ship
-    // follows the heading; load-bearing once play mode steers the ship)
-    if (blend > 0) heading.copy(FORWARD).applyQuaternion(ship.quaternion);
+    if (blend === 1) {
+      // from settled play the rig has no weight, so the title roll restarts
+      // level (matching the roll-free ship frame)
+      roll = 0;
+      // hand the drift law the direction the chase camera actually faces:
+      // its trailing slerp lags the nose mid-turn, and seeding from the
+      // ship would snap the whole view by that residual
+      heading.copy(FORWARD).applyQuaternion(camera.quaternion);
+    }
     onMode?.('disengage');
     if (blend === 0) onMode?.('title');
   };
@@ -327,6 +335,9 @@ export function createDeepField(
   // ---- input ----
   const raycaster = new THREE.Raycaster();
   const ndc = new THREE.Vector2();
+  // play-mode steer keeps the ephemeris pointer convention (screen-down is
+  // +y), the opposite of the raycaster's NDC — never reuse ndc.y for steer
+  const pointer = { x: 0, y: 0 };
   let mouseActive = false;
   let throttleDown = false;
   let boost = 1;
@@ -337,6 +348,8 @@ export function createDeepField(
       ((e.clientX - rect.left) / rect.width) * 2 - 1,
       -((e.clientY - rect.top) / rect.height) * 2 + 1,
     );
+    pointer.x = ndc.x;
+    pointer.y = -ndc.y;
     mouseActive = true;
   };
   const onMouseLeave = () => {
@@ -429,12 +442,21 @@ export function createDeepField(
     if (blend !== target) {
       const step = dt / (target ? ENGAGE_S : DISENGAGE_S);
       blend = target ? Math.min(1, blend + step) : Math.max(0, blend - step);
-      if (blend === target) onMode?.(blend === 1 ? 'play' : 'title');
+      if (blend === target) {
+        // settling into play arms the controls: seed the control frame from
+        // the drift heading so steering starts from a well-defined attitude
+        if (blend === 1) attitudeFromDirection(attitude, heading);
+        onMode?.(blend === 1 ? 'play' : 'title');
+      }
     }
     s = easeInOutCubic(blend);
+    const playing = target === 1 && blend === 1;
 
-    // throttle: click kicks, hold burns, release coasts back to cruise
-    if (throttleDown) boost += (8 - boost) * Math.min(1, dt * 1.6);
+    // throttle: click kicks, holding burns, release coasts back to cruise.
+    // The pointer works in every mode; the burn keys (W / ArrowUp / Space)
+    // arm with the rest of the game controls at settle
+    const burn = throttleDown || (playing && (keys.KeyW || keys.ArrowUp || keys.Space));
+    if (burn) boost += (8 - boost) * Math.min(1, dt * 1.6);
     else boost += (1 - boost) * Math.min(1, dt * 1.1);
     const speed = BASE_SPEED * boost;
     const targetFov = 62 + (boost - 1) * 1.9;
@@ -448,10 +470,22 @@ export function createDeepField(
     rig.position.y = Math.cos(t * 0.036) * 10;
     rig.position.z = 0;
 
-    // steering: the heading turns slowly toward the cursor's ray. With the
-    // camera looking along the heading, an off-center cursor is a constant
-    // angular offset — a steady, gentle turn; recentering flies straight.
-    if (mouseActive) {
+    // steering: in play the ship is the authority — pointer deflection
+    // integrates the attitude at game rates and the heading follows the
+    // nose, so flying is steering the stream. Otherwise the heading turns
+    // slowly toward the cursor's ray. With the camera looking along the
+    // heading, an off-center cursor is a constant angular offset — a
+    // steady, gentle turn; recentering flies straight.
+    if (playing) {
+      let steerX = pointer.x;
+      let steerY = pointer.y;
+      if (keys.ArrowLeft || keys.KeyA) steerX = -0.7;
+      if (keys.ArrowRight || keys.KeyD) steerX = 0.7;
+      steerAttitude(attitude, steerX, steerY, dt);
+      attitudeQuaternion(attitude, ship.quaternion);
+      bankBody(shipBody, steerX, dt);
+      heading.copy(FORWARD).applyQuaternion(ship.quaternion);
+    } else if (mouseActive) {
       raycaster.setFromCamera(ndc, camera);
       heading.lerp(raycaster.ray.direction, Math.min(1, dt * 0.55));
     } else {
@@ -461,8 +495,10 @@ export function createDeepField(
 
     // keep the heading off the poles while the ship frame consumes it (see
     // MAX_HEADING_Y); eased rather than clamped so engaging from a steep
-    // title-mode climb pitches down gently instead of snapping
-    if (blend > 0 && Math.abs(heading.y) > MAX_HEADING_Y) {
+    // title-mode climb pitches down gently instead of snapping. Inert at
+    // blend == 1, where PITCH_CLAMP already bounds the ship-driven heading
+    // — gated off so the two mechanisms never fight
+    if (blend > 0 && blend < 1 && Math.abs(heading.y) > MAX_HEADING_Y) {
       heading.y += (Math.sign(heading.y) * MAX_HEADING_Y - heading.y) * Math.min(1, dt * 2);
       if (Math.hypot(heading.x, heading.z) < 1e-6) {
         // dead vertical leaves the descent direction arbitrary; pitch back
@@ -497,15 +533,23 @@ export function createDeepField(
     roll += (rollTarget - roll) * Math.min(1, dt * 2);
     if (roll !== 0) rig.rotateZ(roll);
 
-    // camera: the title rig verbatim, or a blend toward the chase pose. The
-    // ship follows the drift heading in a roll-free frame (the rig's roll
-    // winds out inside the slerp) and glides along its entry path relative
-    // to LAST frame's camera; both endpoints are live poses, so the blend is
-    // bit-identity at s = 0 and s = 1 — zero pop by construction. Holding
-    // the settled branch at blend == 1 keeps the exact chase pose each frame.
-    if (blend > 0) {
+    // camera: the title rig verbatim, a blend toward the chase pose, or —
+    // settled in play — the verbatim chase cam. Through the blend the ship
+    // follows the drift heading in a roll-free frame (the rig's roll winds
+    // out inside the slerp) and glides along its entry path relative to
+    // LAST frame's camera; both endpoints are live poses, so the blend is
+    // bit-identity at s = 0 and s = 1 — zero pop by construction. In play
+    // the ship stays put (the world streams past it, so speed reads from
+    // the stream, never from ship translation) and the chase lerp holds
+    // converged; it only works during turns, trailing the chase offset as
+    // it swings with the nose.
+    if (playing) {
+      chaseTarget(chasePos, ship.quaternion, ship.position);
+      updateChaseCamera(camera, chasePos, ship.quaternion, dt);
+    } else if (blend > 0) {
       attitudeFromDirection(attitude, heading);
       attitudeQuaternion(attitude, ship.quaternion);
+      bankBody(shipBody, 0, dt);
       const u = easeOutCubic(Math.min(1, blend / DOCK_FRACTION));
       offsetLocal.lerpVectors(SHIP_ENTRY, SHIP_DOCK, u).applyQuaternion(ship.quaternion);
       ship.position.copy(camera.position).add(offsetLocal);
