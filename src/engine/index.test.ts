@@ -9,6 +9,7 @@ describe('engine barrel', () => {
     // core
     expect(engine.mulberry32).toBeTypeOf('function'); // rng
     expect(engine.computeRebase).toBeTypeOf('function'); // floatingOrigin
+    expect(engine.steerAttitude).toBeTypeOf('function'); // flight
     expect(engine.speedLimit).toBeTypeOf('function'); // motion
     expect(engine.BOOST_LIMIT_FACTOR).toBeGreaterThan(0); // motion (was missing)
     expect(engine.createGovernorState).toBeTypeOf('function'); // governor
@@ -25,6 +26,7 @@ describe('engine barrel', () => {
     expect(engine.createStage).toBeTypeOf('function'); // stage
     expect(engine.createResourceTracker).toBeTypeOf('function'); // resourceTracker
     expect(engine.createStarfield).toBeTypeOf('function'); // starfield
+    expect(engine.buildShipRig).toBeTypeOf('function'); // shipRig
     expect(engine.attachStatsOverlay).toBeTypeOf('function'); // statsOverlay
     expect(engine.createDustField).toBeTypeOf('function'); // dust
     expect(engine.softSprite).toBeDefined(); // assets

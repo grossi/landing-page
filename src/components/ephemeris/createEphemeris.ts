@@ -1,4 +1,13 @@
 import * as THREE from 'three';
+import {
+  attitudeFromDirection,
+  attitudeQuaternion,
+  bankBody,
+  chaseTarget,
+  FORWARD,
+  steerAttitude,
+  updateChaseCamera,
+} from 'engine/core/flight';
 import { computeRebase } from 'engine/core/floatingOrigin';
 import {
   BOOST_LIMIT_FACTOR,
@@ -17,8 +26,8 @@ import {
   makeSurfaceFloor,
   type SurfaceFloor,
 } from 'engine/lod/surfaceFloor';
-import { wireMat } from 'engine/render/assets';
 import { createDustField } from 'engine/render/dust';
+import { buildShipRig } from 'engine/render/shipRig';
 import { createStage } from 'engine/render/stage';
 import { createStarfield } from 'engine/render/starfield';
 import { attachStatsOverlay } from 'engine/render/statsOverlay';
@@ -96,11 +105,6 @@ const BOOST_FACTOR = 40;
 /** Camera FOV at cruise / under boost (the DEEP FIELD throttle-widen cue). */
 const CRUISE_FOV = 64;
 const BOOST_FOV = 71;
-/**
- * Cap on how far the chase camera may trail its pose (units). The trail is
- * the speed cue, but past this the ship reads as a speck instead of fast.
- */
-const CAMERA_MAX_LAG = 12;
 /** Velocity response rates (1/s): a boost kicks, a slowdown eases. */
 const ACCEL_RATE = 2.2;
 const ACCEL_RATE_BOOST = 3.4;
@@ -259,21 +263,7 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
   };
 
   // ---- ship ----
-  const ship = new THREE.Group();
-  const shipBody = new THREE.Group(); // banked visually; `ship` carries the control frame
-  const noseGeo = tracker.track(new THREE.ConeGeometry(0.8, 2.6, 4));
-  noseGeo.rotateX(-Math.PI / 2); // nose toward -z (camera forward)
-  shipBody.add(new THREE.Mesh(noseGeo, tracker.track(wireMat(1))));
-  const wingGeo = tracker.track(
-    new THREE.BufferGeometry().setFromPoints([
-      new THREE.Vector3(-2, 0, 1),
-      new THREE.Vector3(0, 0, -1),
-      new THREE.Vector3(2, 0, 1),
-      new THREE.Vector3(-2, 0, 1),
-    ]),
-  );
-  shipBody.add(new THREE.Line(wingGeo, tracker.track(new THREE.LineBasicMaterial({ color: 0xffffff }))));
-  ship.add(shipBody);
+  const { ship, shipBody } = buildShipRig(tracker);
   // spawn just outside the home system: past the outermost planet's deepest
   // moon reach, with the same ~2,400-unit clearance the pre-scale layout
   // had (extent 9,591 → spawn 12,000; at home ×2, extent ~11,037 → ~13,437)
@@ -402,16 +392,14 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
   const scratch = new THREE.Vector3();
   const shipAbs = new THREE.Vector3();
   const rebase = new THREE.Vector3();
-  // scratch Euler for attitude → quaternion (a fresh one per frame is garbage)
-  const scratchEuler = new THREE.Euler(0, 0, 0, 'YXZ');
   // floor scratch: the radial direction in the body's local frame
   const floorDir = new THREE.Vector3();
   const floorQuat = new THREE.Quaternion();
 
   // start the camera in the chase pose — at the new world scale a swoop-in
   // from the scene origin would cross the whole home system
-  ship.quaternion.setFromEuler(scratchEuler.set(attitude.pitch, attitude.yaw, 0));
-  camera.position.copy(scratch.set(0, 2.6, 9).applyQuaternion(ship.quaternion).add(ship.position));
+  attitudeQuaternion(attitude, ship.quaternion);
+  camera.position.copy(chaseTarget(scratch, ship.quaternion, ship.position));
   camera.quaternion.copy(ship.quaternion);
 
   field.sync(shipAbs.copy(ship.position).add(origin), true);
@@ -423,11 +411,9 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
     const boost = pointerDown || keys.KeyW || keys.ArrowUp || keys.Space;
     if (keys.ArrowLeft || keys.KeyA) steerX = -0.7;
     if (keys.ArrowRight || keys.KeyD) steerX = 0.7;
-    attitude.yaw -= steerX * 2.2 * dt;
-    attitude.pitch -= steerY * 1.7 * dt;
-    attitude.pitch = Math.max(-1.35, Math.min(1.35, attitude.pitch));
-    ship.quaternion.setFromEuler(scratchEuler.set(attitude.pitch, attitude.yaw, 0));
-    shipBody.rotation.z += (-steerX * 0.9 - shipBody.rotation.z) * Math.min(1, dt * 8);
+    steerAttitude(attitude, steerX, steerY, dt);
+    attitudeQuaternion(attitude, ship.quaternion);
+    bankBody(shipBody, steerX, dt);
 
     // distance-proportional speed law: time-to-contact stays roughly
     // constant, so approaches decelerate into a skim automatically. The cap
@@ -437,7 +423,7 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
     // additionally clamped (min — it can only lower the law), the felt
     // beginning of the arrival ritual. Diffuse volumes contribute only
     // `dragFactor` — atmosphere, never a wall.
-    forward.set(0, 0, -1).applyQuaternion(ship.quaternion);
+    forward.copy(FORWARD).applyQuaternion(ship.quaternion);
     const approach = nearestSolid.dist === Infinity
       ? -1
       : forward.dot(scratch.copy(nearestSolid.center).sub(ship.position).normalize());
@@ -595,17 +581,8 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
       }
     }
 
-    // chase camera. The lerp trails the pose by ~speed/5 units, which reads
-    // as the ship pulling ahead under a burn — good — but unclamped it
-    // shrinks the ship to a speck at full boost, so cap the trail distance.
-    const camTarget = scratch.set(0, 2.6, 9).applyQuaternion(ship.quaternion).add(ship.position);
-    camera.position.lerp(camTarget, Math.min(1, dt * 5));
-    rebase.copy(camera.position).sub(camTarget); // scratch is camTarget — borrow rebase
-    const lag = rebase.length();
-    if (lag > CAMERA_MAX_LAG) {
-      camera.position.copy(camTarget).addScaledVector(rebase, CAMERA_MAX_LAG / lag);
-    }
-    camera.quaternion.slerp(ship.quaternion, Math.min(1, dt * 6));
+    // chase camera (engine/core/flight): trailing lerp capped at CAMERA_MAX_LAG
+    updateChaseCamera(camera, chaseTarget(scratch, ship.quaternion, ship.position), ship.quaternion, dt);
 
     // LOD after the camera settles: rung selection, dissolves, budgeted jobs
     lod.update(camera, container.clientHeight, dt);
@@ -642,11 +619,9 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
       velocity.set(0, 0, 0);
       envelopeAnnounced.clear(); // a warp is not an approach — start re-armed
       if (lookX !== undefined && lookY !== undefined && lookZ !== undefined) {
-        const dir = scratch.set(lookX - x, lookY - y, lookZ - z).normalize();
-        attitude.pitch = Math.asin(Math.max(-1, Math.min(1, dir.y)));
-        attitude.yaw = Math.atan2(-dir.x, -dir.z);
-        ship.quaternion.setFromEuler(scratchEuler.set(attitude.pitch, attitude.yaw, 0));
-        camera.position.copy(scratch.set(0, 2.6, 9).applyQuaternion(ship.quaternion).add(ship.position));
+        attitudeFromDirection(attitude, scratch.set(lookX - x, lookY - y, lookZ - z).normalize());
+        attitudeQuaternion(attitude, ship.quaternion);
+        camera.position.copy(chaseTarget(scratch, ship.quaternion, ship.position));
         camera.quaternion.copy(ship.quaternion);
       }
       field.sync(shipAbs.copy(ship.position).add(origin), true);

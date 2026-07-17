@@ -6,6 +6,25 @@
 export { hashCoords, makeName, mulberry32, pickFrom, SYLLABLES } from 'engine/core/rng';
 export { computeRebase, type Vec3Like } from 'engine/core/floatingOrigin';
 export {
+  attitudeFromDirection,
+  attitudeQuaternion,
+  BANK_PER_STEER,
+  BANK_RATE,
+  bankBody,
+  CAMERA_MAX_LAG,
+  CHASE_OFFSET,
+  CHASE_POS_RATE,
+  CHASE_QUAT_RATE,
+  chaseTarget,
+  FORWARD,
+  PITCH_CLAMP,
+  PITCH_RATE,
+  steerAttitude,
+  updateChaseCamera,
+  YAW_RATE,
+  type Attitude,
+} from 'engine/core/flight';
+export {
   BOOST_LIMIT_FACTOR,
   DECK_FLOOR,
   DIFFUSE_DRAG_FLOOR,
@@ -150,6 +169,7 @@ export {
   type ResourceTracker,
 } from 'engine/render/resourceTracker';
 export { createStarfield, type StarfieldOptions } from 'engine/render/starfield';
+export { buildShipRig, type ShipRig } from 'engine/render/shipRig';
 export {
   attachStatsOverlay,
   formatCount,
