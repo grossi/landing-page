@@ -11,13 +11,7 @@ import {
   steerAttitude,
   type Attitude,
 } from 'engine/core/flight';
-import {
-  createFlightRig,
-  SHIP_ARRIVAL_RATE,
-  SHIP_DEPART,
-  SHIP_DEPART_RATE,
-  SHIP_ENTRY,
-} from 'engine/render/flightRig';
+import { createFlightRig, SHIP_ARRIVAL_RATE, SHIP_ENTRY } from 'engine/render/flightRig';
 import { createResourceTracker } from 'engine/render/resourceTracker';
 
 const makeRig = () => createFlightRig(createResourceTracker());
@@ -163,28 +157,17 @@ describe('arm', () => {
     expect(SHIP_ENTRY.z).toBe(18);
   });
 
-  it('SHIP_DEPART is the along-the-nose prop departure at its 1.2/s ease', () => {
-    expect(SHIP_DEPART.x).toBe(0);
-    expect(SHIP_DEPART.y).toBe(0);
-    expect(SHIP_DEPART.z).toBe(-240);
-    expect(SHIP_DEPART_RATE).toBe(1.2);
-  });
-
   it('resets the visual prop and clears the station (re-engage state hygiene)', () => {
     const rig = makeRig();
     rig.flyTo(new THREE.Vector3(0, 0, -50));
     rig.shipBody.rotation.z = 0.4; // residual bank
-    rig.shipBody.position.set(0, 0, -120); // mid-departure prop offset
-    rig.setShipOpacity(0.2); // mid-departure fade
+    rig.shipBody.position.set(0, -2, 15); // mid-exit prop offset
     rig.arm(
       { position: new THREE.Vector3(), quaternion: new THREE.Quaternion(), fov: 64 },
       { x: 0, y: 0, z: -1 },
     );
     expect(rig.shipBody.rotation.z).toBe(0);
     expect(rig.shipBody.position.length()).toBe(0);
-    for (const child of rig.shipBody.children) {
-      expect(((child as THREE.Mesh).material as THREE.Material).opacity).toBe(1);
-    }
     rig.update(0.1, false);
     // no residual pull toward the stale station: the ship holds SHIP_ENTRY
     expect(rig.ship.position.equals(SHIP_ENTRY)).toBe(true);
@@ -270,6 +253,29 @@ describe('engage seam (arm → flyTo → update)', () => {
     for (let i = 0; i < 600; i++) rig.update(1 / 60, false);
     expect(rig.ship.position.distanceTo(station)).toBeLessThan(1e-3);
     expect(rig.pose.position.distanceTo(camPose.position)).toBeLessThan(1e-3);
+  });
+});
+
+describe('exit leg (return to hull)', () => {
+  it('easing shipBody toward R⁻¹·(cam − ship) + SHIP_ENTRY parks the prop at the camera hull position', () => {
+    const rig = makeRig();
+    rig.ship.position.set(30, -10, -80);
+    rig.seed(new THREE.Vector3(0.5, 0.2, -0.84).normalize());
+    // the camera the crossfade left somewhere else entirely
+    const camPos = new THREE.Vector3(4, 6, -50);
+    const inv = rig.ship.quaternion.clone().invert();
+    const targetLocal = camPos.clone().sub(rig.ship.position).applyQuaternion(inv).add(SHIP_ENTRY);
+    for (let i = 0; i < 600; i++) {
+      rig.shipBody.position.lerp(targetLocal, Math.min(1, (1 / 60) * SHIP_ARRIVAL_RATE));
+    }
+    // prop world position ship + R·shipBody lands at cam + R·SHIP_ENTRY —
+    // the hull position of the (here static) camera
+    const world = rig.shipBody.position
+      .clone()
+      .applyQuaternion(rig.ship.quaternion)
+      .add(rig.ship.position);
+    const expected = SHIP_ENTRY.clone().applyQuaternion(rig.ship.quaternion).add(camPos);
+    expect(world.distanceTo(expected)).toBeLessThan(1e-3);
   });
 });
 

@@ -15,7 +15,7 @@ import { pointerToNdc } from 'engine/core/pointerNdc';
 import { createLodManager } from 'engine/lod/lodManager';
 import { DODEC, ICO_MID, OCT, RING_THIN, wireMat } from 'engine/render/assets';
 import { createDustField } from 'engine/render/dust';
-import { createFlightRig, SHIP_DEPART, SHIP_DEPART_RATE } from 'engine/render/flightRig';
+import { createFlightRig, SHIP_ARRIVAL_RATE, SHIP_ENTRY } from 'engine/render/flightRig';
 import { applyQuality, createStage } from 'engine/render/stage';
 import { createStarfield } from 'engine/render/starfield';
 import { attachStatsOverlay } from 'engine/render/statsOverlay';
@@ -94,8 +94,6 @@ const GIANT_COUNT = 3;
 const STATION_OFFSET = new THREE.Vector3(0, 0, BASE_SPEED / CHASE_POS_RATE)
   .add(CHASE_OFFSET)
   .negate();
-/** Full departure distance — normalizes the prop fade's progress. */
-const DEPART_SPAN = SHIP_DEPART.length();
 
 export type DeepFieldMode = 'title' | 'engage' | 'play' | 'disengage';
 
@@ -394,8 +392,11 @@ export function createDeepField(
     fov: 62,
   };
   const station = new THREE.Vector3();
-  // the departure prop's home: shipBody centered on the control frame
+  // the prop's home: shipBody centered on the control frame (third person)
   const propHome = new THREE.Vector3();
+  // exit-leg scratch: the hull position expressed in the ship's local frame
+  const propTarget = new THREE.Vector3();
+  const propQuat = new THREE.Quaternion();
   const applyFov = (fov: number) => {
     if (camera.fov !== fov) {
       camera.fov = fov;
@@ -545,16 +546,15 @@ export function createDeepField(
       // deflection is stale
       resolveSteer(steer, steerLive ? ndc.x : 0, steerLive ? ndc.y : 0, keys);
       flightRig.steer(steer.x * s, steer.y * s, dt);
-      // departure prop returning home: PLAY caught mid-departure flies the
-      // ship back to the frame, its fade lifting with it. Inert in normal
-      // flight — arm zeroed the offset (and restored opacity), so settled
-      // play never enters the branch
+      // prop returning home: PLAY caught mid-exit flies the ship back out
+      // of the hull to the third-person frame as steer authority ramps in
+      // — the camera pulling back out. Inert in normal flight: arm zeroed
+      // the offset, so settled play never enters the branch
       if (flightRig.shipBody.position.lengthSq() > 0) {
-        flightRig.shipBody.position.lerp(propHome, Math.min(1, dt * SHIP_DEPART_RATE));
+        flightRig.shipBody.position.lerp(propHome, Math.min(1, dt * SHIP_ARRIVAL_RATE));
         // the exponential never reaches zero on its own; snap once
         // subvisual (<1 mm) so settled play re-arms the zero-work gate
         if (flightRig.shipBody.position.lengthSq() < 1e-6) flightRig.shipBody.position.set(0, 0, 0);
-        flightRig.setShipOpacity(1 - Math.min(1, flightRig.shipBody.position.length() / DEPART_SPAN));
       }
       shipForward.copy(FORWARD).applyQuaternion(ship.quaternion);
       // the heading trails the nose on an ease that stiffens as the blend
@@ -569,14 +569,26 @@ export function createDeepField(
     } else {
       if (blend > 0) {
         flightRig.steer(0, 0, dt);
-        // departure leg (prop-only, like banking): the released ship burns
-        // away along its own nose while the chase pose — still the
-        // crossfade's endpoint — stays calm. The fade tied to departure
-        // progress is what makes the blend-0 visibility cutoff silent:
-        // at ~218 u out the wireframe would otherwise still read ~14 px
-        // near where the player was looking (fog only dims it ~7%).
-        flightRig.shipBody.position.lerp(SHIP_DEPART, Math.min(1, dt * SHIP_DEPART_RATE));
-        flightRig.setShipOpacity(1 - Math.min(1, flightRig.shipBody.position.length() / DEPART_SPAN));
+        // exit leg (prop-only, like banking): the ship is "always there" —
+        // title is first person, inside the hull; play is third person.
+        // ESC is the camera moving back in, so the prop slides under the
+        // view and tucks into the hull position at the mixed camera (as of
+        // last frame — the mix runs below; one frame stale, continuous,
+        // identical endpoint): world target camera + R_ship·SHIP_ENTRY,
+        // expressed in the ship's local frame. Because the target tracks
+        // the moving camera — NOT the
+        // station — the prop ends behind the near plane wherever the title
+        // rig wound up, so the visibility cutoff at blend 0 is guaranteed
+        // imperceptible (~95% converged over DISENGAGE_S at the shared
+        // SHIP_ARRIVAL_RATE — one rate for both legs, symmetric by
+        // construction). The chase pose, still the crossfade's endpoint,
+        // never moves: the control frame is untouched.
+        propTarget
+          .copy(camera.position)
+          .sub(ship.position)
+          .applyQuaternion(propQuat.copy(ship.quaternion).invert())
+          .add(SHIP_ENTRY);
+        flightRig.shipBody.position.lerp(propTarget, Math.min(1, dt * SHIP_ARRIVAL_RATE));
       }
       if (mouseActive) {
         raycaster.setFromCamera(ndc, camera);
@@ -630,9 +642,9 @@ export function createDeepField(
     // ship translation) with the chase lerp converged, working only during
     // turns. Through a disengage the rig keeps simulating while it has
     // weight: after settled play the control frame is parked, so the pose
-    // endpoint holds still while the prop burns away along the nose; an
+    // endpoint holds still while the prop tucks back into the hull; an
     // ESC mid-engage leaves the arrival ease running, so frame and prop
-    // motion superpose along the nose — correct and harmless.
+    // motion superpose — correct and harmless.
     if (blend > 0) flightRig.update(dt, playing && burn, streamLag);
     if (blend === 0) {
       camera.position.copy(titleRig.position);

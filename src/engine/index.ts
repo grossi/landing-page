@@ -191,8 +191,6 @@ export { buildShipRig, type ShipRig } from 'engine/render/shipRig';
 export {
   createFlightRig,
   SHIP_ARRIVAL_RATE,
-  SHIP_DEPART,
-  SHIP_DEPART_RATE,
   SHIP_ENTRY,
   type FlightRig,
   type FlightRigPose,

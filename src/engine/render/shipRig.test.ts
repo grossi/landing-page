@@ -23,16 +23,6 @@ describe('buildShipRig', () => {
     expect(box.max.y).toBeLessThan(1.3);
   });
 
-  it('setOpacity drives both transparent materials (the departure fade)', () => {
-    const rig = buildShipRig(createResourceTracker());
-    rig.setOpacity(0.35);
-    for (const child of rig.shipBody.children) {
-      const mat = (child as THREE.Mesh).material as THREE.Material;
-      expect(mat.transparent).toBe(true);
-      expect(mat.opacity).toBe(0.35);
-    }
-  });
-
   it('tracks every geometry and material for disposal', () => {
     const tracker = createResourceTracker();
     const { shipBody } = buildShipRig(tracker);
