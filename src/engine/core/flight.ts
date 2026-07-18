@@ -148,7 +148,7 @@ export function chaseLag(speed: number): number {
  * capped at `CAMERA_MAX_LAG`.
  */
 export function updateChaseCamera(
-  camera: THREE.Object3D,
+  camera: { position: THREE.Vector3; quaternion: THREE.Quaternion },
   camTarget: THREE.Vector3,
   shipQuaternion: THREE.Quaternion,
   dt: number,
@@ -163,13 +163,26 @@ export function updateChaseCamera(
 }
 
 /**
+ * The pure FOV easing law: one step of `current` toward `targetFov` at the
+ * shared FOV_RATE. Inert (returns `current` unchanged) within the 0.01 dead
+ * band — callers key the projection-matrix rebuild off the value changing.
+ */
+export function easeFovValue(current: number, targetFov: number, dt: number): number {
+  if (Math.abs(current - targetFov) > 0.01) {
+    return current + (targetFov - current) * Math.min(1, dt * FOV_RATE);
+  }
+  return current;
+}
+
+/**
  * Eases the camera FOV toward `targetFov` at the shared FOV_RATE; call once
  * per frame. Inert (and skips the projection-matrix rebuild) within 0.01 of
  * the target.
  */
 export function easeFov(camera: THREE.PerspectiveCamera, targetFov: number, dt: number): void {
-  if (Math.abs(camera.fov - targetFov) > 0.01) {
-    camera.fov += (targetFov - camera.fov) * Math.min(1, dt * FOV_RATE);
+  const next = easeFovValue(camera.fov, targetFov, dt);
+  if (next !== camera.fov) {
+    camera.fov = next;
     camera.updateProjectionMatrix();
   }
 }

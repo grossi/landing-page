@@ -24,6 +24,7 @@ export {
   CRUISE_FOV,
   DECEL_RATE,
   easeFov,
+  easeFovValue,
   FORWARD,
   FOV_RATE,
   KEY_STEER,
@@ -187,6 +188,13 @@ export {
 } from 'engine/render/resourceTracker';
 export { createStarfield, type StarfieldOptions } from 'engine/render/starfield';
 export { buildShipRig, type ShipRig } from 'engine/render/shipRig';
+export {
+  createFlightRig,
+  SHIP_ARRIVAL_RATE,
+  SHIP_ENTRY,
+  type FlightRig,
+  type FlightRigPose,
+} from 'engine/render/flightRig';
 export {
   attachStatsOverlay,
   formatCount,

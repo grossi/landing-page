@@ -16,6 +16,7 @@ describe('engine barrel', () => {
     expect(engine.resolveSteer).toBeTypeOf('function'); // flight (steer resolution)
     expect(engine.burnKeysDown).toBeTypeOf('function'); // flight (burn predicate)
     expect(engine.easeFov).toBeTypeOf('function'); // flight (FOV ease primitive)
+    expect(engine.easeFovValue).toBeTypeOf('function'); // flight (pure FOV law)
     expect(engine.createKeyTracker).toBeTypeOf('function'); // keyTracker
     expect(engine.createListenerGroup).toBeTypeOf('function'); // listenerGroup
     expect(engine.pointerToNdc).toBeTypeOf('function'); // pointerNdc
@@ -37,6 +38,9 @@ describe('engine barrel', () => {
     expect(engine.createResourceTracker).toBeTypeOf('function'); // resourceTracker
     expect(engine.createStarfield).toBeTypeOf('function'); // starfield
     expect(engine.buildShipRig).toBeTypeOf('function'); // shipRig
+    expect(engine.createFlightRig).toBeTypeOf('function'); // flightRig
+    expect(engine.SHIP_ENTRY.z).toBe(18); // flightRig (engage entry offset)
+    expect(engine.SHIP_ARRIVAL_RATE).toBe(1.5); // flightRig (arrival ease)
     expect(engine.attachStatsOverlay).toBeTypeOf('function'); // statsOverlay
     expect(engine.createDustField).toBeTypeOf('function'); // dust
     expect(engine.softSprite).toBeDefined(); // assets

@@ -1,17 +1,10 @@
 import * as THREE from 'three';
 import {
-  attitudeFromDirection,
-  attitudeQuaternion,
-  bankBody,
   burnKeysDown,
-  chaseTarget,
   CRUISE_FOV,
   FORWARD,
   resolveSteer,
   speedResponseRate,
-  steerAttitude,
-  updateChaseCamera,
-  updateFov,
 } from 'engine/core/flight';
 import { computeRebase } from 'engine/core/floatingOrigin';
 import { createKeyTracker } from 'engine/core/keyTracker';
@@ -35,7 +28,7 @@ import {
   type SurfaceFloor,
 } from 'engine/lod/surfaceFloor';
 import { createDustField } from 'engine/render/dust';
-import { buildShipRig } from 'engine/render/shipRig';
+import { createFlightRig } from 'engine/render/flightRig';
 import { applyQuality, createStage } from 'engine/render/stage';
 import { createStarfield } from 'engine/render/starfield';
 import { attachStatsOverlay } from 'engine/render/statsOverlay';
@@ -263,8 +256,9 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
     lod.setBeacons(beacons);
   };
 
-  // ---- ship ----
-  const { ship, shipBody } = buildShipRig(tracker);
+  // ---- ship + virtual chase camera (engine/render/flightRig) ----
+  const rig = createFlightRig(tracker);
+  const { ship } = rig;
   // spawn just outside the home system: past the outermost planet's deepest
   // moon reach, with the same ~2,400-unit clearance the pre-scale layout
   // had (extent 9,591 → spawn 12,000; at home ×2, extent ~11,037 → ~13,437)
@@ -387,7 +381,6 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
   // ---- simulation loop ----
   const velocity = new THREE.Vector3();
   const steer = { x: 0, y: 0 };
-  const attitude = { yaw: 0, pitch: -0.04 };
   const forward = new THREE.Vector3();
   const scratch = new THREE.Vector3();
   const shipAbs = new THREE.Vector3();
@@ -397,10 +390,13 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
   const floorQuat = new THREE.Quaternion();
 
   // start the camera in the chase pose — at the new world scale a swoop-in
-  // from the scene origin would cross the whole home system
-  attitudeQuaternion(attitude, ship.quaternion);
-  camera.position.copy(chaseTarget(scratch, ship.quaternion, ship.position));
-  camera.quaternion.copy(ship.quaternion);
+  // from the scene origin would cross the whole home system. The slight
+  // spawn tilt is written straight into the control frame (a direction
+  // round-trip through asin/atan2 wouldn't reproduce it exactly).
+  rig.attitude.pitch = -0.04;
+  rig.seed();
+  camera.position.copy(rig.pose.position);
+  camera.quaternion.copy(rig.pose.quaternion);
 
   field.sync(shipAbs.copy(ship.position).add(origin), true);
 
@@ -410,9 +406,7 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
     // command super-unit deflection
     resolveSteer(steer, pointer.x, pointer.y, keys);
     const boost = pointerDown || burnKeysDown(keys);
-    steerAttitude(attitude, steer.x, steer.y, dt);
-    attitudeQuaternion(attitude, ship.quaternion);
-    bankBody(shipBody, steer.x, dt);
+    rig.steer(steer.x, steer.y, dt);
 
     // distance-proportional speed law: time-to-contact stays roughly
     // constant, so approaches decelerate into a skim automatically. The cap
@@ -440,16 +434,15 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
     velocity.lerp(scratch.copy(forward).multiplyScalar(targetSpeed), Math.min(1, dt * rate));
     ship.position.addScaledVector(velocity, dt);
 
-    updateFov(camera, boost, dt);
-
     // floating origin: once the ship strays a sector from the render origin,
     // shift the whole render-local scene by an exact sector multiple — same
     // frame, before sync and render, so it is visually invisible
     const delta = computeRebase(ship.position, SECTOR);
     if (delta) {
       rebase.set(delta.x, delta.y, delta.z);
-      ship.position.sub(rebase);
-      camera.position.sub(rebase);
+      // ship + virtual chase pose; the real camera picks up the shifted
+      // pose at the chase-site copy below, before this frame renders
+      rig.applyRebase(rebase);
       home.group.position.sub(rebase);
       home.group.updateMatrixWorld(true);
       field.applyOriginShift(rebase);
@@ -572,8 +565,17 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
       }
     }
 
-    // chase camera (engine/core/flight): trailing lerp capped at CAMERA_MAX_LAG
-    updateChaseCamera(camera, chaseTarget(scratch, ship.quaternion, ship.position), ship.quaternion, dt);
+    // virtual chase camera + FOV boost cue (engine/render/flightRig:
+    // trailing lerp capped at CAMERA_MAX_LAG), then project the rig's pose
+    // onto the real camera — the projection matrix rebuilds only when the
+    // eased FOV actually moved, the same dead-band cadence updateFov had
+    rig.update(dt, boost);
+    camera.position.copy(rig.pose.position);
+    camera.quaternion.copy(rig.pose.quaternion);
+    if (camera.fov !== rig.pose.fov) {
+      camera.fov = rig.pose.fov;
+      camera.updateProjectionMatrix();
+    }
 
     // LOD after the camera settles: rung selection, dissolves, budgeted jobs
     lod.update(camera, container.clientHeight, dt);
@@ -600,7 +602,11 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
         Math.floor(z / SECTOR) * SECTOR - origin.z,
       );
       if (rebase.lengthSq() > 0) {
-        camera.position.sub(rebase); // keep the chase pose — no cross-sector swoop
+        // keep the chase pose — no cross-sector swoop. The rig shifts the
+        // virtual pose (ship.position is rewritten just below anyway); the
+        // real camera shifts too so it stays the pose's mirror mid-warp.
+        rig.applyRebase(rebase);
+        camera.position.sub(rebase);
         home.group.position.sub(rebase);
         home.group.updateMatrixWorld(true);
         field.applyOriginShift(rebase);
@@ -610,10 +616,9 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
       velocity.set(0, 0, 0);
       envelopeAnnounced.clear(); // a warp is not an approach — start re-armed
       if (lookX !== undefined && lookY !== undefined && lookZ !== undefined) {
-        attitudeFromDirection(attitude, scratch.set(lookX - x, lookY - y, lookZ - z).normalize());
-        attitudeQuaternion(attitude, ship.quaternion);
-        camera.position.copy(chaseTarget(scratch, ship.quaternion, ship.position));
-        camera.quaternion.copy(ship.quaternion);
+        rig.seed(scratch.set(lookX - x, lookY - y, lookZ - z).normalize());
+        camera.position.copy(rig.pose.position);
+        camera.quaternion.copy(rig.pose.quaternion);
       }
       field.sync(shipAbs.copy(ship.position).add(origin), true);
     },

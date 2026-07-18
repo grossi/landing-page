@@ -13,6 +13,7 @@ import {
   CRUISE_FOV,
   DECEL_RATE,
   easeFov,
+  easeFovValue,
   FORWARD,
   FOV_RATE,
   KEY_STEER,
@@ -231,6 +232,23 @@ describe('boost dynamics', () => {
     const camera = new THREE.PerspectiveCamera(62);
     easeFov(camera, 63, 0.1);
     expect(camera.fov).toBeCloseTo(62 + 1 * 0.1 * FOV_RATE, 12); // 62.5
+  });
+
+  it('easeFovValue is the pure scalar law: FOV_RATE step, 0.01 dead band', () => {
+    expect(easeFovValue(62, 63, 0.1)).toBeCloseTo(62.5, 12); // 1 · 0.1 · 5
+    expect(easeFovValue(71, 64, 0.1)).toBeCloseTo(67.5, 12); // -7 · 0.1 · 5
+    expect(easeFovValue(64, 71, 10)).toBe(71); // step factor clamps at 1
+    // dead band: within 0.01 the value passes through UNCHANGED
+    expect(easeFovValue(64.005, 64, 1)).toBe(64.005);
+    expect(easeFovValue(63.995, 64, 1)).toBe(63.995); // inert from below too
+    expect(easeFovValue(64, 64, 1)).toBe(64);
+  });
+
+  it('easeFov applies easeFovValue to the camera (parity)', () => {
+    const camera = new THREE.PerspectiveCamera(66.2);
+    const expected = easeFovValue(66.2, 64, 1 / 60);
+    easeFov(camera, 64, 1 / 60);
+    expect(camera.fov).toBe(expected);
   });
 
   it('speedResponseRate is asymmetric: accel chases, decel always eases', () => {
