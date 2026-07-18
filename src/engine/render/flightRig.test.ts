@@ -5,12 +5,19 @@ import {
   attitudeQuaternion,
   bankBody,
   BOOST_FOV,
+  CHASE_OFFSET,
   chaseTarget,
   CRUISE_FOV,
   steerAttitude,
   type Attitude,
 } from 'engine/core/flight';
-import { createFlightRig, SHIP_ARRIVAL_RATE, SHIP_ENTRY } from 'engine/render/flightRig';
+import {
+  createFlightRig,
+  SHIP_ARRIVAL_RATE,
+  SHIP_DEPART,
+  SHIP_DEPART_RATE,
+  SHIP_ENTRY,
+} from 'engine/render/flightRig';
 import { createResourceTracker } from 'engine/render/resourceTracker';
 
 const makeRig = () => createFlightRig(createResourceTracker());
@@ -155,6 +162,33 @@ describe('arm', () => {
     expect(SHIP_ENTRY.y).toBe(-2.6);
     expect(SHIP_ENTRY.z).toBe(18);
   });
+
+  it('SHIP_DEPART is the along-the-nose prop departure at its 1.2/s ease', () => {
+    expect(SHIP_DEPART.x).toBe(0);
+    expect(SHIP_DEPART.y).toBe(0);
+    expect(SHIP_DEPART.z).toBe(-240);
+    expect(SHIP_DEPART_RATE).toBe(1.2);
+  });
+
+  it('resets the visual prop and clears the station (re-engage state hygiene)', () => {
+    const rig = makeRig();
+    rig.flyTo(new THREE.Vector3(0, 0, -50));
+    rig.shipBody.rotation.z = 0.4; // residual bank
+    rig.shipBody.position.set(0, 0, -120); // mid-departure prop offset
+    rig.setShipOpacity(0.2); // mid-departure fade
+    rig.arm(
+      { position: new THREE.Vector3(), quaternion: new THREE.Quaternion(), fov: 64 },
+      { x: 0, y: 0, z: -1 },
+    );
+    expect(rig.shipBody.rotation.z).toBe(0);
+    expect(rig.shipBody.position.length()).toBe(0);
+    for (const child of rig.shipBody.children) {
+      expect(((child as THREE.Mesh).material as THREE.Material).opacity).toBe(1);
+    }
+    rig.update(0.1, false);
+    // no residual pull toward the stale station: the ship holds SHIP_ENTRY
+    expect(rig.ship.position.equals(SHIP_ENTRY)).toBe(true);
+  });
 });
 
 describe('flyTo', () => {
@@ -191,6 +225,51 @@ describe('flyTo', () => {
     station.set(-9999, 0, 0); // caller reuses its scratch
     rig.update(0.1, false);
     expect(rig.ship.position.x).toBeCloseTo(1.5, 12); // toward 10, not -9999
+  });
+});
+
+describe('engage seam (arm → flyTo → update)', () => {
+  it('net camera travel ≈ 0: with the station at −(CHASE_OFFSET + trail), the converged pose returns to the arm pose', () => {
+    const rig = makeRig();
+    const heading = new THREE.Vector3(0.3, -0.2, -0.93).normalize();
+    const camPose = {
+      position: new THREE.Vector3(12, -3, 40),
+      quaternion: new THREE.Quaternion().setFromEuler(new THREE.Euler(0.2, 0.9, 0.1)),
+      fov: 63.1,
+    };
+    rig.arm(camPose, heading);
+    // deep-field cruise trail: BASE_SPEED / CHASE_POS_RATE = 34 / 5
+    const lag = 6.8;
+    const station = new THREE.Vector3(0, 0, lag)
+      .add(CHASE_OFFSET)
+      .negate()
+      .applyQuaternion(rig.ship.quaternion)
+      .add(camPose.position);
+    rig.flyTo(station);
+    for (let i = 0; i < 600; i++) rig.update(1 / 60, false, lag);
+    expect(rig.ship.position.distanceTo(station)).toBeLessThan(1e-3);
+    // chase closure: station + R·(CHASE_OFFSET + (0,0,lag)) = arm position
+    expect(rig.pose.position.distanceTo(camPose.position)).toBeLessThan(1e-3);
+    // orientation converges to the flight frame, not the arm pose
+    expect(rig.pose.quaternion.angleTo(rig.ship.quaternion)).toBeLessThan(1e-6);
+  });
+
+  it('closure holds at lag 0 too: station −CHASE_OFFSET alone returns the pose', () => {
+    const rig = makeRig();
+    const camPose = {
+      position: new THREE.Vector3(-5, 7, -20),
+      quaternion: new THREE.Quaternion(),
+      fov: 62,
+    };
+    rig.arm(camPose, new THREE.Vector3(-0.4, 0.1, -0.91).normalize());
+    const station = CHASE_OFFSET.clone()
+      .negate()
+      .applyQuaternion(rig.ship.quaternion)
+      .add(camPose.position);
+    rig.flyTo(station);
+    for (let i = 0; i < 600; i++) rig.update(1 / 60, false);
+    expect(rig.ship.position.distanceTo(station)).toBeLessThan(1e-3);
+    expect(rig.pose.position.distanceTo(camPose.position)).toBeLessThan(1e-3);
   });
 });
 

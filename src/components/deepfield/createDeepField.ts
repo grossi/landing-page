@@ -1,21 +1,13 @@
 import * as THREE from 'three';
 import {
-  attitudeFromDirection,
-  attitudeQuaternion,
-  bankBody,
   burnKeysDown,
   CAMERA_MAX_LAG,
   CHASE_OFFSET,
   CHASE_POS_RATE,
-  chaseTarget,
-  easeFov,
+  easeFovValue,
   FORWARD,
-  PITCH_CLAMP,
   resolveSteer,
   speedResponseRate,
-  steerAttitude,
-  updateChaseCamera,
-  updateFov,
 } from 'engine/core/flight';
 import { createKeyTracker } from 'engine/core/keyTracker';
 import { createListenerGroup } from 'engine/core/listenerGroup';
@@ -23,7 +15,7 @@ import { pointerToNdc } from 'engine/core/pointerNdc';
 import { createLodManager } from 'engine/lod/lodManager';
 import { DODEC, ICO_MID, OCT, RING_THIN, wireMat } from 'engine/render/assets';
 import { createDustField } from 'engine/render/dust';
-import { buildShipRig } from 'engine/render/shipRig';
+import { createFlightRig, SHIP_DEPART, SHIP_DEPART_RATE } from 'engine/render/flightRig';
 import { applyQuality, createStage } from 'engine/render/stage';
 import { createStarfield } from 'engine/render/starfield';
 import { attachStatsOverlay } from 'engine/render/statsOverlay';
@@ -90,32 +82,20 @@ const GIANT_COUNT = 3;
 
 // ---- transition choreography ----
 /**
- * Ship path through the engage blend, in the ship's own frame relative to
- * the camera: it enters low and behind the near plane, passes under the
- * view and docks at the exact inverse of the chase offset — so at full
- * blend the chase equation closes on the camera with zero pop.
+ * Engage arrival station, in the ship's frame relative to the camera pose
+ * the engage began from: the inverse of the chase offset extended by the
+ * cruise trail (BASE_SPEED / CHASE_POS_RATE). The flight rig flies the
+ * ship out to it while the crossfade runs; once its chase pose converges —
+ * trail included — the virtual camera lands back exactly where the engage
+ * began, so net camera travel ≈ 0 and the settle is seamless. The closure
+ * assumes the cruise trail: a burn held through settle parks the converged
+ * pose ~5 u off (aesthetic only — the crossfade stays continuous).
  */
-const SHIP_ENTRY = new THREE.Vector3(0, -2.6, 18);
-const SHIP_DOCK = CHASE_OFFSET.clone().negate();
-/** The ship docks at this fraction of the blend, before the camera settles. */
-const DOCK_FRACTION = 0.85;
-/**
- * On ESC from settled play the chase camera trails the nose mid-turn, so
- * the ship pose re-derived from it differs from the ship's live pose by the
- * lag residual (up to ~4 units / ~21°); that residual is eased out of the
- * prop over this fraction of DISENGAGE_S in real time — gone well before
- * the disengage endpoint, so the end-of-disengage math stays exact, and
- * keyed to time rather than blend so a re-engage mid-fade keeps easing
- * instead of snapping the prop.
- */
-const RESIDUAL_FADE = 0.3;
-/**
- * While the ship frame is live (blend > 0) the heading's pitch is eased
- * inside the play clamp: the roll-free YXZ attitude degenerates at the
- * poles — yaw sweeps ~π as the heading crosses vertical, a barrel-roll the
- * title rig's transported up absorbs but the chase pose would copy.
- */
-const MAX_HEADING_Y = Math.sin(PITCH_CLAMP);
+const STATION_OFFSET = new THREE.Vector3(0, 0, BASE_SPEED / CHASE_POS_RATE)
+  .add(CHASE_OFFSET)
+  .negate();
+/** Full departure distance — normalizes the prop fade's progress. */
+const DEPART_SPAN = SHIP_DEPART.length();
 
 export type DeepFieldMode = 'title' | 'engage' | 'play' | 'disengage';
 
@@ -295,8 +275,9 @@ export function createDeepField(
   );
   scene.add(dust.points);
 
-  // ---- ship (hidden until the transition engages) ----
-  const { ship, shipBody } = buildShipRig(tracker);
+  // ---- flight rig: ship + virtual chase camera (hidden until engage) ----
+  const flightRig = createFlightRig(tracker);
+  const { ship } = flightRig;
   ship.visible = false;
   scene.add(ship);
 
@@ -310,7 +291,6 @@ export function createDeepField(
   const ENGAGE_S = 2.6;
   const DISENGAGE_S = 2.0;
   const easeInOutCubic = (x: number) => (x < 0.5 ? 4 * x ** 3 : 1 - (-2 * x + 2) ** 3 / 2);
-  const easeOutCubic = (x: number) => 1 - (1 - x) ** 3;
   let target = 0;
   let blend = 0;
   let lastMode: DeepFieldMode = 'title';
@@ -397,34 +377,29 @@ export function createDeepField(
   let roll = 0;
 
   // The title rig's pose, computed every frame the blend has weight; the
-  // camera copies it in title mode and blends away from it through the
+  // camera copies it in title mode and crossfades away from it through the
   // transition. A camera (never rendered) rather than a plain Object3D so
   // lookAt aims down -z exactly like the real one.
-  const rig = new THREE.PerspectiveCamera();
-  const attitude = { yaw: 0, pitch: 0 };
+  const titleRig = new THREE.PerspectiveCamera();
+  // The title FOV law's own state, eased here and mixed into the camera by
+  // the crossfade weight. In play it freezes and the rig's 64/71 law owns
+  // the lens; a disengage resumes easing it toward the title target.
+  let titleFov = 62;
   const steer = { x: 0, y: 0 };
-  const offsetLocal = new THREE.Vector3();
-  const dockLocal = new THREE.Vector3();
-  const chasePos = new THREE.Vector3();
-  // the ship's live pose captured on ESC from settled play (see RESIDUAL_FADE)
-  const exitPos = new THREE.Vector3();
-  const exitQuat = new THREE.Quaternion();
-  const shipRawPos = new THREE.Vector3();
-  let exitResidual = false;
-  let exitFade = 0;
-  // prop-only correction, applied after the camera consumed the raw pose:
-  // the camera path stays exact while the visible ship eases from its
-  // captured live pose onto wherever the current mode drives it. The raw
-  // position is stashed so play mode — which never rewrites it — can
-  // restore the authority before the next chase read.
-  const applyExitResidual = () => {
-    const r = 1 - easeOutCubic(Math.min(1, exitFade / (RESIDUAL_FADE * DISENGAGE_S)));
-    if (r > 0) {
-      shipRawPos.copy(ship.position);
-      ship.position.lerp(exitPos, r);
-      ship.quaternion.slerp(exitQuat, r);
-    } else {
-      exitResidual = false;
+  const shipForward = new THREE.Vector3();
+  // scratch pose handed to flightRig.arm — a view of the real camera
+  const armPose = {
+    position: new THREE.Vector3(),
+    quaternion: new THREE.Quaternion(),
+    fov: 62,
+  };
+  const station = new THREE.Vector3();
+  // the departure prop's home: shipBody centered on the control frame
+  const propHome = new THREE.Vector3();
+  const applyFov = (fov: number) => {
+    if (camera.fov !== fov) {
+      camera.fov = fov;
+      camera.updateProjectionMatrix();
     }
   };
 
@@ -466,11 +441,39 @@ export function createDeepField(
     const mode: DeepFieldMode =
       blend === 1 ? 'play' : target === 1 ? 'engage' : blend > 0 ? 'disengage' : 'title';
     if (mode !== lastMode) {
-      if (mode === 'play') {
-        // settling into play arms the controls: seed the control frame from
-        // the drift heading, and drop the deflection recorded before the
-        // press — steering resumes on the next fresh move
-        attitudeFromDirection(attitude, heading);
+      if (mode === 'play' && lastMode === 'engage') {
+        // settle: release the arrival pull — the last ~0.7 u of approach
+        // would otherwise creep the world-fixed station (and the camera
+        // with it) through settled play, breaking the identity invariant
+        flightRig.flyTo(null);
+      }
+      if (mode === 'engage' && lastMode === 'disengage') {
+        // re-engage mid-fade: the rig is still live, so no re-arm — but
+        // re-issue the last station for state hygiene. If the previous
+        // engage settled, the station was cleared (above) with the ship
+        // ~0.7 u short of it (the settle residual) — resuming that whisper
+        // of approach is imperceptible; if ESC came mid-engage the rig
+        // still holds it — idempotent. Either way the arrival ease resumes
+        // wherever the ship is.
+        flightRig.flyTo(station);
+      }
+      if (mode === 'engage' && lastMode === 'title') {
+        // arm the flight rig on the real camera: its virtual chase pose
+        // starts exactly here (the crossfade opens at identity), the ship
+        // spawns low-and-behind on SHIP_ENTRY, and its arrival station is
+        // placed so the converged chase pose lands the camera back where
+        // it is now (STATION_OFFSET). Controls arm with the engage: the
+        // deflection recorded before the press is dropped — steering
+        // resumes on the next fresh move, authority ramping in with s.
+        // A re-engage caught mid-disengage skips all this: the rig is
+        // still live and simply keeps flying.
+        armPose.position.copy(camera.position);
+        armPose.quaternion.copy(camera.quaternion);
+        armPose.fov = camera.fov;
+        flightRig.arm(armPose, heading);
+        flightRig.flyTo(
+          station.copy(STATION_OFFSET).applyQuaternion(ship.quaternion).add(camera.position),
+        );
         steerLive = false;
       }
       if (mode === 'disengage' && lastMode === 'play') {
@@ -478,39 +481,36 @@ export function createDeepField(
         // restarts level (matching the roll-free ship frame)
         roll = 0;
         // hand the drift law the direction the chase camera actually faces:
-        // its trailing slerp lags the nose mid-turn, and seeding from the
-        // ship would snap the whole view by that residual — the ship prop
-        // instead keeps its live pose and eases onto the dock path
+        // its trailing slerp lags the nose mid-turn — the title heading
+        // resumes from what is on screen, while the ship simply stays
+        // parked at its station and recedes as the camera returns
         heading.copy(FORWARD).applyQuaternion(camera.quaternion);
-        exitPos.copy(ship.position);
-        exitQuat.copy(ship.quaternion);
-        exitResidual = true;
-        exitFade = 0;
       }
       lastMode = mode;
       onMode?.(mode);
     }
     const playing = mode === 'play';
-    if (exitResidual) exitFade += dt;
+    // crossfade weight: steering authority, heading hand-off and the
+    // camera mix all ride the same curve
+    const s = easeInOutCubic(blend);
 
     // throttle: click kicks, holding burns, release coasts back to cruise.
     // The pointer works in every mode; the burn keys (W / ArrowUp / Space)
     // arm with the rest of the game controls at settle
     const burn = throttleDown || (playing && burnKeysDown(keys));
     if (playing) {
-      // play runs the shared EPHEMERIS boost feel (flight.ts response rates
-      // and cruise/boost FOV cue) on the stream-speed multiplier — the ×8
-      // target is map-scale, not feel, so it stays deep-field. Both FOV laws
-      // ease at the same rate toward their targets, so mode edges glide.
+      // play runs the shared EPHEMERIS boost feel (flight.ts response
+      // rates) on the stream-speed multiplier — the ×8 target is
+      // map-scale, not feel, so it stays deep-field. The lens is the
+      // flight rig's own 64/71 law, mixed in at full weight below.
       const targetBoost = burn ? 8 : 1;
       boost += (targetBoost - boost) * Math.min(1, dt * speedResponseRate(boost, targetBoost, burn));
-      updateFov(camera, burn, dt);
     } else {
       if (burn) boost += (8 - boost) * Math.min(1, dt * 1.6);
       else boost += (1 - boost) * Math.min(1, dt * 1.1);
       // the title look deliberately targets its own 62 base (design-locked),
       // not the shared CRUISE_FOV — only the easing primitive is shared
-      easeFov(camera, 62 + (boost - 1) * 1.9, dt);
+      titleFov = easeFovValue(titleFov, 62 + (boost - 1) * 1.9, dt);
     }
     const speed = BASE_SPEED * boost;
 
@@ -520,55 +520,72 @@ export function createDeepField(
     // match, and the trail winds out at the same rate through a disengage.
     // The ease targets the PRE-clamp steady state (speed/rate) and clamps
     // after, like the real lerp: under a burn the trail ramps at full rate
-    // into the cap instead of slowing asymptotically toward it.
-    const lagTarget = playing ? speed / CHASE_POS_RATE : 0;
+    // into the cap instead of slowing asymptotically toward it. The trail
+    // develops from the first engage frame — the rig is live throughout.
+    const lagTarget = target === 1 && blend > 0 ? speed / CHASE_POS_RATE : 0;
     streamLag += (lagTarget - streamLag) * Math.min(1, dt * CHASE_POS_RATE);
     streamLag = Math.min(streamLag, CAMERA_MAX_LAG);
 
-    // steering: in play the ship is the authority — pointer deflection
-    // integrates the attitude at game rates and the heading follows the
-    // nose, so flying is steering the stream. Otherwise the heading turns
-    // slowly toward the cursor's ray. With the camera looking along the
-    // heading, an off-center cursor is a constant angular offset — a
-    // steady, gentle turn; recentering flies straight.
-    if (playing) {
+    // steering: while the engage target holds, the ship frame is the
+    // authority from the first blend frame — pointer deflection integrates
+    // the attitude at game rates with authority ramped by the crossfade
+    // (× s), so control fades in as the chase pose gains weight and is
+    // exact game feel at settle (s = 1). The heading eases onto the ship's
+    // nose (verbatim copy once settled), keeping the streaming world and
+    // the respawn corridor aligned with flight; the attitude is pitch-
+    // clamped from arm onward, so the heading never nears the poles while
+    // the ship frame is live. Disengaging, the rig still steers — at zero
+    // deflection, so the bank eases out — while the heading returns to the
+    // cursor drift law: an off-center cursor is a constant angular offset,
+    // a steady gentle turn; recentering flies straight.
+    if (target === 1 && blend > 0) {
       // resolveSteer flips ndc.y to the ephemeris screen-down sense and
       // clamps (window-level moves over the site header land past ±1); the
       // steerLive gate zeroes only the pointer — keys still steer while the
       // deflection is stale
       resolveSteer(steer, steerLive ? ndc.x : 0, steerLive ? ndc.y : 0, keys);
-      steerAttitude(attitude, steer.x, steer.y, dt);
-      attitudeQuaternion(attitude, ship.quaternion);
-      bankBody(shipBody, steer.x, dt);
-      heading.copy(FORWARD).applyQuaternion(ship.quaternion);
-    } else if (mouseActive) {
-      raycaster.setFromCamera(ndc, camera);
-      heading.lerp(raycaster.ray.direction, Math.min(1, dt * 0.55));
+      flightRig.steer(steer.x * s, steer.y * s, dt);
+      // departure prop returning home: PLAY caught mid-departure flies the
+      // ship back to the frame, its fade lifting with it. Inert in normal
+      // flight — arm zeroed the offset (and restored opacity), so settled
+      // play never enters the branch
+      if (flightRig.shipBody.position.lengthSq() > 0) {
+        flightRig.shipBody.position.lerp(propHome, Math.min(1, dt * SHIP_DEPART_RATE));
+        // the exponential never reaches zero on its own; snap once
+        // subvisual (<1 mm) so settled play re-arms the zero-work gate
+        if (flightRig.shipBody.position.lengthSq() < 1e-6) flightRig.shipBody.position.set(0, 0, 0);
+        flightRig.setShipOpacity(1 - Math.min(1, flightRig.shipBody.position.length() / DEPART_SPAN));
+      }
+      shipForward.copy(FORWARD).applyQuaternion(ship.quaternion);
+      // the heading trails the nose on an ease that stiffens as the blend
+      // closes (factor → 1 continuously as s → 1), so the trailing gap is
+      // wound out BY settle — the verbatim copy below never snaps it
+      // s === 1 is reachable with blend < 1 (easeInOutCubic rounds to 1.0
+      // just under the endpoint): the division would be 0/0 on a dt = 0
+      // frame (clampDt floors at 0 on resume) — NaN into the heading,
+      // permanently. The copy IS the ease's limit in that window.
+      if (s === 1) heading.copy(shipForward);
+      else heading.lerp(shipForward, Math.min(1, (dt * 3) / (1 - s)));
     } else {
-      heading.lerp(FORWARD, Math.min(1, dt * 0.08));
+      if (blend > 0) {
+        flightRig.steer(0, 0, dt);
+        // departure leg (prop-only, like banking): the released ship burns
+        // away along its own nose while the chase pose — still the
+        // crossfade's endpoint — stays calm. The fade tied to departure
+        // progress is what makes the blend-0 visibility cutoff silent:
+        // at ~218 u out the wireframe would otherwise still read ~14 px
+        // near where the player was looking (fog only dims it ~7%).
+        flightRig.shipBody.position.lerp(SHIP_DEPART, Math.min(1, dt * SHIP_DEPART_RATE));
+        flightRig.setShipOpacity(1 - Math.min(1, flightRig.shipBody.position.length() / DEPART_SPAN));
+      }
+      if (mouseActive) {
+        raycaster.setFromCamera(ndc, camera);
+        heading.lerp(raycaster.ray.direction, Math.min(1, dt * 0.55));
+      } else {
+        heading.lerp(FORWARD, Math.min(1, dt * 0.08));
+      }
     }
     heading.normalize();
-
-    // keep the heading off the poles while the ship frame consumes it (see
-    // MAX_HEADING_Y); eased rather than clamped so engaging from a steep
-    // title-mode climb pitches down gently instead of snapping. Inert at
-    // blend == 1, where PITCH_CLAMP already bounds the ship-driven heading
-    // — gated off so the two mechanisms never fight
-    if (blend > 0 && blend < 1 && Math.abs(heading.y) > MAX_HEADING_Y) {
-      heading.y += (Math.sign(heading.y) * MAX_HEADING_Y - heading.y) * Math.min(1, dt * 2);
-      let horizontal = Math.hypot(heading.x, heading.z);
-      if (horizontal < 1e-6) {
-        // dead vertical leaves the descent direction arbitrary; pitch back
-        // the way the transported up frame came from (camUp ⊥ heading, so
-        // it is horizontal here — but only approximately unit, so remeasure)
-        heading.x = -camUp.x;
-        heading.z = -camUp.z;
-        horizontal = Math.hypot(heading.x, heading.z);
-      }
-      const k = Math.sqrt(1 - heading.y ** 2) / horizontal;
-      heading.x *= k;
-      heading.z *= k;
-    }
 
     // parallel-transport the up basis: strip its heading component so the
     // view rolls smoothly through vertical flight instead of snapping at the
@@ -585,60 +602,50 @@ export function createDeepField(
     // blend just updated above, so the first disengage frame recomputes a
     // fresh pose before the camera blend reads it.
     if (blend < 1) {
-      rig.position.x = Math.sin(t * 0.045) * 16;
-      rig.position.y = Math.cos(t * 0.036) * 10;
-      rig.position.z = 0;
-      rig.up.copy(camUp);
-      lookTarget.copy(rig.position).addScaledVector(heading, 520);
+      titleRig.position.x = Math.sin(t * 0.045) * 16;
+      titleRig.position.y = Math.cos(t * 0.036) * 10;
+      titleRig.position.z = 0;
+      titleRig.up.copy(camUp);
+      lookTarget.copy(titleRig.position).addScaledVector(heading, 520);
       lookTarget.x += Math.sin(t * 0.058) * 20;
       lookTarget.y += Math.cos(t * 0.049) * 12;
-      rig.lookAt(lookTarget);
+      titleRig.lookAt(lookTarget);
       // bank with the commanded turn, not the world direction — cruising
       // along any axis flies level
       const rollTarget = mouseActive ? THREE.MathUtils.clamp(-ndc.x * 0.3, -0.3, 0.3) : 0;
       roll += (rollTarget - roll) * Math.min(1, dt * 2);
-      if (roll !== 0) rig.rotateZ(roll);
+      if (roll !== 0) titleRig.rotateZ(roll);
     }
 
-    // camera: the title rig verbatim, a blend toward the chase pose, or —
-    // settled in play — the verbatim chase cam. Through the blend the ship
-    // follows the drift heading in a roll-free frame (the rig's roll winds
-    // out inside the slerp) and glides along its entry path relative to
-    // LAST frame's camera; both endpoints are live poses, so the blend is
-    // bit-identity at s = 0 and s = 1 — zero pop by construction. In play
-    // the ship stays put (the world streams past it, so speed reads from
-    // the stream, never from ship translation) and the chase lerp holds
-    // converged; it only works during turns, trailing the chase offset as
-    // it swings with the nose.
-    if (playing) {
-      if (exitResidual) ship.position.copy(shipRawPos);
-      chaseTarget(chasePos, ship.quaternion, ship.position, streamLag);
-      updateChaseCamera(camera, chasePos, ship.quaternion, dt);
-      if (exitResidual) applyExitResidual();
-    } else if (blend > 0) {
-      attitudeFromDirection(attitude, heading);
-      attitudeQuaternion(attitude, ship.quaternion);
-      bankBody(shipBody, 0, dt);
-      const s = easeInOutCubic(blend);
-      const u = easeOutCubic(Math.min(1, blend / DOCK_FRACTION));
-      // lag-adjusted dock: dockLocal = −(CHASE_OFFSET + (0,0,streamLag)), the
-      // exact inverse of the lagged chase offset — so at u = 1 the chase read
-      // below closes on last frame's camera position for ANY streamLag:
-      // ship = cam + R·dockLocal, chase = ship + R·(CHASE_OFFSET+(0,0,lag))
-      // = cam. On a first engage streamLag is 0 (lagTarget is 0 outside
-      // play) and this is the original path; it only carries value briefly
-      // on an ESC from play, decaying at CHASE_POS_RATE.
-      dockLocal.copy(SHIP_DOCK);
-      dockLocal.z -= streamLag;
-      offsetLocal.lerpVectors(SHIP_ENTRY, dockLocal, u).applyQuaternion(ship.quaternion);
-      ship.position.copy(camera.position).add(offsetLocal);
-      chaseTarget(chasePos, ship.quaternion, ship.position, streamLag);
-      camera.position.lerpVectors(rig.position, chasePos, s);
-      camera.quaternion.slerpQuaternions(rig.quaternion, ship.quaternion, s);
-      if (exitResidual) applyExitResidual();
+    // camera: two live rigs, one crossfade. The title rig and the flight
+    // rig's virtual chase camera each run their own full laws every frame
+    // they have weight; the real camera is a single mix — position lerp,
+    // quaternion slerp, fov lerp — weighted by s. Both endpoints are live
+    // poses, so the mix is bit-identity at s = 0 and s = 1: title mode and
+    // settled play run their exact laws, and the transition is nothing but
+    // the fade between them. Through an engage the rig's ship flies out to
+    // its station (net camera travel ≈ 0 once the trail converges); at
+    // settle the arrival pull is released and the ship stays parked (the
+    // world streams past it, so speed reads from the stream, never from
+    // ship translation) with the chase lerp converged, working only during
+    // turns. Through a disengage the rig keeps simulating while it has
+    // weight: after settled play the control frame is parked, so the pose
+    // endpoint holds still while the prop burns away along the nose; an
+    // ESC mid-engage leaves the arrival ease running, so frame and prop
+    // motion superpose along the nose — correct and harmless.
+    if (blend > 0) flightRig.update(dt, playing && burn, streamLag);
+    if (blend === 0) {
+      camera.position.copy(titleRig.position);
+      camera.quaternion.copy(titleRig.quaternion);
+      applyFov(titleFov);
+    } else if (blend === 1) {
+      camera.position.copy(flightRig.pose.position);
+      camera.quaternion.copy(flightRig.pose.quaternion);
+      applyFov(flightRig.pose.fov);
     } else {
-      camera.position.copy(rig.position);
-      camera.quaternion.copy(rig.quaternion);
+      camera.position.lerpVectors(titleRig.position, flightRig.pose.position, s);
+      camera.quaternion.slerpQuaternions(titleRig.quaternion, flightRig.pose.quaternion, s);
+      applyFov(titleFov + (flightRig.pose.fov - titleFov) * s);
     }
     ship.visible = blend > 0;
 

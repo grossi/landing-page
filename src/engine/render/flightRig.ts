@@ -26,6 +26,21 @@ export const SHIP_ENTRY = new THREE.Vector3(0, -2.6, 18);
  * so arrival needn't finish on any schedule.
  */
 export const SHIP_ARRIVAL_RATE = 1.5;
+/**
+ * Prop departure offset, in the ship's local frame: straight out along the
+ * nose. A scene eases `shipBody.position` toward it on exit — prop-only,
+ * like banking, so the control frame (and the chase pose) never moves. The
+ * visibility cutoff at the end of the exit is handled by the departure
+ * FADE (`setShipOpacity` driven by departure progress), not by distance —
+ * at ~240 u the wireframe would still be a dim few pixels.
+ */
+export const SHIP_DEPART = new THREE.Vector3(0, 0, -240);
+/**
+ * Prop departure ease rate (1/s): exponential toward a far point starts
+ * fast — the ship burns away the moment you release it, decelerating only
+ * once it's tiny.
+ */
+export const SHIP_DEPART_RATE = 1.2;
 
 /** A virtual camera pose: what a scene copies (or blends) into its real one. */
 export interface FlightRigPose {
@@ -70,6 +85,11 @@ export interface FlightRig {
   /** Sets (or with `null` clears) the world-space arrival target. */
   flyTo(station: THREE.Vector3 | null): void;
   /**
+   * Prop fade (shipRig `setOpacity`): both wireframe materials at once —
+   * the departure fade. `arm` restores 1.
+   */
+  setShipOpacity(opacity: number): void;
+  /**
    * One frame of the rig's own dynamics: arrival ease (if a station is
    * set), then the chase lerp/slerp onto `pose`, then the FOV boost cue.
    * `trailLag` extends the chase offset for world-streams-past scenes
@@ -92,7 +112,7 @@ export interface FlightRig {
  * `arm`) before the first frame. Zero allocation in `steer`/`update`.
  */
 export function createFlightRig(tracker: ResourceTracker): FlightRig {
-  const { ship, shipBody } = buildShipRig(tracker);
+  const { ship, shipBody, setOpacity } = buildShipRig(tracker);
   const attitude: Attitude = { yaw: 0, pitch: 0 };
   const pose: FlightRigPose = {
     position: new THREE.Vector3(),
@@ -125,6 +145,8 @@ export function createFlightRig(tracker: ResourceTracker): FlightRig {
     arm(camPose, heading) {
       hasStation = false; // a re-engage must not inherit the last station
       shipBody.rotation.z = 0; // nor a residual bank from the last flight
+      shipBody.position.set(0, 0, 0); // nor a mid-departure prop offset
+      setOpacity(1); // nor its departure fade
       attitudeFromDirection(attitude, heading);
       attitudeQuaternion(attitude, ship.quaternion);
       ship.position
@@ -138,6 +160,7 @@ export function createFlightRig(tracker: ResourceTracker): FlightRig {
       hasStation = target !== null;
       if (target) station.copy(target);
     },
+    setShipOpacity: setOpacity,
     update(dt, boost, trailLag = 0) {
       if (hasStation) ship.position.lerp(station, Math.min(1, dt * SHIP_ARRIVAL_RATE));
       chaseTarget(scratchChase, ship.quaternion, ship.position, trailLag);
