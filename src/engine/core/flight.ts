@@ -18,7 +18,7 @@ export const YAW_RATE = 2.2;
 export const PITCH_RATE = 1.7;
 /** Pitch clamp (rad) — keeps the nose off the poles, where yaw degenerates. */
 export const PITCH_CLAMP = 1.35;
-/** Steer deflection commanded by the A/D and arrow keys. */
+/** Steer deflection commanded by the WASD and arrow keys. */
 export const KEY_STEER = 0.7;
 /** Visual bank angle per unit of steer (rad), leaning into the turn. */
 export const BANK_PER_STEER = 0.9;
@@ -62,8 +62,9 @@ const scratchLag = new THREE.Vector3();
  * standard GL NDC (y up); the output steer is screen-down (pointer below
  * center pitches down) — the y flip lives here and nowhere else. Both axes
  * clamp to ±1: window-level listeners and captured pointers keep reporting
- * past the canvas edge. The A/D and arrow keys override the pointer's x
- * at the fixed KEY_STEER deflection.
+ * past the canvas edge. WASD and the arrow keys override the pointer at
+ * the fixed KEY_STEER deflection; note positive steer y is nose DOWN, so
+ * W/ArrowUp (tilt up) command −KEY_STEER.
  */
 export function resolveSteer(
   out: { x: number; y: number },
@@ -75,11 +76,13 @@ export function resolveSteer(
   out.y = Math.max(-1, Math.min(1, -ndcY));
   if (keys.ArrowLeft || keys.KeyA) out.x = -KEY_STEER;
   if (keys.ArrowRight || keys.KeyD) out.x = KEY_STEER;
+  if (keys.ArrowUp || keys.KeyW) out.y = -KEY_STEER;
+  if (keys.ArrowDown || keys.KeyS) out.y = KEY_STEER;
 }
 
-/** True while any burn key (W / ArrowUp / Space) is held. */
+/** True while the burn key (Space) is held. */
 export function burnKeysDown(keys: Record<string, boolean>): boolean {
-  return !!(keys.KeyW || keys.ArrowUp || keys.Space);
+  return !!keys.Space;
 }
 
 /** Integrates one steering frame: pointer deflection into the attitude. */
@@ -114,10 +117,9 @@ export function bankBody(body: THREE.Object3D, steerX: number, dt: number): void
 
 /**
  * Writes the chase camera's target pose position into `out` and returns it.
- * `lag` extends the offset along −FORWARD (further behind the ship) in the
- * local frame before rotating into world — callers whose ship never
- * translates pass `chaseLag(speed)` here to stand in for the trail the
- * position lerp would otherwise develop. Default 0: the plain chase pose.
+ * `lag` pushes the offset further behind the ship (local frame, before the
+ * world rotation) — world-streams-past callers pass `chaseLag(speed)` to
+ * stand in for the trail the position lerp would develop on a moving ship.
  */
 export function chaseTarget(
   out: THREE.Vector3,
@@ -131,11 +133,9 @@ export function chaseTarget(
 }
 
 /**
- * Steady-state trail the chase position lerp develops when the ship
- * translates at `speed` (units behind the pose, clamped like the lerp is).
- * For callers in the world-streams-past frame — ship stationary, so the
- * lerp fully converges — who must emulate that trail to keep the ship at
- * the same apparent distance.
+ * Steady-state trail the chase position lerp develops at `speed` (units
+ * behind the pose, clamped like the lerp is) — feeds `chaseTarget` from
+ * stationary-ship callers to keep the apparent ship distance in parity.
  */
 export function chaseLag(speed: number): number {
   return Math.min(speed / CHASE_POS_RATE, CAMERA_MAX_LAG);
@@ -163,9 +163,9 @@ export function updateChaseCamera(
 }
 
 /**
- * The pure FOV easing law: one step of `current` toward `targetFov` at the
- * shared FOV_RATE. Inert (returns `current` unchanged) within the 0.01 dead
- * band — callers key the projection-matrix rebuild off the value changing.
+ * One step of `current` toward `targetFov` at FOV_RATE. Returns `current`
+ * unchanged within the 0.01 dead band — callers key the projection-matrix
+ * rebuild off the value changing.
  */
 export function easeFovValue(current: number, targetFov: number, dt: number): number {
   if (Math.abs(current - targetFov) > 0.01) {
@@ -174,11 +174,7 @@ export function easeFovValue(current: number, targetFov: number, dt: number): nu
   return current;
 }
 
-/**
- * Eases the camera FOV toward `targetFov` at the shared FOV_RATE; call once
- * per frame. Inert (and skips the projection-matrix rebuild) within 0.01 of
- * the target.
- */
+/** Per-frame easeFovValue applied to a real camera, skipping the projection-matrix rebuild when inert. */
 export function easeFov(camera: THREE.PerspectiveCamera, targetFov: number, dt: number): void {
   const next = easeFovValue(camera.fov, targetFov, dt);
   if (next !== camera.fov) {
@@ -187,10 +183,7 @@ export function easeFov(camera: THREE.PerspectiveCamera, targetFov: number, dt: 
   }
 }
 
-/**
- * Eases the camera FOV toward the boost/cruise target; call once per frame.
- * Boost widens the view a touch — the shared speed cue.
- */
+/** Eases the FOV toward the boost/cruise target — boost widens the view a touch, the shared speed cue. */
 export function updateFov(camera: THREE.PerspectiveCamera, boost: boolean, dt: number): void {
   easeFov(camera, boost ? BOOST_FOV : CRUISE_FOV, dt);
 }

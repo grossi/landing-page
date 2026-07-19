@@ -496,8 +496,8 @@ export function createDeepField(
     const s = easeInOutCubic(blend);
 
     // throttle: click kicks, holding burns, release coasts back to cruise.
-    // The pointer works in every mode; the burn keys (W / ArrowUp / Space)
-    // arm with the rest of the game controls at settle
+    // The pointer works in every mode; the burn key (Space) arms with the
+    // rest of the game controls at settle
     const burn = throttleDown || (playing && burnKeysDown(keys));
     if (playing) {
       // play runs the shared EPHEMERIS boost feel (flight.ts response

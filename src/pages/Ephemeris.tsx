@@ -134,7 +134,7 @@ const Ephemeris = () => {
             letterSpacing=".28em"
             opacity={0.45}
           >
-            MOUSE STEERS &middot; HOLD / W = BURN &middot; NOTHING HERE CAN HURT YOU
+            MOUSE OR WASD STEERS &middot; HOLD / SPACE = BURN &middot; NOTHING HERE CAN HURT YOU
           </Text>
         </Box>
       </Box>

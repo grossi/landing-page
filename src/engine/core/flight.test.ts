@@ -68,11 +68,11 @@ describe('resolveSteer', () => {
     expect(out.y).toBe(-1);
   });
 
-  it('key overrides win over the pointer at ±KEY_STEER, x only', () => {
+  it('key overrides win over the pointer at ±KEY_STEER on x', () => {
     const out = { x: 0, y: 0 };
     resolveSteer(out, 0.9, 0.5, { ArrowLeft: true });
     expect(out.x).toBe(-0.7); // -KEY_STEER
-    expect(out.y).toBe(-0.5); // y untouched by keys
+    expect(out.y).toBe(-0.5); // y untouched by x keys
     resolveSteer(out, -0.9, 0, { KeyA: true });
     expect(out.x).toBe(-0.7);
     resolveSteer(out, -0.9, 0, { ArrowRight: true });
@@ -83,18 +83,34 @@ describe('resolveSteer', () => {
     resolveSteer(out, 0, 0, { KeyA: true, KeyD: true });
     expect(out.x).toBe(0.7);
   });
+
+  it('key overrides win over the pointer at ±KEY_STEER on y (W/up = nose up = negative)', () => {
+    const out = { x: 0, y: 0 };
+    resolveSteer(out, 0.5, -0.9, { KeyW: true });
+    expect(out.y).toBe(-0.7); // -KEY_STEER
+    expect(out.x).toBe(0.5); // x untouched by y keys
+    resolveSteer(out, 0, -0.9, { ArrowUp: true });
+    expect(out.y).toBe(-0.7);
+    resolveSteer(out, 0, 0.9, { KeyS: true });
+    expect(out.y).toBe(0.7); // KEY_STEER
+    resolveSteer(out, 0, 0.9, { ArrowDown: true });
+    expect(out.y).toBe(0.7);
+    // down wins when both are held — the override order, matching A+D
+    resolveSteer(out, 0, 0, { KeyW: true, KeyS: true });
+    expect(out.y).toBe(0.7);
+  });
 });
 
 describe('burnKeysDown', () => {
-  it('is true for each burn key alone', () => {
-    expect(burnKeysDown({ KeyW: true })).toBe(true);
-    expect(burnKeysDown({ ArrowUp: true })).toBe(true);
+  it('is true only for Space — W/ArrowUp pitch now, they no longer burn', () => {
     expect(burnKeysDown({ Space: true })).toBe(true);
+    expect(burnKeysDown({ KeyW: true })).toBe(false);
+    expect(burnKeysDown({ ArrowUp: true })).toBe(false);
   });
 
   it('is false with no burn key held (including released entries)', () => {
     expect(burnKeysDown({})).toBe(false);
-    expect(burnKeysDown({ KeyW: false, KeyA: true, ArrowDown: true })).toBe(false);
+    expect(burnKeysDown({ Space: false, KeyA: true, ArrowDown: true })).toBe(false);
   });
 });
 
