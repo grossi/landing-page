@@ -3,8 +3,6 @@ import { describe, expect, it } from 'vitest';
 import {
   ACCEL_RATE,
   ACCEL_RATE_BOOST,
-  attitudeFromDirection,
-  attitudeQuaternion,
   bankBody,
   BOOST_FOV,
   burnKeysDown,
@@ -17,33 +15,133 @@ import {
   FORWARD,
   FOV_RATE,
   KEY_STEER,
+  LEVEL_RATE,
+  LEVEL_STEER_FADE,
+  levelRoll,
+  PITCH_RATE,
+  quaternionFromDirection,
   resolveSteer,
   speedResponseRate,
-  steerAttitude,
+  steerQuaternion,
   updateChaseCamera,
   updateFov,
-  type Attitude,
+  WORLD_UP,
+  YAW_RATE,
 } from 'engine/core/flight';
 
-describe('steerAttitude', () => {
-  it('integrates the ephemeris steering rates', () => {
-    const attitude: Attitude = { yaw: 0, pitch: 0 };
-    steerAttitude(attitude, 0.5, -0.25, 0.1);
-    expect(attitude.yaw).toBeCloseTo(-0.11, 12); // 0.5 · 2.2 rad/s · 0.1 s
-    expect(attitude.pitch).toBeCloseTo(0.0425, 12); // 0.25 · 1.7 rad/s · 0.1 s
+const yxz = (pitch: number, yaw: number, roll = 0) =>
+  new THREE.Quaternion().setFromEuler(new THREE.Euler(pitch, yaw, roll, 'YXZ'));
+
+describe('steerQuaternion', () => {
+  it('integrates the steering rates about the body axes', () => {
+    const q = new THREE.Quaternion();
+    steerQuaternion(q, 0.5, -0.25, 0.1);
+    const e = new THREE.Euler(0, 0, 0, 'YXZ').setFromQuaternion(q);
+    expect(e.y).toBeCloseTo(-0.11, 12); // 0.5 · 2.2 rad/s · 0.1 s
+    expect(e.x).toBeCloseTo(0.0425, 12); // 0.25 · 1.7 rad/s · 0.1 s
+    expect(e.z).toBeCloseTo(0, 12);
   });
 
-  it('clamps pitch to ±1.35 rad but never yaw', () => {
-    const attitude: Attitude = { yaw: 0, pitch: 0 };
-    for (let i = 0; i < 100; i++) steerAttitude(attitude, 1, -1, 0.1);
-    expect(attitude.pitch).toBe(1.35);
-    expect(attitude.yaw).toBeCloseTo(-22, 9); // 2.2 rad/s · 10 s
-    for (let i = 0; i < 200; i++) steerAttitude(attitude, 0, 1, 0.1);
-    expect(attitude.pitch).toBe(-1.35);
+  it('has no pitch clamp: 2π of held pitch closes the loop back to the start', () => {
+    const q = new THREE.Quaternion();
+    const steps = 1000;
+    const dt = (2 * Math.PI) / (KEY_STEER * PITCH_RATE) / steps; // W held: −KEY_STEER
+    for (let i = 0; i < steps; i++) steerQuaternion(q, 0, -KEY_STEER, dt);
+    expect(q.angleTo(new THREE.Quaternion())).toBeLessThan(1e-5);
+  });
+
+  it('2π of held yaw also closes (circles)', () => {
+    const q = new THREE.Quaternion();
+    const steps = 1000;
+    const dt = (2 * Math.PI) / (KEY_STEER * YAW_RATE) / steps;
+    for (let i = 0; i < steps; i++) steerQuaternion(q, KEY_STEER, 0, dt);
+    expect(q.angleTo(new THREE.Quaternion())).toBeLessThan(1e-5);
+  });
+
+  it('stays unit length over many mixed steps', () => {
+    const q = new THREE.Quaternion();
+    for (let i = 0; i < 5000; i++) {
+      steerQuaternion(q, Math.sin(i * 0.13), Math.cos(i * 0.31), 1 / 60);
+    }
+    expect(Math.abs(q.length() - 1)).toBeLessThan(1e-12);
   });
 
   it('keys deflect at 0.7 of full steer', () => {
     expect(KEY_STEER).toBe(0.7);
+  });
+});
+
+describe('levelRoll', () => {
+  const rollOf = (q: THREE.Quaternion) =>
+    new THREE.Euler(0, 0, 0, 'YXZ').setFromQuaternion(q).z;
+
+  it('converges a rolled horizon back to level in a few seconds', () => {
+    const q = yxz(0, 0, 0.8);
+    for (let i = 0; i < 240; i++) levelRoll(q, 0, 1 / 60); // 4 s hands-off
+    expect(Math.abs(rollOf(q))).toBeLessThan(0.03);
+  });
+
+  it('never touches the heading: forward is invariant under leveling', () => {
+    const q = yxz(0.6, -1.1, 0.9);
+    const before = FORWARD.clone().applyQuaternion(q);
+    for (let i = 0; i < 600; i++) levelRoll(q, 0, 1 / 60);
+    expect(FORWARD.clone().applyQuaternion(q).distanceTo(before)).toBeLessThan(1e-6);
+  });
+
+  it('is inert at zero error and at rate 0', () => {
+    const level = yxz(0.4, 1.2);
+    const frozen = level.clone();
+    levelRoll(level, 0, 1 / 60);
+    expect(level.equals(frozen)).toBe(true);
+    const rolled = yxz(0, 0, 0.5);
+    const rolledFrozen = rolled.clone();
+    levelRoll(rolled, 0, 1 / 60, WORLD_UP, 0);
+    expect(rolled.equals(rolledFrozen)).toBe(true);
+  });
+
+  it('fades to nothing at the pole (nose straight up, level is meaningless)', () => {
+    const q = yxz(Math.PI / 2, 0, 0.6);
+    const frozen = q.clone();
+    levelRoll(q, 0, 1 / 60);
+    expect(q.angleTo(frozen)).toBeLessThan(1e-9);
+  });
+
+  it('fades out under steer: silent at LEVEL_STEER_FADE, weaker in between', () => {
+    const steered = yxz(0, 0, 0.5);
+    const frozen = steered.clone();
+    levelRoll(steered, LEVEL_STEER_FADE, 1 / 60);
+    expect(steered.equals(frozen)).toBe(true);
+    levelRoll(steered, KEY_STEER, 1 / 60); // key steer is past the fade knee
+    expect(steered.equals(frozen)).toBe(true);
+    const half = yxz(0, 0, 0.5);
+    const free = yxz(0, 0, 0.5);
+    levelRoll(half, LEVEL_STEER_FADE / 2, 1 / 60);
+    levelRoll(free, 0, 1 / 60);
+    expect(Math.abs(rollOf(half))).toBeGreaterThan(Math.abs(rollOf(free)));
+  });
+
+  it('rolls an inverted ship the long way back upright, heading invariant (intended assist feel)', () => {
+    // hands-off inverted level flight: err ≈ π. The assist takes it — a
+    // maneuver never sees this because steer ≥ LEVEL_STEER_FADE silences it.
+    const q = yxz(0, 0, Math.PI - 0.05); // just off exactly inverted
+    const before = FORWARD.clone().applyQuaternion(q);
+    for (let i = 0; i < 600; i++) levelRoll(q, 0, 1 / 60); // 10 s hands-off
+    expect(Math.abs(rollOf(q))).toBeLessThan(0.03);
+    expect(FORWARD.clone().applyQuaternion(q).distanceTo(before)).toBeLessThan(1e-6);
+  });
+
+  it('levels toward an arbitrary reference up (the planet-surface hook)', () => {
+    const q = new THREE.Quaternion(); // level vs world, 90° rolled vs +X
+    const up = new THREE.Vector3(1, 0, 0);
+    for (let i = 0; i < 600; i++) levelRoll(q, 0, 1 / 60, up);
+    expect(new THREE.Vector3(0, 1, 0).applyQuaternion(q).distanceTo(up)).toBeLessThan(1e-3);
+    // still a pure roll: forward never left (0, 0, -1)
+    expect(FORWARD.clone().applyQuaternion(q).distanceTo(FORWARD)).toBeLessThan(1e-6);
+  });
+
+  it('keeps the gentle feel constants', () => {
+    expect(LEVEL_RATE).toBe(1.2);
+    expect(LEVEL_STEER_FADE).toBe(0.5);
   });
 });
 
@@ -114,34 +212,41 @@ describe('burnKeysDown', () => {
   });
 });
 
-describe('attitude ↔ direction', () => {
-  it('round-trips: FORWARD through attitudeQuaternion recovers the seeded direction', () => {
-    const attitude: Attitude = { yaw: 0, pitch: 0 };
+describe('quaternionFromDirection', () => {
+  it('round-trips: FORWARD through the result recovers the direction, steep ones included', () => {
     const q = new THREE.Quaternion();
     const dir = new THREE.Vector3();
-    for (const [x, y, z] of [[0, 0, -1], [1, 0, 0], [0.3, 0.8, -0.2], [-0.5, -0.6, 0.4]]) {
+    const seeds = [
+      [0, 0, -1],
+      [1, 0, 0],
+      [0.3, 0.8, -0.2],
+      [-0.5, -0.6, 0.4],
+      [0.05, 1, -0.05], // steeper than the old pitch clamp — now exact
+    ];
+    for (const [x, y, z] of seeds) {
       const seed = new THREE.Vector3(x, y, z).normalize();
-      attitudeFromDirection(attitude, seed);
-      dir.copy(FORWARD).applyQuaternion(attitudeQuaternion(attitude, q));
-      expect(dir.distanceTo(seed)).toBeLessThan(1e-12);
+      dir.copy(FORWARD).applyQuaternion(quaternionFromDirection(q, seed));
+      expect(dir.distanceTo(seed)).toBeLessThan(1e-6);
     }
   });
 
-  it('clamps near-vertical directions to the pitch envelope', () => {
-    const attitude: Attitude = { yaw: 0, pitch: 0 };
-    attitudeFromDirection(attitude, new THREE.Vector3(0.05, 1, -0.05).normalize());
-    expect(attitude.pitch).toBe(1.35);
-    attitudeFromDirection(attitude, new THREE.Vector3(0, -1, 0));
-    expect(attitude.pitch).toBe(-1.35);
+  it('levels the roll against the reference up', () => {
+    const q = quaternionFromDirection(new THREE.Quaternion(), new THREE.Vector3(0.3, 0.5, -0.8).normalize());
+    // local right ⊥ world up, local up in the up half-space: no roll
+    expect(Math.abs(new THREE.Vector3(1, 0, 0).applyQuaternion(q).dot(WORLD_UP))).toBeLessThan(1e-9);
+    expect(new THREE.Vector3(0, 1, 0).applyQuaternion(q).dot(WORLD_UP)).toBeGreaterThan(0);
   });
 
-  it('produces a roll-free frame (pitch/yaw only)', () => {
-    const attitude: Attitude = { yaw: 0.7, pitch: -0.3 };
-    const e = new THREE.Euler(0, 0, 0, 'YXZ');
-    e.setFromQuaternion(attitudeQuaternion(attitude, new THREE.Quaternion()));
-    expect(e.z).toBeCloseTo(0, 12);
-    expect(e.x).toBeCloseTo(-0.3, 12);
-    expect(e.y).toBeCloseTo(0.7, 12);
+  it('honors a custom reference up', () => {
+    const up = new THREE.Vector3(1, 0, 0);
+    const q = quaternionFromDirection(new THREE.Quaternion(), new THREE.Vector3(0, 0, -1), up);
+    expect(new THREE.Vector3(0, 1, 0).applyQuaternion(q).distanceTo(up)).toBeLessThan(1e-9);
+  });
+
+  it('stays finite and on-heading at the degenerate dir ∥ up pole', () => {
+    const q = quaternionFromDirection(new THREE.Quaternion(), new THREE.Vector3(0, 1, 0));
+    expect(Math.abs(q.length() - 1)).toBeLessThan(1e-9);
+    expect(FORWARD.clone().applyQuaternion(q).distanceTo(new THREE.Vector3(0, 1, 0))).toBeLessThan(1e-3);
   });
 });
 
@@ -155,8 +260,7 @@ describe('bankBody', () => {
 
 describe('chase camera', () => {
   it('chaseTarget applies the (0, 2.6, 9) ship-frame offset', () => {
-    const attitude: Attitude = { yaw: Math.PI / 3, pitch: 0.4 };
-    const q = attitudeQuaternion(attitude, new THREE.Quaternion());
+    const q = yxz(0.4, Math.PI / 3);
     const pos = new THREE.Vector3(10, -4, 25);
     const target = chaseTarget(new THREE.Vector3(), q, pos);
     const expected = new THREE.Vector3(0, 2.6, 9).applyQuaternion(q).add(pos);
@@ -164,8 +268,7 @@ describe('chase camera', () => {
   });
 
   it('chaseTarget with lag trails the no-lag target by (0, 0, lag) in the ship frame', () => {
-    const attitude: Attitude = { yaw: -0.9, pitch: 0.6 };
-    const q = attitudeQuaternion(attitude, new THREE.Quaternion());
+    const q = yxz(0.6, -0.9);
     const pos = new THREE.Vector3(-7, 3, 12);
     const lagged = chaseTarget(new THREE.Vector3(), q, pos, 6.8);
     const plain = chaseTarget(new THREE.Vector3(), q, pos);
@@ -174,7 +277,7 @@ describe('chase camera', () => {
   });
 
   it('chaseTarget with lag 0 matches the 3-arg call exactly', () => {
-    const q = attitudeQuaternion({ yaw: 2.1, pitch: -0.5 }, new THREE.Quaternion());
+    const q = yxz(-0.5, 2.1);
     const pos = new THREE.Vector3(4, -1, -30);
     const explicit = chaseTarget(new THREE.Vector3(), q, pos, 0);
     const implicit = chaseTarget(new THREE.Vector3(), q, pos);

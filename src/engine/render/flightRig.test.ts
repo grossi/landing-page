@@ -1,38 +1,41 @@
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
 import {
-  attitudeFromDirection,
-  attitudeQuaternion,
   bankBody,
   BOOST_FOV,
   CHASE_OFFSET,
   chaseTarget,
   CRUISE_FOV,
-  steerAttitude,
-  type Attitude,
+  FORWARD,
+  levelRoll,
+  quaternionFromDirection,
+  steerQuaternion,
 } from 'engine/core/flight';
 import { createFlightRig, SHIP_ARRIVAL_RATE, SHIP_ENTRY } from 'engine/render/flightRig';
 import { createResourceTracker } from 'engine/render/resourceTracker';
 
 const makeRig = () => createFlightRig(createResourceTracker());
+const forwardOf = (q: THREE.Quaternion) => FORWARD.clone().applyQuaternion(q);
 
 describe('createFlightRig', () => {
   it('owns the shared ship rig and starts the pose at CRUISE_FOV', () => {
     const rig = makeRig();
     expect(rig.ship.children).toEqual([rig.shipBody]);
     expect(rig.pose.fov).toBe(CRUISE_FOV);
-    expect(rig.attitude).toEqual({ yaw: 0, pitch: 0 });
+    expect(rig.ship.quaternion.equals(new THREE.Quaternion())).toBe(true);
+    // leveler reference: world up by default, owned (not the shared const)
+    expect(rig.levelUp.equals(new THREE.Vector3(0, 1, 0))).toBe(true);
   });
 });
 
 describe('seed', () => {
-  it('seeds the attitude from the direction (attitudeFromDirection literals)', () => {
+  it('seeds the attitude from the direction, steep headings included (no clamp)', () => {
     const rig = makeRig();
     rig.seed({ x: 0, y: 0, z: 1 }); // straight back
-    expect(rig.attitude.pitch).toBe(0);
-    expect(rig.attitude.yaw).toBe(-Math.PI); // atan2(-0, -1): the -x flip
-    rig.seed(new THREE.Vector3(0.05, 1, -0.05).normalize());
-    expect(rig.attitude.pitch).toBe(1.35); // PITCH_CLAMP
+    expect(forwardOf(rig.ship.quaternion).distanceTo(new THREE.Vector3(0, 0, 1))).toBeLessThan(1e-6);
+    const steep = new THREE.Vector3(0.05, 1, -0.05).normalize();
+    rig.seed(steep); // steeper than the old pitch clamp — now exact
+    expect(forwardOf(rig.ship.quaternion).distanceTo(steep)).toBeLessThan(1e-6);
   });
 
   it('parks the pose exactly at the converged chase pose (lag 0)', () => {
@@ -47,12 +50,12 @@ describe('seed', () => {
 
   it('without a direction keeps the hand-set attitude (the spawn tilt)', () => {
     const rig = makeRig();
-    rig.attitude.pitch = -0.04;
+    const tilt = new THREE.Quaternion().setFromEuler(new THREE.Euler(-0.04, 0, 0, 'YXZ'));
+    rig.ship.quaternion.copy(tilt);
     rig.ship.position.set(0, 680, 13437);
     rig.seed();
-    const q = attitudeQuaternion({ yaw: 0, pitch: -0.04 }, new THREE.Quaternion());
-    expect(rig.ship.quaternion.equals(q)).toBe(true);
-    const expected = chaseTarget(new THREE.Vector3(), q, rig.ship.position);
+    expect(rig.ship.quaternion.equals(tilt)).toBe(true);
+    const expected = chaseTarget(new THREE.Vector3(), tilt, rig.ship.position);
     expect(rig.pose.position.equals(expected)).toBe(true);
   });
 });
@@ -60,20 +63,34 @@ describe('seed', () => {
 describe('steer', () => {
   it('matches the pure-helper composition over many frames (parity)', () => {
     const rig = makeRig();
-    const attitude: Attitude = { yaw: 0, pitch: 0 };
     const q = new THREE.Quaternion();
     const body = new THREE.Group();
     for (let i = 0; i < 240; i++) {
       const x = Math.sin(i * 0.11) * 0.8;
       const y = Math.cos(i * 0.07) * 0.6;
       rig.steer(x, y, 1 / 60);
-      steerAttitude(attitude, x, y, 1 / 60);
-      attitudeQuaternion(attitude, q);
+      steerQuaternion(q, x, y, 1 / 60);
+      levelRoll(q, Math.hypot(x, y), 1 / 60);
       bankBody(body, x, 1 / 60);
     }
-    expect(rig.attitude).toEqual(attitude);
     expect(rig.ship.quaternion.equals(q)).toBe(true);
     expect(rig.shipBody.rotation.z).toBe(body.rotation.z);
+  });
+
+  it('the leveler rides steer: a rolled ship rights itself over idle frames', () => {
+    const rig = makeRig();
+    rig.ship.quaternion.setFromEuler(new THREE.Euler(0, 0, 0.8, 'YXZ'));
+    for (let i = 0; i < 240; i++) rig.steer(0, 0, 1 / 60); // 4 s hands-off
+    const e = new THREE.Euler(0, 0, 0, 'YXZ').setFromQuaternion(rig.ship.quaternion);
+    expect(Math.abs(e.z)).toBeLessThan(0.03);
+  });
+
+  it('levelUp re-aims the assist (the planet-surface hook)', () => {
+    const rig = makeRig();
+    rig.levelUp.set(1, 0, 0);
+    for (let i = 0; i < 600; i++) rig.steer(0, 0, 1 / 60);
+    const localUp = new THREE.Vector3(0, 1, 0).applyQuaternion(rig.ship.quaternion);
+    expect(localUp.distanceTo(rig.levelUp)).toBeLessThan(1e-3);
   });
 });
 
@@ -142,10 +159,7 @@ describe('arm', () => {
       fov: 62,
     };
     rig.arm(camPose, heading);
-    const attitude: Attitude = { yaw: 0, pitch: 0 };
-    attitudeFromDirection(attitude, heading);
-    expect(rig.attitude).toEqual(attitude);
-    const q = attitudeQuaternion(attitude, new THREE.Quaternion());
+    const q = quaternionFromDirection(new THREE.Quaternion(), heading);
     expect(rig.ship.quaternion.equals(q)).toBe(true);
     const expected = SHIP_ENTRY.clone().applyQuaternion(q).add(camPose.position);
     expect(rig.ship.position.distanceTo(expected)).toBeLessThan(1e-12);

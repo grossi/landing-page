@@ -9,7 +9,8 @@ describe('engine barrel', () => {
     // core
     expect(engine.mulberry32).toBeTypeOf('function'); // rng
     expect(engine.computeRebase).toBeTypeOf('function'); // floatingOrigin
-    expect(engine.steerAttitude).toBeTypeOf('function'); // flight
+    expect(engine.steerQuaternion).toBeTypeOf('function'); // flight
+    expect(engine.levelRoll).toBeTypeOf('function'); // flight (roll assist)
     expect(engine.speedResponseRate).toBeTypeOf('function'); // flight (boost dynamics)
     expect(engine.CRUISE_FOV).toBeGreaterThan(0); // flight (FOV cue)
     expect(engine.chaseLag).toBeTypeOf('function'); // flight (stream-lag emulation)

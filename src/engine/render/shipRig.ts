@@ -3,7 +3,7 @@ import { wireMat } from 'engine/render/assets';
 import type { ResourceTracker } from 'engine/render/resourceTracker';
 
 export interface ShipRig {
-  /** Control frame: position + roll-free attitude quaternion live here. */
+  /** Control frame: position + attitude quaternion live here. */
   ship: THREE.Group;
   /** Visual child, banked into the turn (engine/core/flight `bankBody`). */
   shipBody: THREE.Group;

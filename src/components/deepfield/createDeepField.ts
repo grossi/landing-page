@@ -479,7 +479,8 @@ export function createDeepField(
       }
       if (mode === 'disengage' && lastMode === 'play') {
         // from settled play the rig has no weight, so the title roll
-        // restarts level (matching the roll-free ship frame)
+        // restarts level (the ship frame cruises near-level too — the roll
+        // leveler rights it; any residual fades through the crossfade)
         roll = 0;
         // hand the drift law the direction the chase camera actually faces:
         // its trailing slerp lags the nose mid-turn — the title heading
@@ -533,9 +534,11 @@ export function createDeepField(
     // (× s), so control fades in as the chase pose gains weight and is
     // exact game feel at settle (s = 1). The heading eases onto the ship's
     // nose (verbatim copy once settled), keeping the streaming world and
-    // the respawn corridor aligned with flight; the attitude is pitch-
-    // clamped from arm onward, so the heading never nears the poles while
-    // the ship frame is live. Disengaging, the rig still steers — at zero
+    // the respawn corridor aligned with flight; a play-mode loop can drive
+    // the heading through (0, ±1, 0) — the camUp parallel transport below
+    // (heading component stripped each frame, degenerate fallbacks) is
+    // what keeps the up basis and respawn corridor pole-safe, not any
+    // attitude envelope. Disengaging, the rig still steers — at zero
     // deflection, so the bank eases out — while the heading returns to the
     // cursor drift law: an off-center cursor is a constant angular offset,
     // a steady gentle turn; recentering flies straight.
@@ -582,7 +585,10 @@ export function createDeepField(
         // imperceptible (~95% converged over DISENGAGE_S at the shared
         // SHIP_ARRIVAL_RATE — one rate for both legs, symmetric by
         // construction). The chase pose, still the crossfade's endpoint,
-        // never moves: the control frame is untouched.
+        // barely moves: steer(0,0,dt) lets the roll leveler ease any
+        // residual roll out during the exit, and the propTarget lerp
+        // recomputes against the current frame each step, so the prop
+        // still converges on the hull.
         propTarget
           .copy(camera.position)
           .sub(ship.position)

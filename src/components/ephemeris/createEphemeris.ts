@@ -390,11 +390,9 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
   const floorQuat = new THREE.Quaternion();
 
   // start the camera in the chase pose — at the new world scale a swoop-in
-  // from the scene origin would cross the whole home system. The slight
-  // spawn tilt is written straight into the control frame (a direction
-  // round-trip through asin/atan2 wouldn't reproduce it exactly).
-  rig.attitude.pitch = -0.04;
-  rig.seed();
+  // from the scene origin would cross the whole home system. Slight spawn
+  // tilt: seed with the pitch −0.04 forward direction.
+  rig.seed(scratch.set(0, -Math.sin(0.04), -Math.cos(0.04)));
   camera.position.copy(rig.pose.position);
   camera.quaternion.copy(rig.pose.quaternion);
 

@@ -1,13 +1,18 @@
 import * as THREE from 'three';
 
 /**
- * Shared flight rig math: the yaw/pitch control frame, pointer steering
- * rates, visual banking and the trailing chase camera. Single source of
- * truth for the ship feel, shared by EPHEMERIS and the landing background.
+ * Shared flight rig math: quaternion attitude with body-rate steering, the
+ * roll leveler, pointer steering rates, visual banking and the trailing
+ * chase camera. Single source of truth for the ship feel, shared by
+ * EPHEMERIS and the landing background.
  *
- * The control frame is a roll-free YXZ attitude: `yaw` then `pitch`, roll
- * permanently 0 — banking is purely visual, applied to a child object
- * (`bankBody`) so it never feeds back into the flight direction.
+ * Attitude is a quaternion integrated from body rates (steer commands
+ * rates about the ship's own axes), so there is no pitch clamp and no pole
+ * singularity — loops and full circles are legal. The horizon is kept by
+ * an assist, not the representation: `levelRoll` eases roll toward a
+ * reference up when the player isn't maneuvering. Banking stays purely
+ * visual, applied to a child object (`bankBody`) so it never feeds back
+ * into the flight direction.
  */
 
 /** Ship forward in the control frame. Read-only. */
@@ -16,10 +21,24 @@ export const FORWARD = new THREE.Vector3(0, 0, -1);
 export const YAW_RATE = 2.2;
 /** Pitch rate at full pointer deflection (rad/s). */
 export const PITCH_RATE = 1.7;
-/** Pitch clamp (rad) — keeps the nose off the poles, where yaw degenerates. */
-export const PITCH_CLAMP = 1.35;
 /** Steer deflection commanded by the WASD and arrow keys. */
 export const KEY_STEER = 0.7;
+/**
+ * Default reference up for the roll leveler and heading hand-offs.
+ * Read-only — pass a planet-surface normal to level locally instead.
+ */
+export const WORLD_UP = new THREE.Vector3(0, 1, 0);
+/**
+ * Roll-leveler ease rate (1/s). Gentle by design: rights a tilted horizon
+ * over a few seconds of hands-off flight. 0 disables the assist.
+ */
+export const LEVEL_RATE = 1.2;
+/**
+ * Steer deflection at which the leveler is fully faded out — the assist
+ * rights idle cruise but never fights a maneuver (key steer at 0.7 and any
+ * decisive pointer deflection silence it entirely).
+ */
+export const LEVEL_STEER_FADE = 0.5;
 /** Visual bank angle per unit of steer (rad), leaning into the turn. */
 export const BANK_PER_STEER = 0.9;
 /** Bank easing rate (1/s). */
@@ -48,14 +67,17 @@ export const ACCEL_RATE = 2.2;
 export const ACCEL_RATE_BOOST = 3.4;
 export const DECEL_RATE = 1.4;
 
-export interface Attitude {
-  yaw: number;
-  pitch: number;
-}
-
-// scratch Euler for attitude → quaternion (a fresh one per call is garbage)
+// module scratch (a fresh object per call is per-frame garbage)
 const scratchEuler = new THREE.Euler(0, 0, 0, 'YXZ');
+const scratchStep = new THREE.Quaternion();
+const scratchRight = new THREE.Vector3();
+const scratchUp = new THREE.Vector3();
+const scratchForward = new THREE.Vector3();
+const scratchMat = new THREE.Matrix4();
+const scratchEye = new THREE.Vector3();
+const scratchDir = new THREE.Vector3();
 const scratchLag = new THREE.Vector3();
+const Z_AXIS = new THREE.Vector3(0, 0, 1);
 
 /**
  * Resolves the frame's steer deflection from pointer + keys. Input is
@@ -85,29 +107,64 @@ export function burnKeysDown(keys: Record<string, boolean>): boolean {
   return !!keys.Space;
 }
 
-/** Integrates one steering frame: pointer deflection into the attitude. */
-export function steerAttitude(attitude: Attitude, steerX: number, steerY: number, dt: number): void {
-  attitude.yaw -= steerX * YAW_RATE * dt;
-  attitude.pitch -= steerY * PITCH_RATE * dt;
-  attitude.pitch = Math.max(-PITCH_CLAMP, Math.min(PITCH_CLAMP, attitude.pitch));
-}
-
-/** Writes the attitude's roll-free orientation into `out` and returns it. */
-export function attitudeQuaternion(attitude: Attitude, out: THREE.Quaternion): THREE.Quaternion {
-  return out.setFromEuler(scratchEuler.set(attitude.pitch, attitude.yaw, 0));
+/**
+ * Integrates one steering frame as body rates on the attitude quaternion:
+ * steerX yaws about the ship's local up, steerY pitches about its local
+ * right (positive steer y noses DOWN, matching resolveSteer's screen-down
+ * sense). Singularity-free: loops and full circles are legal. Normalized
+ * every step to kill float drift.
+ */
+export function steerQuaternion(q: THREE.Quaternion, steerX: number, steerY: number, dt: number): void {
+  scratchStep.setFromEuler(
+    scratchEuler.set(-steerY * PITCH_RATE * dt, -steerX * YAW_RATE * dt, 0),
+  );
+  q.multiply(scratchStep).normalize();
 }
 
 /**
- * Seeds the attitude so `FORWARD · attitudeQuaternion` equals `dir` (unit
- * length assumed) — the inverse of the control frame, used to hand an
- * external heading to the rig without a pose jump. Pitch is clamped to the
- * steering envelope, so exactness holds while `|dir.y|` stays inside
- * `sin(PITCH_CLAMP)`; steeper directions seed the nearest legal pitch.
+ * The flight-assist roll leveler: one frame easing the attitude's roll —
+ * rotation about its own forward axis — toward the reference `up`. A pure
+ * roll never resists pitch or yaw, so maneuvers stay free; the assist
+ * additionally fades out toward the poles (level is meaningless with the
+ * nose straight up) and above `steerMag` ≥ LEVEL_STEER_FADE, so it rights
+ * idle cruise but never fights the player. `rate` 0 disables.
  */
-export function attitudeFromDirection(attitude: Attitude, dir: { x: number; y: number; z: number }): void {
-  const pitch = Math.asin(Math.max(-1, Math.min(1, dir.y)));
-  attitude.pitch = Math.max(-PITCH_CLAMP, Math.min(PITCH_CLAMP, pitch));
-  attitude.yaw = Math.atan2(-dir.x, -dir.z);
+export function levelRoll(
+  q: THREE.Quaternion,
+  steerMag: number,
+  dt: number,
+  up: THREE.Vector3 = WORLD_UP,
+  rate: number = LEVEL_RATE,
+): void {
+  if (rate <= 0) return;
+  const steerFade = 1 - Math.abs(steerMag) / LEVEL_STEER_FADE;
+  if (steerFade <= 0) return;
+  scratchRight.set(1, 0, 0).applyQuaternion(q);
+  scratchUp.set(0, 1, 0).applyQuaternion(q);
+  const err = Math.atan2(up.dot(scratchRight), up.dot(scratchUp));
+  if (Math.abs(err) < 1e-9) return;
+  scratchForward.copy(FORWARD).applyQuaternion(q);
+  const poleFade = 1 - Math.abs(scratchForward.dot(up));
+  const k = Math.min(1, dt * rate * steerFade * poleFade);
+  if (k === 0) return;
+  // roll about local forward (−Z): about +Z by −err brings local up onto `up`
+  q.multiply(scratchStep.setFromAxisAngle(Z_AXIS, -err * k)).normalize();
+}
+
+/**
+ * Writes into `q` the attitude whose FORWARD equals `dir` (unit length
+ * assumed) with roll leveled to `up` — the heading hand-off used to seed
+ * the rig from an external direction without a pose jump. Where `dir` is
+ * (anti)parallel to `up` the roll is arbitrary but stable (three.js lookAt
+ * fallback). Returns `q`.
+ */
+export function quaternionFromDirection(
+  q: THREE.Quaternion,
+  dir: { x: number; y: number; z: number },
+  up: THREE.Vector3 = WORLD_UP,
+): THREE.Quaternion {
+  scratchMat.lookAt(scratchEye.set(0, 0, 0), scratchDir.set(dir.x, dir.y, dir.z), up);
+  return q.setFromRotationMatrix(scratchMat);
 }
 
 /** Eases the visual bank toward the current steer; call once per frame. */

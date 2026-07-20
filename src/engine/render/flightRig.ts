@@ -1,15 +1,15 @@
 import * as THREE from 'three';
 import {
-  attitudeFromDirection,
-  attitudeQuaternion,
   bankBody,
   BOOST_FOV,
   chaseTarget,
   CRUISE_FOV,
   easeFovValue,
-  steerAttitude,
+  levelRoll,
+  quaternionFromDirection,
+  steerQuaternion,
   updateChaseCamera,
-  type Attitude,
+  WORLD_UP,
 } from 'engine/core/flight';
 import type { ResourceTracker } from 'engine/render/resourceTracker';
 import { buildShipRig } from 'engine/render/shipRig';
@@ -37,36 +37,40 @@ export interface FlightRigPose {
 }
 
 /**
- * The stateful flight rig: the shared wireframe ship (mesh + roll-free
+ * The stateful flight rig: the shared wireframe ship (mesh + quaternion
  * control frame) plus a VIRTUAL chase-camera pose, advanced by the shared
  * flight laws (engine/core/flight). The rig never touches a real camera —
  * scenes copy `pose` verbatim (EPHEMERIS) or crossfade toward it (the
  * DEEP FIELD transition), so two live rigs can coexist over one camera.
  */
 export interface FlightRig {
-  /** Control frame: position + roll-free attitude quaternion live here. */
+  /** Control frame: position + attitude quaternion live here. */
   ship: THREE.Group;
   /** Visual child, banked into the turn; the caller sets visibility. */
   shipBody: THREE.Group;
-  /** The live yaw/pitch control frame (exposed for HUD/debug reads). */
-  attitude: Attitude;
+  /**
+   * Reference up for the roll leveler and heading hand-offs. Owned;
+   * defaults to world +Y — copy a planet-surface normal into it to level
+   * against local terrain instead.
+   */
+  levelUp: THREE.Vector3;
   /** The live virtual chase-camera pose. Owned, preallocated. */
   pose: FlightRigPose;
-  /** One steering frame: deflection → attitude → ship quaternion + bank. */
+  /** One steering frame: body rates → attitude, roll leveler, visual bank. */
   steer(steerX: number, steerY: number, dt: number): void;
   /**
    * One-shot converged snap for spawn/warp: seeds the attitude from
-   * `direction` (unit length; pitch-clamped like attitudeFromDirection) —
-   * or keeps the current attitude when omitted — then parks the virtual
-   * camera exactly at the chase pose, zero trail. Caller sets
-   * `ship.position` first.
+   * `direction` (unit length; roll leveled to `levelUp`) — or keeps the
+   * current attitude when omitted — then parks the virtual camera exactly
+   * at the chase pose, zero trail. Caller sets `ship.position` first.
    */
   seed(direction?: { x: number; y: number; z: number }): void;
   /**
-   * Engage hook: seeds the attitude from `heading`, places the ship at
-   * `camPose.position + R_ship·SHIP_ENTRY`, and snaps `pose` to `camPose`
-   * verbatim (position, quaternion, fov) — the virtual camera starts
-   * exactly where the real one is, so a blend from it opens at identity.
+   * Engage hook: seeds the attitude from `heading` (roll leveled), places
+   * the ship at `camPose.position + R_ship·SHIP_ENTRY`, and snaps `pose`
+   * to `camPose` verbatim (position, quaternion, fov) — the virtual camera
+   * starts exactly where the real one is, so a blend from it opens at
+   * identity.
    */
   arm(camPose: FlightRigPose, heading: { x: number; y: number; z: number }): void;
   /** Sets (or with `null` clears) the world-space arrival target. */
@@ -95,7 +99,7 @@ export interface FlightRig {
  */
 export function createFlightRig(tracker: ResourceTracker): FlightRig {
   const { ship, shipBody } = buildShipRig(tracker);
-  const attitude: Attitude = { yaw: 0, pitch: 0 };
+  const levelUp = WORLD_UP.clone();
   const pose: FlightRigPose = {
     position: new THREE.Vector3(),
     quaternion: new THREE.Quaternion(),
@@ -110,17 +114,16 @@ export function createFlightRig(tracker: ResourceTracker): FlightRig {
   return {
     ship,
     shipBody,
-    attitude,
+    levelUp,
     pose,
     steer(steerX, steerY, dt) {
-      steerAttitude(attitude, steerX, steerY, dt);
-      attitudeQuaternion(attitude, ship.quaternion);
+      steerQuaternion(ship.quaternion, steerX, steerY, dt);
+      levelRoll(ship.quaternion, Math.hypot(steerX, steerY), dt, levelUp);
       bankBody(shipBody, steerX, dt);
     },
     seed(direction) {
       hasStation = false; // a snap supersedes any in-flight arrival
-      if (direction) attitudeFromDirection(attitude, direction);
-      attitudeQuaternion(attitude, ship.quaternion);
+      if (direction) quaternionFromDirection(ship.quaternion, direction, levelUp);
       chaseTarget(pose.position, ship.quaternion, ship.position);
       pose.quaternion.copy(ship.quaternion);
     },
@@ -128,8 +131,7 @@ export function createFlightRig(tracker: ResourceTracker): FlightRig {
       hasStation = false; // a re-engage must not inherit the last station
       shipBody.rotation.z = 0; // nor a residual bank from the last flight
       shipBody.position.set(0, 0, 0); // nor a mid-exit prop offset
-      attitudeFromDirection(attitude, heading);
-      attitudeQuaternion(attitude, ship.quaternion);
+      quaternionFromDirection(ship.quaternion, heading, levelUp);
       ship.position
         .copy(camPose.position)
         .add(scratchEntry.copy(SHIP_ENTRY).applyQuaternion(ship.quaternion));

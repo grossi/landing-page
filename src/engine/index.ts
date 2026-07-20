@@ -8,8 +8,6 @@ export { computeRebase, type Vec3Like } from 'engine/core/floatingOrigin';
 export {
   ACCEL_RATE,
   ACCEL_RATE_BOOST,
-  attitudeFromDirection,
-  attitudeQuaternion,
   BANK_PER_STEER,
   BANK_RATE,
   bankBody,
@@ -28,15 +26,18 @@ export {
   FORWARD,
   FOV_RATE,
   KEY_STEER,
-  PITCH_CLAMP,
+  LEVEL_RATE,
+  LEVEL_STEER_FADE,
+  levelRoll,
   PITCH_RATE,
+  quaternionFromDirection,
   resolveSteer,
   speedResponseRate,
-  steerAttitude,
+  steerQuaternion,
   updateChaseCamera,
   updateFov,
+  WORLD_UP,
   YAW_RATE,
-  type Attitude,
 } from 'engine/core/flight';
 export { createKeyTracker, type KeyTracker } from 'engine/core/keyTracker';
 export { createListenerGroup, type ListenerGroup } from 'engine/core/listenerGroup';
