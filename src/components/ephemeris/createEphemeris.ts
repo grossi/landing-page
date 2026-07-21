@@ -1,5 +1,14 @@
 import * as THREE from 'three';
+import {
+  burnKeysDown,
+  CRUISE_FOV,
+  FORWARD,
+  resolveSteer,
+  speedResponseRate,
+} from 'engine/core/flight';
 import { computeRebase } from 'engine/core/floatingOrigin';
+import { createKeyTracker } from 'engine/core/keyTracker';
+import { createListenerGroup } from 'engine/core/listenerGroup';
 import {
   BOOST_LIMIT_FACTOR,
   diffuseDrag,
@@ -8,6 +17,7 @@ import {
   envelopeCap,
   speedLimit,
 } from 'engine/core/motion';
+import { pointerToNdc } from 'engine/core/pointerNdc';
 import { mulberry32 } from 'engine/core/rng';
 import { KIND_PRESETS } from 'engine/lod/displacement';
 import { createLodManager, type LodBeacon, type LodBodyHandle } from 'engine/lod/lodManager';
@@ -17,9 +27,9 @@ import {
   makeSurfaceFloor,
   type SurfaceFloor,
 } from 'engine/lod/surfaceFloor';
-import { wireMat } from 'engine/render/assets';
 import { createDustField } from 'engine/render/dust';
-import { createStage } from 'engine/render/stage';
+import { createFlightRig } from 'engine/render/flightRig';
+import { applyQuality, createStage } from 'engine/render/stage';
 import { createStarfield } from 'engine/render/starfield';
 import { attachStatsOverlay } from 'engine/render/statsOverlay';
 import {
@@ -93,18 +103,6 @@ const BEACON_RANGE = 2;
  */
 const CRUISE_SPEED = 100;
 const BOOST_FACTOR = 40;
-/** Camera FOV at cruise / under boost (the DEEP FIELD throttle-widen cue). */
-const CRUISE_FOV = 64;
-const BOOST_FOV = 71;
-/**
- * Cap on how far the chase camera may trail its pose (units). The trail is
- * the speed cue, but past this the ship reads as a speck instead of fast.
- */
-const CAMERA_MAX_LAG = 12;
-/** Velocity response rates (1/s): a boost kicks, a slowdown eases. */
-const ACCEL_RATE = 2.2;
-const ACCEL_RATE_BOOST = 3.4;
-const DECEL_RATE = 1.4;
 /**
  * First close approach inside this surface distance logs a POI. The cap
  * binds for the sprawling diffuse volumes — nebulae reach 2,940, clusters
@@ -258,22 +256,9 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
     lod.setBeacons(beacons);
   };
 
-  // ---- ship ----
-  const ship = new THREE.Group();
-  const shipBody = new THREE.Group(); // banked visually; `ship` carries the control frame
-  const noseGeo = tracker.track(new THREE.ConeGeometry(0.8, 2.6, 4));
-  noseGeo.rotateX(-Math.PI / 2); // nose toward -z (camera forward)
-  shipBody.add(new THREE.Mesh(noseGeo, tracker.track(wireMat(1))));
-  const wingGeo = tracker.track(
-    new THREE.BufferGeometry().setFromPoints([
-      new THREE.Vector3(-2, 0, 1),
-      new THREE.Vector3(0, 0, -1),
-      new THREE.Vector3(2, 0, 1),
-      new THREE.Vector3(-2, 0, 1),
-    ]),
-  );
-  shipBody.add(new THREE.Line(wingGeo, tracker.track(new THREE.LineBasicMaterial({ color: 0xffffff }))));
-  ship.add(shipBody);
+  // ---- ship + virtual chase camera (engine/render/flightRig) ----
+  const rig = createFlightRig(tracker);
+  const { ship } = rig;
   // spawn just outside the home system: past the outermost planet's deepest
   // moon reach, with the same ~2,400-unit clearance the pre-scale layout
   // had (extent 9,591 → spawn 12,000; at home ×2, extent ~11,037 → ~13,437)
@@ -281,33 +266,31 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
   scene.add(ship);
 
   // ---- input ----
-  const keys: Record<string, boolean> = {};
+  // last pointer position in standard GL NDC (y up); resolveSteer flips it
+  // to the screen-down steer sense at the consumption site
   const pointer = { x: 0, y: 0 };
   let pointerDown = false;
+  // blur also drops the pointer hold — pointerup never arrives for a button
+  // held across a focus loss, which would leave the ship burning forever
+  const keyTracker = createKeyTracker(window, () => { pointerDown = false; });
+  const { keys } = keyTracker;
 
-  // mutates the stable `pointer` — pointermove fires every frame while
-  // steering, and a fresh object per event is per-frame garbage
-  const toLocal = (clientX: number, clientY: number) => {
-    const rect = container.getBoundingClientRect();
-    pointer.x = ((clientX - rect.left) / rect.width) * 2 - 1;
-    pointer.y = ((clientY - rect.top) / rect.height) * 2 - 1;
-  };
-  const onKeyDown = (e: KeyboardEvent) => { keys[e.code] = true; };
-  const onKeyUp = (e: KeyboardEvent) => { keys[e.code] = false; };
-  // keyup never arrives for keys held across a focus loss (Cmd-Tab etc.),
-  // which would leave the ship burning forever.
-  const onBlur = () => { for (const code in keys) keys[code] = false; };
-  const onPointerMove = (e: PointerEvent) => { toLocal(e.clientX, e.clientY); };
+  // pointerToNdc mutates the stable `pointer` — pointermove fires every
+  // frame while steering, and a fresh object per event is per-frame garbage
+  const onPointerMove = (e: PointerEvent) => { pointerToNdc(pointer, e.clientX, e.clientY, container); };
   const onPointerDown = () => { pointerDown = true; };
   const onPointerUp = () => { pointerDown = false; };
-  const onTouchMove = (e: TouchEvent) => { toLocal(e.touches[0].clientX, e.touches[0].clientY); };
-  window.addEventListener('keydown', onKeyDown);
-  window.addEventListener('keyup', onKeyUp);
-  window.addEventListener('blur', onBlur);
-  container.addEventListener('pointermove', onPointerMove);
-  container.addEventListener('pointerdown', onPointerDown);
-  window.addEventListener('pointerup', onPointerUp);
-  container.addEventListener('touchmove', onTouchMove, { passive: true });
+  const onTouchMove = (e: TouchEvent) => {
+    pointerToNdc(pointer, e.touches[0].clientX, e.touches[0].clientY, container);
+  };
+  const listeners = createListenerGroup();
+  listeners.add(container, 'pointermove', onPointerMove);
+  listeners.add(container, 'pointerdown', onPointerDown);
+  listeners.add(window, 'pointerup', onPointerUp);
+  // a browser-canceled touch (scroll takeover, system gesture) never sends
+  // pointerup — without this the ship burns forever
+  listeners.add(window, 'pointercancel', onPointerUp);
+  listeners.add(container, 'touchmove', onTouchMove, { passive: true });
 
   // ---- HUD (write only on change; per-frame DOM writes cause layout churn) ----
   const hudCache = new Map<HTMLElement, string>();
@@ -397,37 +380,31 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
 
   // ---- simulation loop ----
   const velocity = new THREE.Vector3();
-  const attitude = { yaw: 0, pitch: -0.04 };
+  const steer = { x: 0, y: 0 };
   const forward = new THREE.Vector3();
   const scratch = new THREE.Vector3();
   const shipAbs = new THREE.Vector3();
   const rebase = new THREE.Vector3();
-  // scratch Euler for attitude → quaternion (a fresh one per frame is garbage)
-  const scratchEuler = new THREE.Euler(0, 0, 0, 'YXZ');
   // floor scratch: the radial direction in the body's local frame
   const floorDir = new THREE.Vector3();
   const floorQuat = new THREE.Quaternion();
 
   // start the camera in the chase pose — at the new world scale a swoop-in
-  // from the scene origin would cross the whole home system
-  ship.quaternion.setFromEuler(scratchEuler.set(attitude.pitch, attitude.yaw, 0));
-  camera.position.copy(scratch.set(0, 2.6, 9).applyQuaternion(ship.quaternion).add(ship.position));
-  camera.quaternion.copy(ship.quaternion);
+  // from the scene origin would cross the whole home system. Slight spawn
+  // tilt: seed with the pitch −0.04 forward direction.
+  rig.seed(scratch.set(0, -Math.sin(0.04), -Math.cos(0.04)));
+  camera.position.copy(rig.pose.position);
+  camera.quaternion.copy(rig.pose.quaternion);
 
   field.sync(shipAbs.copy(ship.position).add(origin), true);
 
   stage.start((dt, t) => {
-    // steering
-    let steerX = pointer.x;
-    let steerY = pointer.y;
-    const boost = pointerDown || keys.KeyW || keys.ArrowUp || keys.Space;
-    if (keys.ArrowLeft || keys.KeyA) steerX = -0.7;
-    if (keys.ArrowRight || keys.KeyD) steerX = 0.7;
-    attitude.yaw -= steerX * 2.2 * dt;
-    attitude.pitch -= steerY * 1.7 * dt;
-    attitude.pitch = Math.max(-1.35, Math.min(1.35, attitude.pitch));
-    ship.quaternion.setFromEuler(scratchEuler.set(attitude.pitch, attitude.yaw, 0));
-    shipBody.rotation.z += (-steerX * 0.9 - shipBody.rotation.z) * Math.min(1, dt * 8);
+    // steering — resolveSteer also clamps to ±1, which the raw pointer read
+    // never did: a captured pointer dragged past the canvas edge used to
+    // command super-unit deflection
+    resolveSteer(steer, pointer.x, pointer.y, keys);
+    const boost = pointerDown || burnKeysDown(keys);
+    rig.steer(steer.x, steer.y, dt);
 
     // distance-proportional speed law: time-to-contact stays roughly
     // constant, so approaches decelerate into a skim automatically. The cap
@@ -437,7 +414,7 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
     // additionally clamped (min — it can only lower the law), the felt
     // beginning of the arrival ritual. Diffuse volumes contribute only
     // `dragFactor` — atmosphere, never a wall.
-    forward.set(0, 0, -1).applyQuaternion(ship.quaternion);
+    forward.copy(FORWARD).applyQuaternion(ship.quaternion);
     const approach = nearestSolid.dist === Infinity
       ? -1
       : forward.dot(scratch.copy(nearestSolid.center).sub(ship.position).normalize());
@@ -451,17 +428,9 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
         ? Math.min(solidLimit, envelopeCap(nearestSolid.dist, nearestSolid.radius))
         : solidLimit) * (boost ? BOOST_LIMIT_FACTOR : 1);
     const targetSpeed = Math.min(boost ? CRUISE_SPEED * BOOST_FACTOR : CRUISE_SPEED, limit) * dragFactor;
-    // asymmetric response: the boost kick is felt, the slowdown never slams
-    const rate = velocity.length() < targetSpeed ? (boost ? ACCEL_RATE_BOOST : ACCEL_RATE) : DECEL_RATE;
+    const rate = speedResponseRate(velocity.length(), targetSpeed, boost);
     velocity.lerp(scratch.copy(forward).multiplyScalar(targetSpeed), Math.min(1, dt * rate));
     ship.position.addScaledVector(velocity, dt);
-
-    // boost widens the FOV a touch (same cue as the Home throttle burn)
-    const targetFov = boost ? BOOST_FOV : CRUISE_FOV;
-    if (Math.abs(camera.fov - targetFov) > 0.01) {
-      camera.fov += (targetFov - camera.fov) * Math.min(1, dt * 5);
-      camera.updateProjectionMatrix();
-    }
 
     // floating origin: once the ship strays a sector from the render origin,
     // shift the whole render-local scene by an exact sector multiple — same
@@ -469,8 +438,9 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
     const delta = computeRebase(ship.position, SECTOR);
     if (delta) {
       rebase.set(delta.x, delta.y, delta.z);
-      ship.position.sub(rebase);
-      camera.position.sub(rebase);
+      // ship + virtual chase pose; the real camera picks up the shifted
+      // pose at the chase-site copy below, before this frame renders
+      rig.applyRebase(rebase);
       home.group.position.sub(rebase);
       home.group.updateMatrixWorld(true);
       field.applyOriginShift(rebase);
@@ -484,10 +454,8 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
     field.updateContents(dt, t);
 
     // adaptive quality: under sustained load the governor sheds dust and
-    // LOD rungs alongside pixels; both knobs are identity at level 0
-    const quality = stage.quality();
-    dust.setDensity(quality.dustFraction);
-    lod.setLodBias(quality.lodBias);
+    // LOD rungs alongside pixels
+    applyQuality(stage, dust, lod);
 
     // backdrop + dust follow the ship (render-local; a rebase wraps the dust
     // by whole sector multiples, which the modulo wrap absorbs in one step)
@@ -595,17 +563,17 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
       }
     }
 
-    // chase camera. The lerp trails the pose by ~speed/5 units, which reads
-    // as the ship pulling ahead under a burn — good — but unclamped it
-    // shrinks the ship to a speck at full boost, so cap the trail distance.
-    const camTarget = scratch.set(0, 2.6, 9).applyQuaternion(ship.quaternion).add(ship.position);
-    camera.position.lerp(camTarget, Math.min(1, dt * 5));
-    rebase.copy(camera.position).sub(camTarget); // scratch is camTarget — borrow rebase
-    const lag = rebase.length();
-    if (lag > CAMERA_MAX_LAG) {
-      camera.position.copy(camTarget).addScaledVector(rebase, CAMERA_MAX_LAG / lag);
+    // virtual chase camera + FOV boost cue (engine/render/flightRig:
+    // trailing lerp capped at CAMERA_MAX_LAG), then project the rig's pose
+    // onto the real camera — the projection matrix rebuilds only when the
+    // eased FOV actually moved, the same dead-band cadence updateFov had
+    rig.update(dt, boost);
+    camera.position.copy(rig.pose.position);
+    camera.quaternion.copy(rig.pose.quaternion);
+    if (camera.fov !== rig.pose.fov) {
+      camera.fov = rig.pose.fov;
+      camera.updateProjectionMatrix();
     }
-    camera.quaternion.slerp(ship.quaternion, Math.min(1, dt * 6));
 
     // LOD after the camera settles: rung selection, dissolves, budgeted jobs
     lod.update(camera, container.clientHeight, dt);
@@ -632,7 +600,11 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
         Math.floor(z / SECTOR) * SECTOR - origin.z,
       );
       if (rebase.lengthSq() > 0) {
-        camera.position.sub(rebase); // keep the chase pose — no cross-sector swoop
+        // keep the chase pose — no cross-sector swoop. The rig shifts the
+        // virtual pose (ship.position is rewritten just below anyway); the
+        // real camera shifts too so it stays the pose's mirror mid-warp.
+        rig.applyRebase(rebase);
+        camera.position.sub(rebase);
         home.group.position.sub(rebase);
         home.group.updateMatrixWorld(true);
         field.applyOriginShift(rebase);
@@ -642,12 +614,9 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
       velocity.set(0, 0, 0);
       envelopeAnnounced.clear(); // a warp is not an approach — start re-armed
       if (lookX !== undefined && lookY !== undefined && lookZ !== undefined) {
-        const dir = scratch.set(lookX - x, lookY - y, lookZ - z).normalize();
-        attitude.pitch = Math.asin(Math.max(-1, Math.min(1, dir.y)));
-        attitude.yaw = Math.atan2(-dir.x, -dir.z);
-        ship.quaternion.setFromEuler(scratchEuler.set(attitude.pitch, attitude.yaw, 0));
-        camera.position.copy(scratch.set(0, 2.6, 9).applyQuaternion(ship.quaternion).add(ship.position));
-        camera.quaternion.copy(ship.quaternion);
+        rig.seed(scratch.set(lookX - x, lookY - y, lookZ - z).normalize());
+        camera.position.copy(rig.pose.position);
+        camera.quaternion.copy(rig.pose.quaternion);
       }
       field.sync(shipAbs.copy(ship.position).add(origin), true);
     },
@@ -679,13 +648,8 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
 
   return () => {
     if (globalHost.__EPHEMERIS === debugHandle) delete globalHost.__EPHEMERIS;
-    window.removeEventListener('keydown', onKeyDown);
-    window.removeEventListener('keyup', onKeyUp);
-    window.removeEventListener('blur', onBlur);
-    container.removeEventListener('pointermove', onPointerMove);
-    container.removeEventListener('pointerdown', onPointerDown);
-    window.removeEventListener('pointerup', onPointerUp);
-    container.removeEventListener('touchmove', onTouchMove);
+    keyTracker.dispose();
+    listeners.dispose();
     field.dispose(); // unregisters sector LOD bodies via onContentRemoved
     home.dispose();
     lod.dispose();

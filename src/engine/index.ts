@@ -6,6 +6,43 @@
 export { hashCoords, makeName, mulberry32, pickFrom, SYLLABLES } from 'engine/core/rng';
 export { computeRebase, type Vec3Like } from 'engine/core/floatingOrigin';
 export {
+  ACCEL_RATE,
+  ACCEL_RATE_BOOST,
+  BANK_PER_STEER,
+  BANK_RATE,
+  bankBody,
+  BOOST_FOV,
+  burnKeysDown,
+  CAMERA_MAX_LAG,
+  CHASE_OFFSET,
+  CHASE_POS_RATE,
+  CHASE_QUAT_RATE,
+  chaseLag,
+  chaseTarget,
+  CRUISE_FOV,
+  DECEL_RATE,
+  easeFov,
+  easeFovValue,
+  FORWARD,
+  FOV_RATE,
+  KEY_STEER,
+  LEVEL_RATE,
+  LEVEL_STEER_FADE,
+  levelRoll,
+  PITCH_RATE,
+  quaternionFromDirection,
+  resolveSteer,
+  speedResponseRate,
+  steerQuaternion,
+  updateChaseCamera,
+  updateFov,
+  WORLD_UP,
+  YAW_RATE,
+} from 'engine/core/flight';
+export { createKeyTracker, type KeyTracker } from 'engine/core/keyTracker';
+export { createListenerGroup, type ListenerGroup } from 'engine/core/listenerGroup';
+export { pointerToNdc } from 'engine/core/pointerNdc';
+export {
   BOOST_LIMIT_FACTOR,
   DECK_FLOOR,
   DIFFUSE_DRAG_FLOOR,
@@ -136,6 +173,7 @@ export {
   type LodRegistration,
 } from 'engine/lod/lodManager';
 export {
+  applyQuality,
   clampDt,
   createStage,
   isPaused,
@@ -150,6 +188,14 @@ export {
   type ResourceTracker,
 } from 'engine/render/resourceTracker';
 export { createStarfield, type StarfieldOptions } from 'engine/render/starfield';
+export { buildShipRig, type ShipRig } from 'engine/render/shipRig';
+export {
+  createFlightRig,
+  SHIP_ARRIVAL_RATE,
+  SHIP_ENTRY,
+  type FlightRig,
+  type FlightRigPose,
+} from 'engine/render/flightRig';
 export {
   attachStatsOverlay,
   formatCount,
