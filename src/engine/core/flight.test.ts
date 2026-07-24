@@ -12,6 +12,7 @@ import {
   DECEL_RATE,
   easeFov,
   easeFovValue,
+  easeUpVector,
   FORWARD,
   FOV_RATE,
   KEY_STEER,
@@ -142,6 +143,45 @@ describe('levelRoll', () => {
   it('keeps the gentle feel constants', () => {
     expect(LEVEL_RATE).toBe(1.2);
     expect(LEVEL_STEER_FADE).toBe(0.5);
+  });
+});
+
+describe('easeUpVector', () => {
+  it('converges onto the target and stays unit length along the way', () => {
+    const up = new THREE.Vector3(0, 1, 0);
+    const target = new THREE.Vector3(1, 0, 0);
+    for (let i = 0; i < 400; i++) {
+      easeUpVector(up, target, 1 / 60, 1.5);
+      expect(up.length()).toBeCloseTo(1, 12);
+    }
+    expect(up.angleTo(target)).toBeLessThan(1e-3);
+  });
+
+  it('one step moves along the short arc toward the target', () => {
+    const up = new THREE.Vector3(0, 1, 0);
+    const target = new THREE.Vector3(0, Math.SQRT1_2, Math.SQRT1_2);
+    const before = up.angleTo(target);
+    easeUpVector(up, target, 0.1, 1.5);
+    const after = up.angleTo(target);
+    expect(after).toBeLessThan(before);
+    expect(after).toBeGreaterThan(0); // eased, not snapped
+    expect(up.x).toBeCloseTo(0, 12); // stays in the y/z plane — no sideways drift
+  });
+
+  it('a full-rate step (dt·rate ≥ 1) lands exactly on the target', () => {
+    const up = new THREE.Vector3(0, 1, 0);
+    easeUpVector(up, new THREE.Vector3(1, 0, 0), 1, 1.5);
+    expect(up.x).toBeCloseTo(1, 12);
+  });
+
+  it('snaps an exactly-antipodal up to the target, even at 60 fps steps', () => {
+    // without the dot guard, nlerp renormalizes a small antipodal step right
+    // back to the start — the up would stall forever
+    const up = new THREE.Vector3(0, 1, 0);
+    const target = new THREE.Vector3(0, -1, 0);
+    easeUpVector(up, target, 1 / 60, 1.5);
+    expect(up.y).toBeCloseTo(-1, 12);
+    expect(up.length()).toBeCloseTo(1, 12);
   });
 });
 

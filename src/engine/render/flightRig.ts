@@ -50,8 +50,11 @@ export interface FlightRig {
   shipBody: THREE.Group;
   /**
    * Reference up for the roll leveler and heading hand-offs. Owned;
-   * defaults to world +Y — copy a planet-surface normal into it to level
-   * against local terrain instead.
+   * defaults to world +Y — copy (or ease, easeUpVector) a planet-surface
+   * normal into it to level against local terrain instead. Scenes that
+   * retarget it may leave it wherever it last pointed — space has no
+   * correct up, so `seed`/`arm` reseed roll against the frozen value, not
+   * world +Y.
    */
   levelUp: THREE.Vector3;
   /** The live virtual chase-camera pose. Owned, preallocated. */

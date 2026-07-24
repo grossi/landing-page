@@ -320,7 +320,10 @@ const roguePlanet: Builder = (rand, _own, scale) => {
     group.add(moon);
     moons.push({ mesh: moon, r: radius * (2.6 + k * 1.5), speed: 0.3 + rand() * 0.6, phase: rand() * Math.PI * 2 });
   }
-  const spin = 0.08 + rand() * 0.25;
+  // near-imperceptible day cycle (÷50 from the old 0.08–0.33 rad/s, which
+  // spun a full turn in under a minute): skimming the surface, the terrain
+  // drifts rather than scrolls, so flying around the planet feels natural
+  const spin = 0.0016 + rand() * 0.005;
   const name = `${makeName(rand)}-${1 + Math.floor(rand() * 8)}`;
   const body: LodRegistration = { seed, radius, kind: 'planet', anchor: planet, baseOpacity: 0.85, scaleTargets };
   return {
@@ -891,7 +894,8 @@ export function buildHomeSystem(rand: () => number, scale = 1): SectorContent {
       speed: (0.5 / Math.pow(orbitRadii[i] / orbitRadii[0], 1.5)) * 0.06,
       phase: rand() * Math.PI * 2,
     });
-    planetSpins.push({ mesh: planet, spin: 0.1 + rand() * 0.4 });
+    // near-imperceptible day cycle, matching the rogue planets (÷50)
+    planetSpins.push({ mesh: planet, spin: 0.002 + rand() * 0.008 });
 
     const orbit = new THREE.Line(UNIT_CIRCLE, ORBIT_MAT);
     orbit.scale.setScalar(orbitRadii[i]);

@@ -39,6 +39,13 @@ export const LEVEL_RATE = 1.2;
  * decisive pointer deflection silence it entirely).
  */
 export const LEVEL_STEER_FADE = 0.5;
+/**
+ * Ease rate (1/s) for the reference up itself, when a scene retargets it —
+ * e.g. onto a planet's surface normal on approach (easeUpVector). Slightly
+ * above LEVEL_RATE so the roll assist, not the retarget, is what the eye
+ * reads settling the horizon.
+ */
+export const SURFACE_UP_RATE = 1.5;
 /** Visual bank angle per unit of steer (rad), leaning into the turn. */
 export const BANK_PER_STEER = 0.9;
 /** Bank easing rate (1/s). */
@@ -165,6 +172,29 @@ export function quaternionFromDirection(
 ): THREE.Quaternion {
   scratchMat.lookAt(scratchEye.set(0, 0, 0), scratchDir.set(dir.x, dir.y, dir.z), up);
   return q.setFromRotationMatrix(scratchMat);
+}
+
+/**
+ * One frame easing a unit reference-up vector toward `target` (unit length
+ * assumed): normalized lerp, so intermediate frames stay unit and the swing
+ * follows the short arc. Exactly-antipodal inputs snap to `target` — the arc
+ * side is arbitrary there, and at real frame rates the nlerp would otherwise
+ * renormalize back to the start and stall forever. Feeds `levelRoll`'s `up`
+ * when a scene retargets the horizon, e.g. onto the local surface normal of
+ * a nearby planet.
+ */
+export function easeUpVector(
+  up: THREE.Vector3,
+  target: THREE.Vector3,
+  dt: number,
+  rate: number = SURFACE_UP_RATE,
+): void {
+  if (up.dot(target) < -0.9999) {
+    up.copy(target);
+    return;
+  }
+  up.lerp(target, Math.min(1, dt * rate));
+  up.normalize();
 }
 
 /** Eases the visual bank toward the current steer; call once per frame. */
