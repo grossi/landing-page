@@ -318,7 +318,8 @@ const roguePlanet: Builder = (rand, _own, scale) => {
     const moon = new THREE.Mesh(ICO_LOW, MAT_DIM);
     moon.scale.setScalar(radius * 0.2);
     group.add(moon);
-    moons.push({ mesh: moon, r: radius * (2.6 + k * 1.5), speed: 0.3 + rand() * 0.6, phase: rand() * Math.PI * 2 });
+    // moon speed ÷20, matching the home moons' slow drift
+    moons.push({ mesh: moon, r: radius * (2.6 + k * 1.5), speed: (0.3 + rand() * 0.6) * 0.05, phase: rand() * Math.PI * 2 });
   }
   // near-imperceptible day cycle (÷50 from the old 0.08–0.33 rad/s, which
   // spun a full turn in under a minute): skimming the surface, the terrain
@@ -376,7 +377,8 @@ const miniSystem: Builder = (rand, _own, scale) => {
     const orbit = new THREE.Line(UNIT_CIRCLE, ORBIT_MAT);
     orbit.scale.setScalar(orbitR);
     group.add(orbit);
-    planets.push({ mesh: planet, r: orbitR, speed: (0.5 / Math.pow(orbitR / (340 * s), 1.5)) * 0.5, phase: rand() * Math.PI * 2 });
+    // ÷20 like the home system: inner planets used to sweep ~170 u/s
+    planets.push({ mesh: planet, r: orbitR, speed: (0.5 / Math.pow(orbitR / (340 * s), 1.5)) * 0.025, phase: rand() * Math.PI * 2 });
     const body: LodRegistration = { seed: planetSeed, radius, kind: 'planet', anchor: planet, baseOpacity: 0.85 };
     pois.push({ name: `${starName}-${i + 1}`, object: planet, radius, solid: true, lod: body });
     lodBodies.push(body);
@@ -891,7 +893,10 @@ export function buildHomeSystem(rand: () => number, scale = 1): SectorContent {
       r: orbitRadii[i],
       // normalized by the innermost orbit, so a uniform stretch keeps the
       // exact ×1 angular speeds
-      speed: (0.5 / Math.pow(orbitRadii[i] / orbitRadii[0], 1.5)) * 0.06,
+      // ÷20 (0.06 → 0.003): the inner planet's tangential speed drops from
+      // ~144 u/s — faster than the 100 u/s cruise, so it outran an
+      // approaching ship — to ~7 u/s, a drift the approach never notices
+      speed: (0.5 / Math.pow(orbitRadii[i] / orbitRadii[0], 1.5)) * 0.003,
       phase: rand() * Math.PI * 2,
     });
     // near-imperceptible day cycle, matching the rogue planets (÷50)
@@ -928,7 +933,9 @@ export function buildHomeSystem(rand: () => number, scale = 1): SectorContent {
           // sweep through the neighbouring planet at conjunction (the
           // budget arithmetic lives in homeLayout)
           r: (HOME_MOON_ORBIT_BASE + k * HOME_MOON_ORBIT_STEP) * moonOrbitCompression * radius,
-          speed: 0.5 + rand(),
+          // ÷20: a whole moon orbit in 4–13 s read as a shooting gallery
+          // beside the near-still planets; now it's a slow, visible drift
+          speed: (0.5 + rand()) * 0.05,
           phase: rand() * Math.PI * 2,
         });
       }
