@@ -7,6 +7,9 @@ import {
   ENVELOPE_CAP_RADII,
   ENVELOPE_RADII,
   envelopeCap,
+  ESCAPE_FLOOR,
+  ESCAPE_SLOPE_FACTOR,
+  escapeCeil,
   escapeRelief,
   FLOOR_TAPER_FULL_RADII,
   FLOOR_TAPER_START_RADII,
@@ -120,23 +123,71 @@ describe('directional speedLimit', () => {
     expect(speedLimit(1000)).toBeCloseTo(speedLimit(1000, 1), 10);
   });
 
-  it('relaxes to the ceiling when flying away from a near surface', () => {
-    expect(speedLimit(100, -1)).toBeCloseTo(SPEED_CEIL, 10);
-    expect(speedLimit(0, RELIEF_FULL)).toBeCloseTo(SPEED_CEIL, 10);
+  it('full relief near a surface grants the escape ramp, not the ceiling', () => {
+    expect(speedLimit(100, -1)).toBeCloseTo(escapeCeil(100), 10);
+    expect(speedLimit(0, -1)).toBeCloseTo(ESCAPE_FLOOR, 10);
+    // far from everything the ramp has rejoined the ceiling
+    expect(speedLimit(1e6, -1)).toBeCloseTo(SPEED_CEIL, 10);
+  });
+
+  it('angle easing: straight up beats just over the horizon', () => {
+    const overHorizon = speedLimit(1000, -0.05);
+    const steepClimb = speedLimit(1000, -0.6);
+    const straightUp = speedLimit(1000, -1);
+    expect(overHorizon).toBeGreaterThan(speedLimit(1000, 1));
+    expect(steepClimb).toBeGreaterThan(overHorizon);
+    expect(straightUp).toBeGreaterThan(steepClimb);
+    expect(straightUp).toBeCloseTo(escapeCeil(1000), 10);
+  });
+
+  it('proximity easing: straight up opens with altitude', () => {
+    const r = 698;
+    const deck = speedLimit(0, -1, r);
+    const low = speedLimit(0.5 * r, -1, r);
+    const high = speedLimit(2 * r, -1, r);
+    expect(deck).toBeCloseTo(ESCAPE_FLOOR, 10);
+    expect(low).toBeGreaterThan(deck);
+    expect(high).toBeGreaterThan(low);
   });
 
   it('gives partial relief on a grazing heading', () => {
     const strict = speedLimit(1000, 1);
     const grazing = speedLimit(1000, 0);
     expect(grazing).toBeGreaterThan(strict);
-    expect(grazing).toBeLessThan(SPEED_CEIL);
+    expect(grazing).toBeLessThan(escapeCeil(1000));
   });
 
-  it('never exceeds the ceiling nor drops below the strict cap', () => {
+  it('never exceeds the escape ramp nor drops below the strict cap', () => {
     for (let a = -1; a <= 1; a += 0.1) {
       const limit = speedLimit(2000, a);
       expect(limit).toBeGreaterThanOrEqual(speedLimit(2000, 1));
-      expect(limit).toBeLessThanOrEqual(SPEED_CEIL);
+      expect(limit).toBeLessThanOrEqual(escapeCeil(2000));
+    }
+  });
+});
+
+describe('escapeCeil', () => {
+  it('starts at ESCAPE_FLOOR on (and inside) the surface', () => {
+    expect(escapeCeil(0)).toBe(ESCAPE_FLOOR);
+    expect(escapeCeil(-500)).toBe(ESCAPE_FLOOR); // mid soft-floor push-out
+  });
+
+  it('climbs ESCAPE_SLOPE_FACTOR× steeper than the approach law', () => {
+    expect(escapeCeil(1000)).toBeCloseTo(
+      ESCAPE_FLOOR + 1000 * SPEED_PER_SURFACE_DISTANCE * ESCAPE_SLOPE_FACTOR,
+      10,
+    );
+  });
+
+  it('rejoins the open-space ceiling and never exceeds it', () => {
+    const rejoin = (SPEED_CEIL - ESCAPE_FLOOR) / (SPEED_PER_SURFACE_DISTANCE * ESCAPE_SLOPE_FACTOR);
+    expect(escapeCeil(rejoin)).toBeCloseTo(SPEED_CEIL, 8);
+    expect(escapeCeil(rejoin * 2)).toBe(SPEED_CEIL);
+  });
+
+  it('never drops below the head-on law, so relief only raises the limit', () => {
+    for (let d = 0; d <= 12000; d += 250) {
+      expect(escapeCeil(d)).toBeGreaterThanOrEqual(speedLimit(d, 1, 960));
     }
   });
 });
