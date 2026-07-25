@@ -144,7 +144,7 @@ const approachRange = (radius: number) => Math.max(60, radius * 0.5);
  */
 export function createEphemeris(container: HTMLElement, hud: EphemerisHudElements): () => void {
   // log depth: near 0.5 / far 60,000 spans five distance decades with nested
-  // LOD shells + atmosphere rings — a linear z-buffer would z-fight them.
+  // nested LOD + skim-band shells — a linear z-buffer would z-fight them.
   // far covers the beacon-dot shell (BEACON_RANGE sectors on the diagonal).
   // Gentle exp2 fog gives far content the DEEP FIELD emergence — geometry
   // fades up from black over the ~24k → 6k approach band instead of popping

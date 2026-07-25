@@ -146,8 +146,8 @@ export function speedLimit(surfaceDistance: number, approach = 1, radius = Infin
 
 /**
  * Surface distance (in radii) at which a solid body's atmospheric envelope
- * begins — the same band where the LOD manager's atmosphere ring cue starts
- * fading in (ATMOSPHERE_FAR), so the arrival ritual and the visual agree.
+ * begins — the band the HUD announcement and the envelope speed step share,
+ * so the arrival ritual reads as one event.
  */
 export const ENVELOPE_RADII = 4;
 /** The arrival ritual re-arms beyond this surface distance (in radii). */

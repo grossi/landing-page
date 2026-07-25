@@ -21,8 +21,6 @@
  * - An apparent-scale ramp renders far bodies compressed (0.6×), easing to
  *   1× on approach, so planets visibly swell as you close in — the NMS
  *   approach feel with zero camera involvement (camera rules are sacred).
- * - Planets grow a billboarded wireframe "atmosphere" ring as an approach
- *   cue inside 4 radii of the surface.
  * - Below `HAZE_RADII` of a body's surface its far limb fades out
  *   (per-vertex colors, opt-in via `surfaceHaze`), so a skimmed planet
  *   reads as extending beyond sight instead of ending at the silhouette.
@@ -32,7 +30,7 @@
  *   at 1.1r, the "there is air here" parallax cue between ship and
  *   surface. Both share one unit geometry across all bodies, gate to zero
  *   cost outside their d/r bands (same pattern as the haze), and compose
- *   with the atmosphere ring + haze. Their opacity also multiplies by the
+ *   with the haze. Their opacity also multiplies by the
  *   body's live terrain presence, so they resolve WITH the rung wireframe
  *   instead of popping in around the far-contact dot while a cold-start
  *   build is still in flight.
@@ -96,13 +94,6 @@ export const SCALE_RAMP_FAR = 40;
  */
 export const SCALE_RAMP_FAR_MAX_DISTANCE = 14400;
 
-/** Peak opacity of the wireframe atmosphere ring cue. */
-export const ATMOSPHERE_MAX_OPACITY = 0.3;
-/** The atmosphere cue starts fading in at this surface distance (radii). */
-export const ATMOSPHERE_FAR = 4;
-/** …and reaches full opacity at this surface distance (radii). */
-export const ATMOSPHERE_NEAR = 0.2;
-
 /** Highest rung built synchronously (≤162 verts); above goes to the queue. */
 const SYNC_LEVEL_MAX = 2;
 
@@ -134,17 +125,6 @@ export function apparentScale(surfaceDistance: number, radius: number): number {
   if (d >= far) return SCALE_RAMP_FLOOR;
   const u = (Math.log10(d) - LOG_NEAR) / (Math.log10(far) - LOG_NEAR);
   return 1 - (1 - SCALE_RAMP_FLOOR) * smooth(u);
-}
-
-/**
- * Opacity of the "atmosphere resolving" ring cue: 0 beyond `ATMOSPHERE_FAR`
- * radii of the surface, easing up to `ATMOSPHERE_MAX_OPACITY` by
- * `ATMOSPHERE_NEAR`. Continuous at both ends — the cue never pops.
- */
-export function atmosphereOpacity(surfaceDistance: number, radius: number): number {
-  const d = surfaceDistance / Math.max(radius, 1e-6);
-  const t = Math.min(1, Math.max(0, (ATMOSPHERE_FAR - d) / (ATMOSPHERE_FAR - ATMOSPHERE_NEAR)));
-  return ATMOSPHERE_MAX_OPACITY * smooth(t);
 }
 
 /** The far-limb haze engages below this surface distance (radii). */
@@ -388,7 +368,6 @@ interface BodyState {
   pendingKey: string;
   /** Slot in the shared dot layer; -1 when the layer is full. */
   dotIndex: number;
-  atmosphere: { mesh: THREE.Mesh; material: THREE.MeshBasicMaterial } | null;
   graticule: ShellState | null;
   clouds: ShellState | null;
   lastScale: number;
@@ -401,14 +380,6 @@ interface ShellState {
   material: THREE.LineBasicMaterial;
 }
 
-// Shared unit atmosphere ring (module scope, intentionally never disposed —
-// same convention as engine/render/assets).
-let atmosphereGeometry: THREE.TorusGeometry | null = null;
-const getAtmosphereGeometry = (): THREE.TorusGeometry => {
-  if (!atmosphereGeometry) atmosphereGeometry = new THREE.TorusGeometry(1.05, 0.008, 4, 64);
-  return atmosphereGeometry;
-};
-
 /** Meridians (pole-to-pole lines) of the shared graticule shell. */
 const GRATICULE_MERIDIANS = 12;
 /** Parallels (latitude rings) of the shared graticule shell. */
@@ -417,7 +388,7 @@ const GRATICULE_PARALLELS = 8;
 const GRATICULE_CIRCLE_SEGMENTS = 48;
 
 // Shared unit-sphere lat/long graticule (scaled per body; module scope,
-// intentionally never disposed — same convention as the atmosphere ring).
+// intentionally never disposed — same convention as engine/render/assets).
 let graticuleGeometry: THREE.BufferGeometry | null = null;
 const getGraticuleGeometry = (): THREE.BufferGeometry => {
   if (graticuleGeometry) return graticuleGeometry;
@@ -662,35 +633,8 @@ export function createLodManager(scene: THREE.Scene, opts: LodManagerOptions = {
       });
   };
 
-  const updateAtmosphere = (body: BodyState, surfaceDistance: number, scale: number): void => {
-    const opacity = atmosphereOpacity(surfaceDistance, body.radius);
-    if (opacity <= 0.001) {
-      if (body.atmosphere) body.atmosphere.mesh.visible = false;
-      return;
-    }
-    if (!body.atmosphere) {
-      const material = new THREE.MeshBasicMaterial({
-        color: 0xffffff,
-        wireframe: true,
-        transparent: true,
-        opacity: 0,
-        depthWrite: false,
-      });
-      const mesh = new THREE.Mesh(getAtmosphereGeometry(), material);
-      body.anchor.add(mesh);
-      body.atmosphere = { mesh, material };
-    }
-    const atmosphere = body.atmosphere;
-    atmosphere.mesh.visible = true;
-    atmosphere.material.opacity = opacity;
-    atmosphere.mesh.scale.setScalar(scale * body.radius);
-    // billboard in world space, compensating any anchor spin
-    body.anchor.getWorldQuaternion(scratchQuaternion).invert();
-    atmosphere.mesh.quaternion.copy(scratchQuaternion).multiply(cameraQuaternion);
-  };
-
   // ---- skim-band shells (surfaceShells consumers only, planets only) ----
-  // Both follow the atmosphere/haze gating pattern: created lazily on first
+  // Both follow the haze's gating pattern: created lazily on first
   // band entry, hidden (visible = false — zero draw cost) outside the band.
   const makeShell = (body: BodyState, geometry: THREE.BufferGeometry): ShellState => {
     const material = new THREE.LineBasicMaterial({
@@ -837,11 +781,6 @@ export function createLodManager(scene: THREE.Scene, opts: LodManagerOptions = {
     releaseSlot(body, body.previous);
     body.current = null;
     body.previous = null;
-    if (body.atmosphere) {
-      body.anchor.remove(body.atmosphere.mesh);
-      body.atmosphere.material.dispose();
-      body.atmosphere = null;
-    }
     releaseShell(body, body.graticule);
     releaseShell(body, body.clouds);
     body.graticule = null;
@@ -882,7 +821,6 @@ export function createLodManager(scene: THREE.Scene, opts: LodManagerOptions = {
         pendingLevel: -1,
         pendingKey: '',
         dotIndex: freeDotSlots.pop() ?? -1,
-        atmosphere: null,
         graticule: null,
         clouds: null,
         lastScale: SCALE_RAMP_FLOOR,
@@ -1020,13 +958,10 @@ export function createLodManager(scene: THREE.Scene, opts: LodManagerOptions = {
           }
         }
 
-        if (body.kind === 'planet') {
-          updateAtmosphere(body, surfaceDistance, scale);
-          if (surfaceShells) {
-            const terrain = terrainPresence(body);
-            updateGraticule(body, surfaceDistance, scale, terrain);
-            updateClouds(body, surfaceDistance, scale, terrain, dt);
-          }
+        if (body.kind === 'planet' && surfaceShells) {
+          const terrain = terrainPresence(body);
+          updateGraticule(body, surfaceDistance, scale, terrain);
+          updateClouds(body, surfaceDistance, scale, terrain, dt);
         }
 
         // far-limb haze while skimming: fade the side of the wireframe
