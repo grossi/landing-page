@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import {
   burnKeysDown,
   CRUISE_FOV,
+  easeUpVector,
   FORWARD,
   resolveSteer,
   speedResponseRate,
@@ -143,7 +144,7 @@ const approachRange = (radius: number) => Math.max(60, radius * 0.5);
  */
 export function createEphemeris(container: HTMLElement, hud: EphemerisHudElements): () => void {
   // log depth: near 0.5 / far 60,000 spans five distance decades with nested
-  // LOD shells + atmosphere rings — a linear z-buffer would z-fight them.
+  // nested LOD + skim-band shells — a linear z-buffer would z-fight them.
   // far covers the beacon-dot shell (BEACON_RANGE sectors on the diagonal).
   // Gentle exp2 fog gives far content the DEEP FIELD emergence — geometry
   // fades up from black over the ~24k → 6k approach band instead of popping
@@ -478,16 +479,29 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
     for (const poi of home.pois) considerPoi(poi);
     field.forEachPoi(considerPoi);
 
+    // surface-horizon leveling: inside an enveloped body's ring-cue band the
+    // roll leveler's reference up eases onto the local surface normal, so a
+    // planetary approach settles the horizon horizontal on its own (the
+    // leveler still yields to active steering and to nose-down dives).
+    // Leaving the band freezes the up where it was — space has no correct
+    // orientation, so nothing ever un-rotates. Envelope-less solids (the
+    // comet, the station) don't retarget: too small to read as a horizon.
+    const inEnvelopeBand =
+      nearestSolid.envelope && nearestSolid.dist < nearestSolid.radius * ENVELOPE_RADII;
+    if (inEnvelopeBand) {
+      scratch.copy(ship.position).sub(nearestSolid.center);
+      if (scratch.lengthSq() > 1e-9) {
+        easeUpVector(rig.levelUp, scratch.normalize(), dt);
+      }
+    }
+
     // arrival ritual: crossing into a solid body's atmospheric envelope
     // (the ring-cue band) announces once per approach; each body re-arms
     // past its OWN ENVELOPE_REARM_RADII (hysteresis, per-body — see the
-    // 10 Hz pass below). HUD text plus the envelope speed step only — the
-    // camera never reacts.
-    if (
-      nearestSolid.envelope &&
-      nearestSolid.dist < nearestSolid.radius * ENVELOPE_RADII &&
-      !envelopeAnnounced.has(nearestSolid.id)
-    ) {
+    // 10 Hz pass below). HUD text plus the envelope speed step only — no
+    // camera cut; the only camera response near a body is the horizon
+    // leveling above, and that is an ease, never a jump.
+    if (inEnvelopeBand && !envelopeAnnounced.has(nearestSolid.id)) {
       envelopeAnnounced.set(nearestSolid.id, nearestSolid.dist / nearestSolid.radius);
       pingTimer = 4;
       setHudText(hud.ping, `ATMOSPHERIC ENVELOPE · ${nearestSolid.name}`);
@@ -589,6 +603,11 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
     origin: () => { x: number; y: number; z: number };
     /** The ship's absolute position (origin + render-local). */
     shipAbs: () => { x: number; y: number; z: number };
+    /** Camera attitude + the roll leveler's current reference up. */
+    attitude: () => {
+      quaternion: { x: number; y: number; z: number; w: number };
+      levelUp: { x: number; y: number; z: number };
+    };
   }
   const debugHandle: EphemerisDebug = {
     warp: (x, y, z, lookX, lookY, lookZ) => {
@@ -637,6 +656,15 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
       return all;
     },
     origin: () => ({ x: origin.x, y: origin.y, z: origin.z }),
+    attitude: () => ({
+      quaternion: {
+        x: camera.quaternion.x,
+        y: camera.quaternion.y,
+        z: camera.quaternion.z,
+        w: camera.quaternion.w,
+      },
+      levelUp: { x: rig.levelUp.x, y: rig.levelUp.y, z: rig.levelUp.z },
+    }),
     shipAbs: () => ({
       x: ship.position.x + origin.x,
       y: ship.position.y + origin.y,

@@ -136,10 +136,6 @@ export {
 } from 'engine/lod/geometry';
 export {
   apparentScale,
-  ATMOSPHERE_FAR,
-  ATMOSPHERE_MAX_OPACITY,
-  ATMOSPHERE_NEAR,
-  atmosphereOpacity,
   biasedMaxLevel,
   CLOUD_DRIFT_RAD_S,
   CLOUD_FAR,

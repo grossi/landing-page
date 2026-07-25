@@ -13,10 +13,22 @@
  *
  * The cap is direction-aware: it exists to make *approaches* controllable,
  * so it only binds when the ship is pointed at the body. Pointing away
- * relaxes it back to the open-space ceiling (`escapeRelief`) — climbing out
- * of a "gravity well" is never a grind. Boosting additionally raises the
- * cap (`BOOST_LIMIT_FACTOR`), letting a burn punch through the well; the
- * sim is no-fail (soft altitude floor), so the worst case is a fast skim.
+ * relaxes it (`escapeRelief`), eased on two axes so departure reads as a
+ * progressive throttle-up instead of an instant jump:
+ *
+ * - ANGLE: relief scales across the whole away hemisphere — full only with
+ *   the nose near straight away from the body (`RELIEF_FULL`); just over
+ *   the horizon earns a fraction of it. Climbing steeply out is genuinely
+ *   faster than skimming away.
+ * - PROXIMITY: what full relief grants is not the open-space ceiling but
+ *   the escape ramp (`escapeCeil`): `ESCAPE_FLOOR` on the deck, growing
+ *   with surface distance at `ESCAPE_SLOPE_FACTOR`× the approach slope
+ *   until the full ceiling returns a couple of thousand units out — even
+ *   straight up, the first stretch off the ground accelerates gently.
+ *
+ * Leaving is never a grind: the ramp is steep and boosting still raises
+ * whatever the cap is (`BOOST_LIMIT_FACTOR`); the sim is no-fail (soft
+ * altitude floor), so the worst case is a fast skim.
  *
  * Only SOLID bodies (planets, stars — see `Poi.solid`) drive the law.
  * Diffuse volumes (nebulae, clusters, swarms) are enterable: instead of a
@@ -42,10 +54,37 @@ export const SPEED_CEIL = 3000;
 
 /** Approach cosine at/above which the surface cap applies in full. */
 export const RELIEF_START = 0.25;
-/** Approach cosine at/below which the cap is fully lifted (flying away). */
-export const RELIEF_FULL = -0.2;
+/**
+ * Approach cosine at/below which relief is full. −0.9 is ~154° off the
+ * body — near straight away. The old −0.2 granted full relief just past
+ * perpendicular, so barely clearing the horizon unlocked the same speed as
+ * a vertical climb and departures felt like a switch flipping.
+ */
+export const RELIEF_FULL = -0.9;
 /** Multiplier a boost burn applies to the (relieved) speed cap. */
 export const BOOST_LIMIT_FACTOR = 1.8;
+
+/** The escape ramp's value at the surface itself (units/s). */
+export const ESCAPE_FLOOR = SPEED_FLOOR;
+/** Escape-ramp slope, as a multiple of the approach law's distance slope. */
+export const ESCAPE_SLOPE_FACTOR = 3;
+
+/**
+ * The ceiling full escape relief grants at `surfaceDistance` — a distance
+ * ramp, not the open-space `SPEED_CEIL`: `ESCAPE_FLOOR` on the deck,
+ * climbing `ESCAPE_SLOPE_FACTOR`× steeper than the approach law until the
+ * ceiling returns (~2,800 units out, about the envelope edge of the biggest
+ * rogue planet). Negative distances (mid soft-floor push-out) hold the deck
+ * value. Always ≥ the head-on `speedLimit` base at the same distance:
+ * `ESCAPE_FLOOR` matches the flat `SPEED_FLOOR` and the slope is steeper,
+ * so relief can only ever raise the limit.
+ */
+export function escapeCeil(surfaceDistance: number): number {
+  return Math.min(
+    SPEED_CEIL,
+    ESCAPE_FLOOR + Math.max(0, surfaceDistance) * SPEED_PER_SURFACE_DISTANCE * ESCAPE_SLOPE_FACTOR,
+  );
+}
 
 const smooth = (t: number): number => t * t * (3 - 2 * t);
 
@@ -93,20 +132,22 @@ export function speedFloor(surfaceDistance: number, radius: number): number {
  * surface, mid soft-floor push-out) clamp to the floor. The floor itself is
  * radius-aware (`speedFloor` — pass the nearest body's radius; the default
  * Infinity reproduces the flat-floor law). The relieved limit blends from
- * the distance cap to `SPEED_CEIL` as the heading turns away.
+ * the distance cap toward the proximity-scaled `escapeCeil` as the heading
+ * turns away — see the module header for the two-axis departure easing.
  */
 export function speedLimit(surfaceDistance: number, approach = 1, radius = Infinity): number {
   const base = Math.min(
     SPEED_CEIL,
     Math.max(speedFloor(surfaceDistance, radius), surfaceDistance * SPEED_PER_SURFACE_DISTANCE),
   );
-  return base + (SPEED_CEIL - base) * escapeRelief(approach);
+  // escapeCeil ≥ base for all distances (see its doc), so this only raises
+  return base + (escapeCeil(surfaceDistance) - base) * escapeRelief(approach);
 }
 
 /**
  * Surface distance (in radii) at which a solid body's atmospheric envelope
- * begins — the same band where the LOD manager's atmosphere ring cue starts
- * fading in (ATMOSPHERE_FAR), so the arrival ritual and the visual agree.
+ * begins — the band the HUD announcement and the envelope speed step share,
+ * so the arrival ritual reads as one event.
  */
 export const ENVELOPE_RADII = 4;
 /** The arrival ritual re-arms beyond this surface distance (in radii). */

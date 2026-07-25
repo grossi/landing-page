@@ -1,13 +1,9 @@
 // @vitest-environment happy-dom
 import * as THREE from 'three';
 import { describe, expect, it, vi } from 'vitest';
-import { ENVELOPE_RADII } from 'engine/core/motion';
 import { GeometryCache, GeometryJobQueue, lodGeometryKey } from 'engine/lod/geometry';
 import {
   apparentScale,
-  ATMOSPHERE_FAR,
-  ATMOSPHERE_MAX_OPACITY,
-  atmosphereOpacity,
   biasedMaxLevel,
   CLOUD_DRIFT_RAD_S,
   CLOUD_FAR,
@@ -99,31 +95,6 @@ describe('apparentScale', () => {
       expect(Math.abs(s - last)).toBeLessThan(0.05); // no jumps
       last = s;
     }
-  });
-});
-
-describe('atmosphereOpacity', () => {
-  it('is zero beyond 4 radii and peaks near the surface', () => {
-    expect(atmosphereOpacity(50, 10)).toBe(0);
-    expect(atmosphereOpacity(40, 10)).toBe(0); // continuous at the far edge
-    expect(atmosphereOpacity(2, 10)).toBeCloseTo(ATMOSPHERE_MAX_OPACITY, 5);
-  });
-
-  it('stays inside [0, max] and rises monotonically on approach', () => {
-    let last = 0;
-    for (let d = 45; d >= 1; d--) {
-      const o = atmosphereOpacity(d, 10);
-      expect(o).toBeGreaterThanOrEqual(0);
-      expect(o).toBeLessThanOrEqual(ATMOSPHERE_MAX_OPACITY);
-      expect(o).toBeGreaterThanOrEqual(last - 1e-12);
-      last = o;
-    }
-  });
-
-  it('starts in the same band as the arrival ritual (ENVELOPE_RADII)', () => {
-    // the HUD "ATMOSPHERIC ENVELOPE" ping and the ring cue must always
-    // begin together — retuning one without the other desyncs the ritual
-    expect(ATMOSPHERE_FAR).toBe(ENVELOPE_RADII);
   });
 });
 
@@ -410,7 +381,7 @@ describe('createLodManager', () => {
       lod.update(makeCamera(), VIEW_H, 0.6);
       await flush();
     }
-    expect(anchor.children.length).toBeGreaterThan(0); // rung mesh + atmosphere
+    expect(anchor.children.length).toBeGreaterThan(0); // rung mesh
 
     lod.unregister(handle);
     expect(anchor.children).toHaveLength(0);
@@ -444,11 +415,13 @@ describe('createLodManager', () => {
     expect(disposeSpy).toHaveBeenCalled();
   });
 
-  it('adds the atmosphere cue for close planets only', async () => {
+  it('adds no atmosphere-ring mesh to close bodies (cue removed by design)', async () => {
+    // rungs are LineSegments; the removed ring cue was the only plain Mesh
+    // a close body ever grew — none may come back
     const scene = new THREE.Scene();
     const lod = createLodManager(scene);
     const planet = new THREE.Group();
-    planet.position.set(0, 0, -15); // 0.5 radii off the surface — cue active
+    planet.position.set(0, 0, -15); // 0.5 radii off the surface
     const star = new THREE.Group();
     star.position.set(0, 0, -15);
     scene.add(planet, star);
@@ -459,10 +432,8 @@ describe('createLodManager', () => {
       lod.update(makeCamera(), VIEW_H, 0.6);
       await flush();
     }
-    const planetRings = planet.children.filter((c) => c instanceof THREE.Mesh && c.visible);
-    const starRings = star.children.filter((c) => c instanceof THREE.Mesh);
-    expect(planetRings.length).toBe(1);
-    expect(starRings.length).toBe(0);
+    expect(planet.children.filter((c) => c instanceof THREE.Mesh)).toHaveLength(0);
+    expect(star.children.filter((c) => c instanceof THREE.Mesh)).toHaveLength(0);
     lod.dispose();
   });
 

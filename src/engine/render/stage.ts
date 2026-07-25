@@ -65,7 +65,7 @@ export interface StageOptions {
   fogDensity?: number;
   /**
    * Logarithmic depth buffer for scenes spanning many distance decades with
-   * coplanar/nested surfaces (EPHEMERIS: LOD shells, atmosphere rings,
+   * coplanar/nested surfaces (EPHEMERIS: LOD shells, skim-band shells,
    * near 0.5 / far 60,000). A linear 24-bit z-buffer z-fights those cases;
    * the log-depth cost (broken early-z) is negligible on a low-overdraw
    * wireframe scene. Scenes without nesting should keep the default.
