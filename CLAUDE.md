@@ -12,3 +12,7 @@ Blog content is stored as markdown files in `/src/assets/` (currently a single
 post, `npm-library.md`, rendered at `/blog`).
 
 Markdown files are imported as asset URLs (`assetsInclude` in `vite.config.ts`) and fetched at runtime via `useMarkdownAsset`.
+
+Posts start with a front-matter header (`---` / `date: YYYY-MM-DD` / `---`),
+parsed by `components/post/frontMatter.ts` and rendered as a "Published on …"
+byline under the title. Give new posts their date.

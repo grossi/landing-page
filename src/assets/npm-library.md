@@ -1,3 +1,7 @@
+---
+date: 2021-06-01
+---
+
 # 🚀 Publishing a NPM library 
 
 In this post I will explain how to bundle and publish a Typescript component library on NPM.

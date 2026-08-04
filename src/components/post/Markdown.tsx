@@ -5,6 +5,7 @@ import typescript from 'react-syntax-highlighter/dist/esm/languages/hljs/typescr
 import { atomOneDarkReasonable } from 'react-syntax-highlighter/dist/esm/styles/hljs';
 import { Box, Link, Text } from '@chakra-ui/react';
 import { monoFont as mono } from 'config/site';
+import { formatPostDate } from 'components/post/frontMatter';
 
 // Only the languages used by posts are registered — the full hljs build
 // is ~800 kB. Register more here as posts need them.
@@ -21,11 +22,18 @@ const stripEmoji = (node: React.ReactNode): React.ReactNode => {
   return node;
 };
 
-function MarkdownH1({ children, ...props }: any) {
+function MarkdownH1({ date, children, ...props }: any) {
   return (
-    <Text {...props}>
-      {stripEmoji(children)}
-    </Text>
+    <Box my={6}>
+      <Text {...props}>
+        {stripEmoji(children)}
+      </Text>
+      {date && (
+        <Text fontSize="sm" color="whiteAlpha.600" mt={2} mx={[0, 0, 2, 4]}>
+          Published on {formatPostDate(date)}
+        </Text>
+      )}
+    </Box>
   );
 }
 
@@ -65,13 +73,13 @@ function MarkdownCode(props: any) {
   );
 }
 
-const options = {
+const buildOptions = (date?: string) => ({
   overrides: {
     h1: {
       component: MarkdownH1,
       props: {
+        date,
         fontSize: '3xl',
-        my: 6,
         fontFamily: mono,
         fontWeight: 'bold',
         textTransform: 'uppercase',
@@ -142,8 +150,9 @@ const options = {
       component: MarkdownCode,
     },
   },
-};
+});
 
-export default function Markdown(props: any) {
+export default function Markdown({ date, ...props }: any) {
+  const options = React.useMemo(() => buildOptions(date), [date]);
   return <ReactMarkdown options={options} {...props} />;
 }
