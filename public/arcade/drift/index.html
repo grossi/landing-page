@@ -285,7 +285,7 @@ function tick(dt, now) {
 }
 for (const a of asteroids) placeAsteroid(a, true); // menu backdrop
 placeBeacon();
-const loop = startLoop(tick);
+startLoop(tick);
 
 addEventListener('resize', () => {
   camera.aspect = innerWidth / innerHeight;

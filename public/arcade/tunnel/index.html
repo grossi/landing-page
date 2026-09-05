@@ -185,7 +185,7 @@ function tick(dt, now) {
   camera.rotation.z += ((angDiff(-Math.PI / 2, angle) * 0.22) - camera.rotation.z) * Math.min(1, dt * 6 * (state === 'play' ? 1 : 0.3));
   renderer.render(scene, camera);
 }
-const loop = startLoop(tick);
+startLoop(tick);
 
 addEventListener('resize', () => {
   camera.aspect = innerWidth / innerHeight;

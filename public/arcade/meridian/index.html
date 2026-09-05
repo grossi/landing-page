@@ -195,7 +195,7 @@ function tick(dt) {
 
   renderer.render(scene, camera);
 }
-const loop = startLoop(tick);
+startLoop(tick);
 
 addEventListener('resize', () => {
   camera.aspect = innerWidth / innerHeight;

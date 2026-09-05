@@ -176,7 +176,7 @@ function press() {
   else reset();
 }
 
-const input = createInput({ onPress: press, pressKeys: ['Space', 'Enter'] });
+createInput({ onPress: press, pressKeys: ['Space', 'Enter'] });
 function tick(dt) {
   t += dt;
 
@@ -216,7 +216,7 @@ function tick(dt) {
 
   renderer.render(scene, camera);
 }
-const loop = startLoop(tick);
+startLoop(tick);
 
 addEventListener('resize', () => {
   camera.aspect = innerWidth / innerHeight;

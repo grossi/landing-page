@@ -262,7 +262,7 @@ function tick(dt) {
   renderer.render(scene, camera);
 }
 for (let r = 0; r < ROWS; r++) rollRow(buildings[r], -60 - r * ROW_D); // menu backdrop
-const loop = startLoop(tick);
+startLoop(tick);
 
 addEventListener('resize', () => {
   camera.aspect = innerWidth / innerHeight;

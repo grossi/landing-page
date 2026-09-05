@@ -212,7 +212,7 @@ function tick(dt, now) {
   camera.quaternion.slerp(ship.quaternion, Math.min(1, dt * 6));
   renderer.render(scene, camera);
 }
-const loop = startLoop(tick);
+startLoop(tick);
 
 addEventListener('resize', () => {
   camera.aspect = innerWidth / innerHeight;

@@ -259,7 +259,7 @@ function tick(dt) {
   renderer.render(scene, camera);
 }
 updateTerrain();
-const loop = startLoop(tick);
+startLoop(tick);
 
 addEventListener('resize', () => {
   camera.aspect = innerWidth / innerHeight;

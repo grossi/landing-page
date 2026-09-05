@@ -26,6 +26,8 @@
   `;
   frame.srcdoc = `<base href="${path}"><script>${instrumentation}<\/script>` +
     html.replaceAll('Math.random()', '__random()')
+      .replace(/^startLoop\(tick\);/m, 'const loop = startLoop(tick);')
+      .replace(/^createInput\(/m, 'const input = createInput(')
       .replace("import * as THREE from 'three';", "import * as THREE from 'three';" + seededDirection).replace(/(<script type="module">[\s\S]*?)(<\/script>)/, '$1' + expose + (params.has('freeze') ? '\nloop.dispose(); tick(0, 0);\n' : '') + '$2');
   window.gameFrame = frame;
   window.measure = async () => {

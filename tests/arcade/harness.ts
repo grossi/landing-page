@@ -42,7 +42,10 @@ export function mountGame(name: string) {
   const html = readFileSync(new URL(`../../public/arcade/${name}/index.html`, import.meta.url), 'utf8');
   const code = html.match(/<script type="module">([\s\S]*?)<\/script>/)![1]
     .replace("import * as THREE from 'three';", '')
-    .replace(/import \{.*\} from '\.\.\/shared\/runtime.js';/, '');
+    .replace(/import \{.*\} from '\.\.\/shared\/runtime.js';/, '')
+    // Retain handles for inspection/cleanup only in the fixture.
+    .replace(/^startLoop\(tick\);/m, 'const loop = startLoop(tick);')
+    .replace(/^createInput\(/m, 'const input = createInput(');
   const runtime = readFileSync(new URL('../../public/arcade/shared/runtime.js', import.meta.url), 'utf8')
     .replace(/export function /g, 'function ');
   vm.runInContext(runtime, context);
