@@ -4,36 +4,55 @@ import { createResourceTracker } from 'engine/render/resourceTracker';
 import { buildShipRig } from 'engine/render/shipRig';
 
 describe('buildShipRig', () => {
-  it('builds the control frame with the banked body as its only child', () => {
-    const { ship, shipBody } = buildShipRig(createResourceTracker());
+  it('keeps visual banking independent of the control frame', () => {
+    const tracker = createResourceTracker();
+    const { ship, shipBody } = buildShipRig(tracker);
     expect(ship.children).toEqual([shipBody]);
-    expect(shipBody.children).toHaveLength(2);
-    const [nose, wing] = shipBody.children;
-    expect(nose).toBeInstanceOf(THREE.Mesh);
-    expect(wing).toBeInstanceOf(THREE.Line);
+    shipBody.rotation.z = 0.5;
+    expect(ship.quaternion.equals(new THREE.Quaternion())).toBe(true);
+    tracker.dispose();
   });
 
-  it('points the nose toward -z (camera forward)', () => {
-    const { shipBody } = buildShipRig(createResourceTracker());
-    const nose = shipBody.children[0] as THREE.Mesh;
-    nose.geometry.computeBoundingBox();
-    const box = nose.geometry.boundingBox!;
-    expect(box.min.z).toBeCloseTo(-1.3, 6);
-    expect(box.max.z).toBeCloseTo(1.3, 6);
-    expect(box.max.y).toBeLessThan(1.3);
-  });
-
-  it('tracks every geometry and material for disposal', () => {
+  it('keeps a symmetric hull facing -z within the chase-camera footprint', () => {
     const tracker = createResourceTracker();
     const { shipBody } = buildShipRig(tracker);
-    const disposed = new Set<unknown>();
-    for (const child of shipBody.children) {
-      const obj = child as THREE.Mesh;
-      obj.geometry.addEventListener('dispose', () => disposed.add(obj.geometry));
-      const material = obj.material as THREE.Material;
-      material.addEventListener('dispose', () => disposed.add(material));
+    const box = new THREE.Box3().setFromObject(shipBody);
+    expect(box.min.x).toBeCloseTo(-box.max.x, 6);
+    expect(box.max.x - box.min.x).toBeLessThan(4.5);
+    expect(box.min.z).toBeCloseTo(-2.25, 6);
+    expect(box.max.z).toBeLessThan(1.6);
+    expect(box.max.y).toBeLessThan(0.8);
+    const hull = shipBody.getObjectByName('hull') as THREE.Mesh;
+    const positions = hull.geometry.getAttribute('position');
+    // The most forward vertices form a narrow nose, not a backwards engine.
+    for (let i = 0; i < positions.count; i++) {
+      if (positions.getZ(i) < -2)
+        expect(Math.abs(positions.getX(i))).toBeLessThan(0.02);
     }
     tracker.dispose();
-    expect(disposed.size).toBe(4);
+  });
+
+  it('tracks every geometry and material for disposal exactly once', () => {
+    const tracker = createResourceTracker();
+    const { shipBody } = buildShipRig(tracker);
+    const resources = new Set<THREE.BufferGeometry | THREE.Material>();
+    shipBody.traverse((obj) => {
+      if (obj instanceof THREE.Mesh || obj instanceof THREE.LineSegments) {
+        resources.add(obj.geometry);
+        const materials = Array.isArray(obj.material)
+          ? obj.material
+          : [obj.material];
+        materials.forEach((material) => resources.add(material));
+      }
+    });
+    let disposed = 0;
+    resources.forEach((resource) =>
+      resource.addEventListener('dispose', () => disposed++)
+    );
+    expect(resources.size).toBeGreaterThan(0);
+    tracker.dispose();
+    expect(disposed).toBe(resources.size);
+    tracker.dispose();
+    expect(disposed).toBe(resources.size);
   });
 });

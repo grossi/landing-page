@@ -41,6 +41,7 @@
 </script>
 <script type="module">
 import * as THREE from 'three';
+import { createShipBody } from '../shared/ship.js';
 import { createInput, startLoop, setText } from '../shared/runtime.js';
 
 const DEMO = new URLSearchParams(location.search).has('demo');
@@ -73,11 +74,9 @@ for (let i = 0; i < 12; i++) {
   scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), railMat));
 }
 
-// player ship — small wireframe dart
-const ship = new THREE.Group();
-const shipGeo = new THREE.ConeGeometry(0.45, 1.5, 4);
-shipGeo.rotateX(-Math.PI / 2);
-ship.add(new THREE.Mesh(shipGeo, new THREE.MeshBasicMaterial({ color: 0xffffff, wireframe: true })));
+// player ship — compact terminal interceptor
+const ship = createShipBody(THREE);
+ship.scale.setScalar(0.32); // compact hull for the narrow tunnel lane
 scene.add(ship);
 
 // obstacle pool: arcs with a gap

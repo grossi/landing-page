@@ -43,6 +43,7 @@
 </script>
 <script type="module">
 import * as THREE from 'three';
+import { createShipBody } from '../shared/ship.js';
 import { createInput, startLoop, setText } from '../shared/runtime.js';
 
 const DEMO = new URLSearchParams(location.search).has('demo');
@@ -80,11 +81,12 @@ const wireMat = new THREE.MeshBasicMaterial({ color: 0xffffff, wireframe: true }
 
 // ship
 const ship = new THREE.Group();
-const shipGeo = new THREE.ConeGeometry(1.1, 3.2, 3);
-shipGeo.rotateX(Math.PI / 2); // point +z
-ship.add(new THREE.Mesh(shipGeo, wireMat));
-const flame = new THREE.Mesh(new THREE.ConeGeometry(0.5, 1.6, 3), wireMat);
-flame.rotation.x = -Math.PI / 2; flame.position.z = -2.2; flame.visible = false;
+const body = createShipBody(THREE);
+body.rotation.y = Math.PI; // VOID FIELD flies along +z
+body.scale.setScalar(0.64); // retain the original collision footprint
+ship.add(body);
+const flame = new THREE.Mesh(new THREE.ConeGeometry(0.35, 1.25, 3), wireMat);
+flame.rotation.x = -Math.PI / 2; flame.position.z = -1.60; flame.visible = false;
 ship.add(flame);
 scene.add(ship);
 
