@@ -1,0 +1,34 @@
+<!doctype html>
+<title>Engine GPU workload verification</title>
+<style>body { margin: 0; background: black; } #stage { width: 640px; height: 360px; }</style>
+<div id="stage"></div>
+<script type="module">
+  import * as THREE from 'three';
+  import { createStage } from 'engine/render/stage';
+  import { attachStatsOverlay } from 'engine/render/statsOverlay';
+  // Model a retina canvas even when automation's virtual screen uses DPR 1.
+  Object.defineProperty(window, 'devicePixelRatio', { configurable: true, value: 2 });
+  const host = document.querySelector('#stage');
+  const stage = createStage(host);
+  const iterations = Number(new URLSearchParams(location.search).get('iterations') || 1000);
+  const material = new THREE.ShaderMaterial({
+    uniforms: { iterations: { value: iterations } },
+    vertexShader: 'void main() { gl_Position = vec4(position.xy, 0.0, 1.0); }',
+    fragmentShader: `uniform int iterations;
+      void main() {
+        float v = gl_FragCoord.x * 0.001 + gl_FragCoord.y * 0.0001;
+        for (int i = 0; i < iterations; i++) v = sin(v * 1.01 + float(i) * 0.001);
+        gl_FragColor = vec4(vec3(v * 0.5 + 0.5), 1.0);
+      }`,
+  });
+  stage.scene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), material));
+  attachStatsOverlay(host, stage, { dev: true, search: '?stats' });
+  window.stage = stage;
+  window.setWorkload = n => { material.uniforms.iterations.value = n; };
+  window.samples = [];
+  let frame = 0;
+  stage.start(() => {
+    if (++frame % 30 === 0) samples.push({ js: stage.governor.ema, gpu: stage.governor.gpuEma,
+      level: stage.governor.level, dpr: stage.renderer.getPixelRatio() });
+  });
+</script>

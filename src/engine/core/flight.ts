@@ -261,20 +261,6 @@ export function easeFovValue(current: number, targetFov: number, dt: number): nu
   return current;
 }
 
-/** Per-frame easeFovValue applied to a real camera, skipping the projection-matrix rebuild when inert. */
-export function easeFov(camera: THREE.PerspectiveCamera, targetFov: number, dt: number): void {
-  const next = easeFovValue(camera.fov, targetFov, dt);
-  if (next !== camera.fov) {
-    camera.fov = next;
-    camera.updateProjectionMatrix();
-  }
-}
-
-/** Eases the FOV toward the boost/cruise target — boost widens the view a touch, the shared speed cue. */
-export function updateFov(camera: THREE.PerspectiveCamera, boost: boolean, dt: number): void {
-  easeFov(camera, boost ? BOOST_FOV : CRUISE_FOV, dt);
-}
-
 /** Selects the asymmetric velocity response rate: accelerating chases the target (harder under boost), decelerating always eases. */
 export function speedResponseRate(currentSpeed: number, targetSpeed: number, boost: boolean): number {
   return currentSpeed < targetSpeed ? (boost ? ACCEL_RATE_BOOST : ACCEL_RATE) : DECEL_RATE;

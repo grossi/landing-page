@@ -6,6 +6,7 @@ import {
   type GovernorState,
   type QualityLevel,
 } from 'engine/core/governor';
+import { createGpuTimer } from 'engine/render/gpuTimer';
 import { createResourceTracker, type ResourceTracker } from 'engine/render/resourceTracker';
 
 /**
@@ -22,11 +23,6 @@ export function clampDt(now: number, last: number): number {
 
 /** Why the loop is (or isn't) running; any active source pauses it. */
 export type PauseSource = 'hidden' | 'offscreen' | 'explicit';
-
-/** Pure pause resolution: the loop runs only when no source is active. */
-export function isPaused(sources: ReadonlySet<PauseSource>): boolean {
-  return sources.size > 0;
-}
 
 /**
  * Governor pixel-ratio cap for a quality level, with an optional raised
@@ -89,8 +85,8 @@ export interface Stage {
    */
   tracker: ResourceTracker;
   /**
-   * Adaptive-quality governor state. Fed one JS-cost sample (sim callback +
-   * draw submission, ms) per frame; a sustained overload sheds pixels via
+   * Adaptive-quality governor state. Fed JS-cost samples (sim callback + draw
+   * submission) and asynchronous GPU durations when supported; a sustained overload sheds pixels via
    * the DPR ladder, never frames — slow smooth motion is the aesthetic.
    * Read-only for consumers (the stats overlay renders it).
    */
@@ -138,11 +134,20 @@ export function createStage(container: HTMLElement, opts: StageOptions = {}): St
   );
   const renderer = new THREE.WebGLRenderer({ antialias: true, logarithmicDepthBuffer: logDepth });
 
-  // adaptive quality: the governor watches per-frame JS cost and steps the
+  // adaptive quality: the governor watches JS and GPU workload and steps the
   // pixelRatio cap down (1.5 → 1.25 → 1.0) under sustained load — DPR is
   // the big lever. Its dustFraction/lodBias knobs are read by the
   // experiences' frame loops via quality() to shed dust and LOD rungs too.
   const governor = createGovernorState();
+  let gpuTimer = createGpuTimer(renderer.getContext());
+  // Extensions must be enabled again on the restored context. Old query
+  // objects were invalidated by the loss and must not be reused/deleted there.
+  const onContextRestored = () => {
+    gpuTimer = createGpuTimer(renderer.getContext());
+    governor.gpuEma = undefined;
+  };
+  renderer.domElement.addEventListener('webglcontextrestored', onContextRestored);
+  let gpuSampleAt = 0;
   const applyGovernorPixelRatio = () =>
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, pixelRatioCap(governor.level, maxPixelRatio)));
   applyGovernorPixelRatio();
@@ -166,25 +171,35 @@ export function createStage(container: HTMLElement, opts: StageOptions = {}): St
     t += dt;
     const jsStart = performance.now();
     onFrame?.(dt, t);
-    renderer.render(scene, camera);
+    const gpuMs = gpuTimer.poll();
+    if (gpuMs !== undefined) gpuSampleAt = now;
+    if (frames % 10 === 0) gpuTimer.begin();
+    try {
+      renderer.render(scene, camera);
+    } finally {
+      gpuTimer.end();
+    }
     frames++;
-    // feed the JS cost (not the rAF interval — that only measures the
-    // display's refresh rate) and apply a level change immediately
+    // GPU queries land asynchronously. Expire stale samples instead of letting
+    // an unavailable/disjoint query pin quality indefinitely. No refresh-rate inference.
     const level = governor.level;
-    pushFrameTime(governor, performance.now() - jsStart);
+    pushFrameTime(governor, performance.now() - jsStart, now - gpuSampleAt > 1000 ? null : gpuMs);
     if (governor.level !== level) applyGovernorPixelRatio();
   };
 
   const syncLoop = () => {
-    const shouldRun = !disposed && onFrame !== null && !isPaused(pauseSources);
+    const shouldRun = !disposed && onFrame !== null && pauseSources.size === 0;
     if (shouldRun === running) return;
     running = shouldRun;
     if (shouldRun) {
       // reset the clock so time spent paused never becomes a giant dt
       last = performance.now();
+      governor.gpuEma = undefined;
+      governor.overCount = governor.underCount = 0;
       renderer.setAnimationLoop(frame);
     } else {
       renderer.setAnimationLoop(null);
+      gpuTimer.reset();
     }
   };
 
@@ -242,6 +257,8 @@ export function createStage(container: HTMLElement, opts: StageOptions = {}): St
       resizeObserver.disconnect();
       intersectionObserver?.disconnect();
       document.removeEventListener('visibilitychange', onVisibilityChange);
+      gpuTimer.reset();
+      renderer.domElement.removeEventListener('webglcontextrestored', onContextRestored);
       tracker.dispose();
       renderer.dispose();
       renderer.domElement.remove();

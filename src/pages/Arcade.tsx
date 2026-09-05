@@ -170,7 +170,7 @@ const Arcade = () => (
             display="block"
             color="inherit"
           >
-            <a href={`/arcade/${demo.slug}/`} target="_blank" rel="noreferrer">
+            <a href={`/arcade/${demo.slug}/index.html`} target="_blank" rel="noreferrer">
               <CardShell demo={demo} />
             </a>
           </Box>

@@ -16,7 +16,7 @@ import * as THREE from 'three';
 
 const field = makeDisplacementField(1234, PLANET_PROFILE);
 
-/** Fake clock advancing 1 ms per call — makes runBudgeted run 1 step/update. */
+/** Fake clock advancing 1 ms per call — makes the queue run 1 step/update. */
 const oneStepClock = () => {
   let t = 0;
   return () => t++;
@@ -360,4 +360,46 @@ describe('GeometryJobQueue', () => {
     const queue = new GeometryJobQueue();
     expect(queue.update()).toBe(0);
   });
+});
+
+it('charges cold topology preparation to the same incremental job budget', async () => {
+  vi.resetModules();
+  const { GeometryJobQueue: ColdQueue } = await import('engine/lod/geometry');
+  const { getIcosphereTables: coldTables } = await import('engine/lod/icosphere');
+  const queue = new ColdQueue();
+  const sample = vi.fn(() => 0);
+  const promise = queue.enqueue({ key: 'cold', tables: 6, field: sample, radius: 20, amplitude: 0.06, priority: 1 });
+  expect(sample).not.toHaveBeenCalled();
+  queue.update(0, oneStepClock());
+  expect(sample).not.toHaveBeenCalled(); // still preparing topology, not a synchronous build
+  expect(queue.pending).toBe(1);
+  let updates = 1;
+  while (queue.pending && updates < 2000) {
+    queue.update(0, oneStepClock());
+    updates++;
+  }
+  expect(queue.pending).toBe(0);
+  expect(updates).toBeGreaterThan(Math.ceil(40962 / SLICE_VERTS));
+  const geometry = await promise;
+  const expected = buildLodGeometrySync(coldTables(6), () => 0, 20, 0.06);
+  expect(geometry!.getAttribute('position').array).toEqual(expected.getAttribute('position').array);
+  geometry!.dispose(); expected.dispose();
+});
+
+it('can cancel during topology preparation and reuse that progress for another body', async () => {
+  vi.resetModules();
+  const { GeometryJobQueue: ColdQueue } = await import('engine/lod/geometry');
+  const queue = new ColdQueue();
+  const abandonedField = vi.fn(() => 0);
+  const abandoned = queue.enqueue({ key: 'abandoned', tables: 6, field: abandonedField, radius: 20, amplitude: 0.06, priority: 1 });
+  queue.update(0, oneStepClock());
+  queue.cancel('abandoned');
+  expect(await abandoned).toBeNull();
+  const survivor = queue.enqueue({ key: 'survivor', tables: 6, field: () => 0, radius: 30, amplitude: 0.06, priority: 1 });
+  queue.update(1000);
+  expect(queue.pending).toBe(0);
+  expect(abandonedField).not.toHaveBeenCalled();
+  const geometry = await survivor;
+  expect(geometry!.boundingSphere!.radius).toBeCloseTo(31.8);
+  geometry!.dispose();
 });

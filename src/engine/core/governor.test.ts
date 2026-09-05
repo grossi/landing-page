@@ -95,3 +95,22 @@ describe('framePercentile', () => {
     expect(framePercentile(state, 1)).toBe(5);
   });
 });
+
+it('degrades for sustained GPU load even when JS is fast, then recovers', () => {
+  const state = createGovernorState();
+  for (let i = 0; i < 100; i++) pushFrameTime(state, 2, i % 10 === 0 ? 25 : undefined);
+  expect(state.level).toBe(2);
+  expect(state.ema).toBe(2); // CPU stats retain their meaning
+  expect(state.gpuEma).toBe(25);
+  for (let i = 0; i < 1000; i++) pushFrameTime(state, 2, i % 10 === 0 ? 3 : undefined);
+  expect(state.level).toBe(0);
+});
+
+it('discards an invalid GPU measurement instead of keeping quality pinned', () => {
+  const state = createGovernorState();
+  for (let i = 0; i < 100; i++) pushFrameTime(state, 2, 25);
+  pushFrameTime(state, 2, null);
+  expect(state.gpuEma).toBeUndefined();
+  feed(state, 2, UPGRADE_FRAMES * 2);
+  expect(state.level).toBe(0);
+});

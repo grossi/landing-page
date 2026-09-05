@@ -3,10 +3,8 @@ import { GOVERNOR_LEVELS } from 'engine/core/governor';
 import {
   applyQuality,
   clampDt,
-  isPaused,
   MAX_DT,
   pixelRatioCap,
-  type PauseSource,
 } from 'engine/render/stage';
 
 describe('clampDt', () => {
@@ -60,22 +58,6 @@ describe('pixelRatioCap', () => {
         last = cap;
       }
     }
-  });
-});
-
-describe('isPaused', () => {
-  it('runs when no pause source is active', () => {
-    expect(isPaused(new Set<PauseSource>())).toBe(false);
-  });
-
-  it('pauses when any single source is active', () => {
-    for (const source of ['hidden', 'offscreen', 'explicit'] as const) {
-      expect(isPaused(new Set<PauseSource>([source]))).toBe(true);
-    }
-  });
-
-  it('pauses while several sources are active', () => {
-    expect(isPaused(new Set<PauseSource>(['hidden', 'explicit']))).toBe(true);
   });
 });
 

@@ -4,17 +4,13 @@ import {
   ACCEL_RATE,
   ACCEL_RATE_BOOST,
   bankBody,
-  BOOST_FOV,
   burnKeysDown,
   chaseLag,
   chaseTarget,
-  CRUISE_FOV,
   DECEL_RATE,
-  easeFov,
   easeFovValue,
   easeUpVector,
   FORWARD,
-  FOV_RATE,
   KEY_STEER,
   LEVEL_RATE,
   LEVEL_STEER_FADE,
@@ -25,7 +21,6 @@ import {
   speedResponseRate,
   steerQuaternion,
   updateChaseCamera,
-  updateFov,
   WORLD_UP,
   YAW_RATE,
 } from 'engine/core/flight';
@@ -353,46 +348,6 @@ describe('chase camera', () => {
 });
 
 describe('boost dynamics', () => {
-  it('keeps the shared feel constants', () => {
-    expect(CRUISE_FOV).toBe(64);
-    expect(BOOST_FOV).toBe(71);
-    expect(FOV_RATE).toBe(5);
-    expect(ACCEL_RATE).toBe(2.2);
-    expect(ACCEL_RATE_BOOST).toBe(3.4);
-    expect(DECEL_RATE).toBe(1.4);
-  });
-
-  it('updateFov eases toward 71 under boost, back to 64 at cruise', () => {
-    const camera = new THREE.PerspectiveCamera(CRUISE_FOV);
-    // convergence lands just inside the 0.01 dead band, never tighter
-    for (let i = 0; i < 300; i++) updateFov(camera, true, 1 / 60);
-    expect(Math.abs(camera.fov - BOOST_FOV)).toBeLessThanOrEqual(0.011);
-    for (let i = 0; i < 300; i++) updateFov(camera, false, 1 / 60);
-    expect(Math.abs(camera.fov - CRUISE_FOV)).toBeLessThanOrEqual(0.011);
-  });
-
-  it('updateFov is inert within 0.01 of the target', () => {
-    const camera = new THREE.PerspectiveCamera(CRUISE_FOV + 0.005);
-    updateFov(camera, false, 1 / 60);
-    expect(camera.fov).toBe(CRUISE_FOV + 0.005);
-  });
-
-  it('easeFov eases toward an arbitrary target (the DEEP FIELD title base)', () => {
-    const camera = new THREE.PerspectiveCamera(62);
-    for (let i = 0; i < 300; i++) easeFov(camera, 75.3, 1 / 60);
-    expect(Math.abs(camera.fov - 75.3)).toBeLessThanOrEqual(0.011);
-    easeFov(camera, 75.3, 1 / 60); // dead band: inert once converged
-    const settled = camera.fov;
-    easeFov(camera, 75.3, 1 / 60);
-    expect(camera.fov).toBe(settled);
-  });
-
-  it('easeFov single step moves at FOV_RATE toward the target', () => {
-    const camera = new THREE.PerspectiveCamera(62);
-    easeFov(camera, 63, 0.1);
-    expect(camera.fov).toBeCloseTo(62 + 1 * 0.1 * FOV_RATE, 12); // 62.5
-  });
-
   it('easeFovValue is the pure scalar law: FOV_RATE step, 0.01 dead band', () => {
     expect(easeFovValue(62, 63, 0.1)).toBeCloseTo(62.5, 12); // 1 · 0.1 · 5
     expect(easeFovValue(71, 64, 0.1)).toBeCloseTo(67.5, 12); // -7 · 0.1 · 5
@@ -401,13 +356,6 @@ describe('boost dynamics', () => {
     expect(easeFovValue(64.005, 64, 1)).toBe(64.005);
     expect(easeFovValue(63.995, 64, 1)).toBe(63.995); // inert from below too
     expect(easeFovValue(64, 64, 1)).toBe(64);
-  });
-
-  it('easeFov applies easeFovValue to the camera (parity)', () => {
-    const camera = new THREE.PerspectiveCamera(66.2);
-    const expected = easeFovValue(66.2, 64, 1 / 60);
-    easeFov(camera, 64, 1 / 60);
-    expect(camera.fov).toBe(expected);
   });
 
   it('speedResponseRate is asymmetric: accel chases, decel always eases', () => {

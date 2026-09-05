@@ -21,6 +21,7 @@ export interface StatsSnapshot {
   jsEmaMs: number;
   /** p95 of the same JS cost over the governor's history window, ms. */
   jsP95Ms: number;
+  gpuEmaMs?: number;
   calls: number;
   triangles: number;
   lines: number;
@@ -45,6 +46,7 @@ export const formatCount = (n: number): string => {
 export function formatStats(s: StatsSnapshot): string[] {
   const lines = [
     `FPS ${Math.round(s.fps)} · JS ${s.jsEmaMs.toFixed(1)} MS · P95 ${s.jsP95Ms.toFixed(1)}`,
+    ...(s.gpuEmaMs === undefined ? [] : [`GPU ${s.gpuEmaMs.toFixed(1)} MS`]),
     `CALLS ${formatCount(s.calls)} · TRIS ${formatCount(s.triangles)}`,
     `LINES ${formatCount(s.lines)} · POINTS ${formatCount(s.points)}`,
     `GEOM ${formatCount(s.geometries)} · TEX ${formatCount(s.textures)}`,
@@ -143,6 +145,7 @@ export function attachStatsOverlay(
     el.textContent = formatStats({
       fps,
       jsEmaMs: governor.ema,
+      gpuEmaMs: source.governor.gpuEma,
       jsP95Ms: framePercentile(governor, 0.95),
       calls: info.render.calls,
       triangles: info.render.triangles,

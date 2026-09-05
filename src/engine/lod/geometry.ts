@@ -5,8 +5,8 @@
  *
  * - Levels 1-2 (≤162 verts) build synchronously via `buildLodGeometrySync`.
  * - Levels 3+ go through `GeometryJobQueue`: resumable jobs that displace
- *   `SLICE_VERTS` vertices per step, drained by C4's `runBudgeted` scheduler
- *   inside a few-ms frame budget — at most ~one geometry build per frame.
+ *   `SLICE_VERTS` vertices per step, including resumable topology preparation
+ *   inside the same frame budget.
  * - Finished geometries live in `GeometryCache` (LRU, keyed by
  *   `lodGeometryKey`) so re-approaching the same planet is free. Entries
  *   backing live meshes are pinned via retain/release and never evicted.
@@ -15,8 +15,7 @@
  */
 
 import * as THREE from 'three';
-import { runBudgeted, type BuildStep } from 'engine/core/scheduler';
-import type { IcosphereTables } from 'engine/lod/icosphere';
+import { prepareIcosphereTables, type IcosphereLevel, type IcosphereTables } from 'engine/lod/icosphere';
 
 /** Radial displacement field: unit direction in, offset in [-1, 1] out. */
 export type RadialField = (x: number, y: number, z: number) => number;
@@ -34,7 +33,7 @@ export const lodGeometryKey = (seed: number, kind: string, radius: number, level
  * Vertices displaced per job slice (sub6 = 40962 verts → 41 slices).
  * Sized so ONE slice fits the 3 ms budget even on slow phones: the 6-octave
  * planet field runs a 2048-vert slice in ~1.66 ms on desktop (~5-8 ms on
- * slow phones — a guaranteed overrun, since runBudgeted cannot split a
+ * slow phones — a guaranteed overrun, since the queue cannot split a
  * step), so slices are 1024. A full level-6 build measures ~35 ms of field
  * work — ~11 frames at 60 fps desktop, spread hitch-free by the queue.
  */
@@ -42,6 +41,7 @@ export const SLICE_VERTS = 1024;
 
 /** Default per-frame job budget in milliseconds. */
 export const JOB_BUDGET_MS = 3;
+const defaultNow = () => performance.now();
 
 /**
  * Default LRU byte budget. Entries vary 60x in size (sub2 ≈ 17 KB up to a
@@ -277,7 +277,8 @@ export class GeometryCache {
 export interface GeometryJobRequest {
   /** Cache key (`lodGeometryKey(seed, kind, radius, level)`); also the job's identity. */
   key: string;
-  tables: IcosphereTables;
+  /** A level defers cold topology work into the budget; prepared tables can be reused. */
+  tables: IcosphereTables | IcosphereLevel;
   field: RadialField;
   radius: number;
   amplitude: number;
@@ -286,7 +287,8 @@ export interface GeometryJobRequest {
 }
 
 interface GeometryJob extends GeometryJobRequest {
-  positions: Float32Array;
+  positions: Float32Array | null;
+  preparation: Generator<void, IcosphereTables> | null;
   nextVertex: number;
   cancelled: boolean;
   resolve: (geometry: THREE.BufferGeometry | null) => void;
@@ -295,9 +297,9 @@ interface GeometryJob extends GeometryJobRequest {
 
 /**
  * Budgeted queue for the expensive rungs. Each `update()` drains job slices
- * through C4's `runBudgeted` in descending-priority order, so the body
- * closest on screen resolves first and no frame overruns its budget (the
- * scheduler's ≥1-step guarantee still applies: one slice, not one job).
+ * in descending-priority order. Topology preparation and sorting are charged
+ * to the same budget. At least one bounded step runs, even with a tiny budget;
+ * an individual step can overrun, but a whole cold build cannot run at once.
  *
  * A body stays at its current level until its job's promise lands; cancelled
  * jobs stop early and resolve `null`.
@@ -326,7 +328,8 @@ export class GeometryJobQueue {
     });
     this.jobs.set(request.key, {
       ...request,
-      positions: new Float32Array(request.tables.vertexCount * 3),
+      positions: typeof request.tables === 'number' ? null : new Float32Array(request.tables.vertexCount * 3),
+      preparation: typeof request.tables === 'number' ? prepareIcosphereTables(request.tables) : null,
       nextVertex: 0,
       cancelled: false,
       resolve,
@@ -364,22 +367,32 @@ export class GeometryJobQueue {
   update(budgetMs: number = JOB_BUDGET_MS, now?: () => number): number {
     if (this.jobs.size === 0) return 0;
 
-    // Snapshot in descending priority; setPriority/enqueue between updates
-    // reorder naturally because the steps are rebuilt every frame.
+    const clock = now ?? defaultNow;
+    const start = clock();
     const ordered = [...this.jobs.values()].sort((a, b) => b.priority - a.priority);
-    const steps: BuildStep[] = [];
+    let executed = 0;
     for (const job of ordered) {
-      const remaining = job.tables.vertexCount - job.nextVertex;
-      const sliceCount = Math.ceil(remaining / SLICE_VERTS);
-      for (let s = 0; s < sliceCount; s++) steps.push(() => this.runSlice(job));
+      while (!job.cancelled && this.jobs.has(job.key)) {
+        this.runSlice(job);
+        executed++;
+        if (clock() - start >= budgetMs) return executed;
+      }
     }
-    return now === undefined ? runBudgeted(steps, budgetMs) : runBudgeted(steps, budgetMs, now);
+    return executed;
   }
 
   private runSlice(job: GeometryJob): void {
-    // A job cancelled earlier in this same update leaves its remaining
-    // steps as no-ops.
-    if (job.cancelled || job.nextVertex >= job.tables.vertexCount) return;
+    if (job.cancelled) return;
+    if (job.preparation) {
+      const step = job.preparation.next();
+      if (step.done) {
+        job.tables = step.value;
+        job.positions = new Float32Array(step.value.vertexCount * 3);
+        job.preparation = null;
+      }
+      return;
+    }
+    if (typeof job.tables === 'number' || !job.positions) return;
     const end = Math.min(job.nextVertex + SLICE_VERTS, job.tables.vertexCount);
     displaceRange(job.tables, job.field, job.radius, job.amplitude, job.positions, job.nextVertex, end);
     job.nextVertex = end;
