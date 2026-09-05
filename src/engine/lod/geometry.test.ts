@@ -16,7 +16,7 @@ import * as THREE from 'three';
 
 const field = makeDisplacementField(1234, PLANET_PROFILE);
 
-/** Fake clock advancing 1 ms per call — makes runBudgeted run 1 step/update. */
+/** Fake clock advancing 1 ms per call — makes the queue run 1 step/update. */
 const oneStepClock = () => {
   let t = 0;
   return () => t++;

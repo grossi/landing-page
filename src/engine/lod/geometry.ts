@@ -33,7 +33,7 @@ export const lodGeometryKey = (seed: number, kind: string, radius: number, level
  * Vertices displaced per job slice (sub6 = 40962 verts → 41 slices).
  * Sized so ONE slice fits the 3 ms budget even on slow phones: the 6-octave
  * planet field runs a 2048-vert slice in ~1.66 ms on desktop (~5-8 ms on
- * slow phones — a guaranteed overrun, since runBudgeted cannot split a
+ * slow phones — a guaranteed overrun, since the queue cannot split a
  * step), so slices are 1024. A full level-6 build measures ~35 ms of field
  * work — ~11 frames at 60 fps desktop, spread hitch-free by the queue.
  */

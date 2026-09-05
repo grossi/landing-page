@@ -23,11 +23,6 @@ export function clampDt(now: number, last: number): number {
 /** Why the loop is (or isn't) running; any active source pauses it. */
 export type PauseSource = 'hidden' | 'offscreen' | 'explicit';
 
-/** Pure pause resolution: the loop runs only when no source is active. */
-export function isPaused(sources: ReadonlySet<PauseSource>): boolean {
-  return sources.size > 0;
-}
-
 /**
  * Governor pixel-ratio cap for a quality level, with an optional raised
  * level-0 ceiling (`maxPixelRatio`). The option only ever RAISES level 0
@@ -176,7 +171,7 @@ export function createStage(container: HTMLElement, opts: StageOptions = {}): St
   };
 
   const syncLoop = () => {
-    const shouldRun = !disposed && onFrame !== null && !isPaused(pauseSources);
+    const shouldRun = !disposed && onFrame !== null && pauseSources.size === 0;
     if (shouldRun === running) return;
     running = shouldRun;
     if (shouldRun) {

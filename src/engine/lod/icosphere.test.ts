@@ -22,10 +22,12 @@ describe('getIcosphereTables', () => {
   it('produces unit-length directions (within 1e-6)', () => {
     for (const level of LEVELS) {
       const { dirs } = getIcosphereTables(level);
+      let invalidVertex: number | undefined;
       for (let i = 0; i < dirs.length; i += 3) {
         const len = Math.hypot(dirs[i], dirs[i + 1], dirs[i + 2]);
-        expect(Math.abs(len - 1)).toBeLessThan(1e-6);
+        if (!(Math.abs(len - 1) < 1e-6)) { invalidVertex = i / 3; break; }
       }
+      expect(invalidVertex, `non-unit vertex at level ${level}`).toBeUndefined();
     }
   });
 
@@ -46,17 +48,18 @@ describe('getIcosphereTables', () => {
   it('has no duplicate unordered edge pairs and no degenerate edges', () => {
     for (const level of LEVELS) {
       const { edgeIndex, vertexCount } = getIcosphereTables(level);
-      const seen = new Set<string>();
+      const seen = new Set<number>();
+      let invalidEdge: { index: number; a: number; b: number; duplicate: boolean } | undefined;
       for (let i = 0; i < edgeIndex.length; i += 2) {
-        const a = edgeIndex[i];
-        const b = edgeIndex[i + 1];
-        expect(a).not.toBe(b);
-        expect(a).toBeLessThan(vertexCount);
-        expect(b).toBeLessThan(vertexCount);
-        const key = `${Math.min(a, b)}:${Math.max(a, b)}`;
-        expect(seen.has(key)).toBe(false);
+        const a = edgeIndex[i], b = edgeIndex[i + 1];
+        const key = Math.min(a, b) * vertexCount + Math.max(a, b);
+        const duplicate = seen.has(key);
+        if (a === b || a >= vertexCount || b >= vertexCount || duplicate) {
+          invalidEdge = { index: i / 2, a, b, duplicate }; break;
+        }
         seen.add(key);
       }
+      expect(invalidEdge, `invalid edge at level ${level}`).toBeUndefined();
     }
   });
 
