@@ -62,17 +62,41 @@ const edgeMat = new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true
 
 const LANES = 9, LANE_W = 22, ROWS = 14, ROW_D = 40;
 const SPAN = ROWS * ROW_D;
-const buildings = []; // ROWS × LANES groups
+const buildings = []; // collision transforms stay separate from batched drawing
 for (let r = 0; r < ROWS; r++) {
-  const row = [];
-  for (let l = 0; l < LANES; l++) {
-    const g = new THREE.Group();
-    g.add(new THREE.Mesh(boxGeo, faceMat));
-    g.add(new THREE.LineSegments(boxEdges, edgeMat));
-    scene.add(g);
-    row.push(g);
+  const visual = new THREE.Group();
+  const faces = new THREE.InstancedMesh(boxGeo, faceMat, LANES);
+  const linesGeo = new THREE.BufferGeometry();
+  linesGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(LANES * boxEdges.attributes.position.array.length), 3));
+  const lines = new THREE.LineSegments(linesGeo, edgeMat);
+  visual.add(faces, lines);
+  scene.add(visual);
+  buildings.push({ z: 0, cells: Array.from({ length: LANES }, () => new THREE.Object3D()),
+    heights: new Array(LANES).fill(0), visual, faces, lines });
+}
+const instance = new THREE.Object3D();
+function updateRowVisual(row) {
+  const edges = boxEdges.attributes.position;
+  const positions = row.lines.geometry.attributes.position;
+  let count = 0, vertex = 0;
+  for (const cell of row.cells) {
+    if (!cell.visible) continue;
+    instance.position.set(cell.position.x, cell.position.y, 0);
+    instance.scale.copy(cell.scale);
+    instance.updateMatrix();
+    row.faces.setMatrixAt(count++, instance.matrix);
+    for (let i = 0; i < edges.count; i++) {
+      positions.setXYZ(vertex++, edges.getX(i) * cell.scale.x + cell.position.x,
+        edges.getY(i) * cell.scale.y + cell.position.y, edges.getZ(i) * cell.scale.z);
+    }
   }
-  buildings.push({ z: 0, cells: row, heights: new Array(LANES).fill(0) });
+  row.faces.count = count;
+  row.faces.instanceMatrix.needsUpdate = true;
+  row.faces.computeBoundingSphere();
+  row.lines.geometry.setDrawRange(0, vertex);
+  positions.needsUpdate = true;
+  row.lines.geometry.computeBoundingSphere();
+  row.visual.position.z = row.z;
 }
 const laneX = l => (l - (LANES - 1) / 2) * LANE_W;
 
@@ -91,24 +115,24 @@ function rollRow(row, z) {
     g.scale.set(w, h, d);
     g.position.set(laneX(l) + (Math.random() - 0.5) * 4, h / 2, z);
   }
+  updateRowVisual(row);
 }
 
 // street grid on the ground
-const gridLines = new THREE.Group();
-{
-  const mat = new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.18 });
-  for (let l = 0; l <= LANES; l++) {
-    const x = (l - LANES / 2) * LANE_W;
-    const g = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(x, 0, 40), new THREE.Vector3(x, 0, -SPAN)]);
-    gridLines.add(new THREE.Line(g, mat));
-  }
-  for (let r = 0; r <= ROWS + 2; r++) {
-    const g = new THREE.BufferGeometry().setFromPoints([
-      new THREE.Vector3(-LANES / 2 * LANE_W, 0, -r * ROW_D + 40), new THREE.Vector3(LANES / 2 * LANE_W, 0, -r * ROW_D + 40)]);
-    gridLines.add(new THREE.Line(g, mat));
-  }
-  scene.add(gridLines);
+const gridPositions = [];
+for (let l = 0; l <= LANES; l++) {
+  const x = (l - LANES / 2) * LANE_W;
+  gridPositions.push(x, 0, 40, x, 0, -SPAN);
 }
+for (let r = 0; r <= ROWS + 2; r++) {
+  gridPositions.push(-LANES / 2 * LANE_W, 0, -r * ROW_D + 40,
+    LANES / 2 * LANE_W, 0, -r * ROW_D + 40);
+}
+const gridGeo = new THREE.BufferGeometry();
+gridGeo.setAttribute('position', new THREE.Float32BufferAttribute(gridPositions, 3));
+const gridLines = new THREE.LineSegments(gridGeo,
+  new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.18 }));
+scene.add(gridLines);
 
 // ship
 const ship = new THREE.Group();
@@ -141,6 +165,7 @@ function reset() {
         buildings[r].cells[l].visible = false;
         buildings[r].heights[l] = 0;
       }
+      updateRowVisual(buildings[r]);
     }
   }
   state = 'play';
@@ -209,6 +234,7 @@ function tick(dt, now) {
     // scroll rows, collide
     for (const row of buildings) {
       row.z += speed * dt;
+      row.visual.position.z = row.z;
       for (const g of row.cells) if (g.visible) g.position.z = row.z;
       if (row.z > 40) rollRow(row, row.z - SPAN);
     }

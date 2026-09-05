@@ -97,18 +97,41 @@ const astGeos = [new THREE.IcosahedronGeometry(2, 0), new THREE.IcosahedronGeome
 const AST_R = [2, 3.6, 6];
 for (let i = 0; i < AST_N; i++) {
   const k = Math.floor(Math.random() * 3);
-  const m = new THREE.Mesh(astGeos[k], wireMat);
-  m.userData = { r: AST_R[k], rx: (Math.random() - 0.5), ry: (Math.random() - 0.5) };
-  asteroids.push(m); scene.add(m);
+  const m = new THREE.Object3D();
+  m.userData = { kind: k, r: AST_R[k], rx: (Math.random() - 0.5), ry: (Math.random() - 0.5) };
+  asteroids.push(m);
 }
+const asteroidBatches = astGeos.map(geometry => {
+  const batch = new THREE.InstancedMesh(geometry, wireMat, AST_N);
+  batch.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  batch.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 350);
+  scene.add(batch);
+  return batch;
+});
+const batchCounts = [0, 0, 0];
+function updateAsteroidBatches() {
+  batchCounts.fill(0);
+  for (const asteroid of asteroids) {
+    asteroid.updateMatrix();
+    const kind = asteroid.userData.kind;
+    asteroidBatches[kind].setMatrixAt(batchCounts[kind]++, asteroid.matrix);
+  }
+  for (let k = 0; k < asteroidBatches.length; k++) {
+    const batch = asteroidBatches[k];
+    batch.count = batchCounts[k];
+    batch.instanceMatrix.needsUpdate = true;
+    batch.boundingSphere.center.copy(ship.position);
+  }
+}
+const spawnDirection = new THREE.Vector3(), spawnForward = new THREE.Vector3(), spawnSide = new THREE.Vector3();
 function placeAsteroid(m, nearShip) {
-  const dir = new THREE.Vector3().randomDirection();
+  const dir = spawnDirection.randomDirection();
   const d = nearShip ? 60 + Math.random() * 240 : 140 + Math.random() * 160;
   m.position.copy(ship.position).addScaledVector(dir, d);
   // never spawn right in front of the nose
-  const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(ship.quaternion);
-  if (m.position.clone().sub(ship.position).normalize().dot(fwd) > 0.92 && d < 120)
-    m.position.addScaledVector(fwd.clone().cross(new THREE.Vector3(0, 1, 0)).normalize(), 30);
+  const fwd = spawnForward.set(0, 0, -1).applyQuaternion(ship.quaternion);
+  if (dir.dot(fwd) > 0.92 && d < 120)
+    m.position.addScaledVector(spawnSide.set(-fwd.z, 0, fwd.x).normalize(), 30);
 }
 
 // beacon
@@ -214,9 +237,9 @@ function tick(dt, now) {
     // recycle far asteroids, spin near ones, collide
     for (const a of asteroids) {
       a.rotation.x += a.userData.rx * dt; a.rotation.y += a.userData.ry * dt;
-      const d = a.position.distanceTo(ship.position);
-      if (d > 340) placeAsteroid(a, false);
-      else if (d < a.userData.r + 1.4) return gameOver('WRECKED');
+      const d2 = a.position.distanceToSquared(ship.position);
+      if (d2 > 340 * 340) placeAsteroid(a, false);
+      else if (d2 < (a.userData.r + 1.4) ** 2) return gameOver('WRECKED');
     }
 
     // beacon
@@ -257,6 +280,7 @@ function tick(dt, now) {
   const camTarget = tmp.set(0, 2.6, 9).applyQuaternion(ship.quaternion).add(ship.position);
   camera.position.lerp(camTarget, Math.min(1, 0.016 * 60 * dt * 5));
   camera.quaternion.slerp(ship.quaternion, Math.min(1, dt * 6));
+  updateAsteroidBatches();
   renderer.render(scene, camera);
 }
 for (const a of asteroids) placeAsteroid(a, true); // menu backdrop

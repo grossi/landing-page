@@ -91,15 +91,15 @@ const target = new THREE.Vector3(0, 0, -140);
 }
 // faint reference plane far below
 {
-  const grid = new THREE.Group();
-  const mat = new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.07 });
+  const positions = [];
   for (let i = -8; i <= 8; i++) {
-    grid.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([
-      new THREE.Vector3(i * 60, -160, -480), new THREE.Vector3(i * 60, -160, 480)]), mat));
-    grid.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([
-      new THREE.Vector3(-480, -160, i * 60), new THREE.Vector3(480, -160, i * 60)]), mat));
+    positions.push(i * 60, -160, -480, i * 60, -160, 480,
+      -480, -160, i * 60, 480, -160, i * 60);
   }
-  scene.add(grid);
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  scene.add(new THREE.LineSegments(geometry,
+    new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.07 })));
 }
 
 // ship

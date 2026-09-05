@@ -1,0 +1,26 @@
+<!doctype html>
+<title>Arcade browser verification</title>
+<style>body { margin: 0; background: black; } iframe { width: 100vw; height: 100vh; border: 0; }</style>
+<iframe title="Game under test"></iframe>
+<script type="module">
+  // Dev-server-only fixture: instrument the actual standalone scripts without shipping debug globals.
+  const params = new URLSearchParams(location.search);
+  const game = params.get('game') || 'city';
+  if (!['asteroids', 'city', 'drift', 'horizon', 'meridian', 'murmur', 'stack', 'tunnel'].includes(game)) throw Error('Unknown game');
+  const path = `/arcade/${game}/`;
+  const html = await (await fetch(path + 'index.html')).text();
+  const instrumentation = `
+    let seed = 12345;
+    Math.random = () => { seed = Math.imul(1664525, seed) + 1013904223 | 0; return (seed >>> 0) / 4294967296; };
+    window.__observed = [];
+    window.__THREE_DEVTOOLS__ = new EventTarget();
+    __THREE_DEVTOOLS__.addEventListener('observe', e => __observed.push(e.detail));
+  `;
+  const frame = document.querySelector('iframe');
+  // Expose lexical game state only inside this test document, for repeatable lifecycle/resource checks.
+  const expose = `\nwindow.__game = { scene, renderer, camera, input, loop, tick,
+    run: expression => eval(expression) };\n`;
+  frame.srcdoc = `<base href="${path}"><script>${instrumentation}<\/script>` +
+    html.replace(/(<script type="module">[\s\S]*?)(<\/script>)/, '$1' + expose + '$2');
+  window.gameFrame = frame;
+</script>

@@ -80,11 +80,28 @@ scene.add(terrain);
 const tPos = terrGeo.attributes.position;
 
 let travel = 0;
+const ROW_STEP = D / SZ, TERRAIN_Z = -D / 2 + 60, ROW_VERTS = SX + 1;
+let terrainRow = NaN;
 function updateTerrain() {
-  for (let i = 0; i < tPos.count; i++) {
-    const x = tPos.getX(i), z = tPos.getZ(i) + terrain.position.z;
-    tPos.setY(i, terrainH(x, z - travel));
+  const row = Math.floor(travel / ROW_STEP);
+  const snapped = row * ROW_STEP;
+  // Translate continuously; sample only newly exposed world-space rows.
+  terrain.position.z = TERRAIN_Z + travel - snapped;
+  if (row === terrainRow) return;
+  const advance = row - terrainRow;
+  let rowsToBuild = SZ + 1;
+  if (advance > 0 && advance <= SZ) {
+    for (let z = SZ; z >= advance; z--) {
+      for (let x = 0; x < ROW_VERTS; x++) {
+        tPos.setY(z * ROW_VERTS + x, tPos.getY((z - advance) * ROW_VERTS + x));
+      }
+    }
+    rowsToBuild = advance;
   }
+  for (let i = 0; i < rowsToBuild * ROW_VERTS; i++) {
+    tPos.setY(i, terrainH(tPos.getX(i), tPos.getZ(i) + TERRAIN_Z - snapped));
+  }
+  terrainRow = row;
   tPos.needsUpdate = true;
 }
 

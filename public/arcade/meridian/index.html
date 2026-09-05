@@ -76,13 +76,12 @@ terrain.frustumCulled = false;
 scene.add(terrain);
 const tPos = terrGeo.attributes.position;
 
-function heightAt(wx, wz, dist, t) {
-  const seg = dist / BIOME_SPAN;
-  const i = Math.floor(seg) % BIOMES.length, j = (i + 1) % BIOMES.length;
-  const u = seg - Math.floor(seg);
-  const f = u > 0.8 ? smooth((u - 0.8) / 0.2) : 0; // crossfade in the last fifth
-  const a = BIOMES[i].f(wx, wz, t);
-  return f === 0 ? a : a * (1 - f) + BIOMES[j].f(wx, wz, t) * f;
+let biomeIndex = 0, biomeBlend = 0;
+let previousGridX = NaN, previousGridZ = NaN, previousBiome = -1, previousBlend = NaN;
+function heightAt(wx, wz, t) {
+  const a = BIOMES[biomeIndex].f(wx, wz, t);
+  return biomeBlend === 0 ? a : a * (1 - biomeBlend) +
+    BIOMES[(biomeIndex + 1) % BIOMES.length].f(wx, wz, t) * biomeBlend;
 }
 
 // stars + horizon sun
@@ -153,8 +152,11 @@ function tick(dt, now) {
   dist += speed * dt;
 
   // biome + HUD
-  const segIdx = Math.floor(dist / BIOME_SPAN) % BIOMES.length;
-  const bName = BIOMES[segIdx].name;
+  const segment = dist / BIOME_SPAN;
+  biomeIndex = Math.floor(segment) % BIOMES.length;
+  const progress = segment - Math.floor(segment);
+  biomeBlend = progress > 0.8 ? smooth((progress - 0.8) / 0.2) : 0;
+  const bName = BIOMES[biomeIndex].name;
   if (bName !== lastBiome) { lastBiome = bName; biomeEl.style.opacity = 0; setTimeout(() => { setText(biomeEl, bName); biomeEl.style.opacity = 1; }, 400); }
   refreshHud && setText(distEl, Math.floor(dist) + ' km');
 
@@ -162,14 +164,19 @@ function tick(dt, now) {
   // ship stays at scene origin, the world scrolls under it
   const ox = Math.round(wx / CELL) * CELL, oz = Math.round(wz / CELL) * CELL;
   terrain.position.set(ox - wx, 0, oz - wz);
-  for (let i = 0; i < tPos.count; i++) {
-    const gx = tPos.getX(i), gz = tPos.getZ(i);
-    tPos.setY(i, heightAt(gx + ox, gz + oz, dist, t));
+  const animated = biomeIndex === 2 || (biomeBlend > 0 && (biomeIndex + 1) % BIOMES.length === 2);
+  if (animated || ox !== previousGridX || oz !== previousGridZ ||
+      biomeIndex !== previousBiome || biomeBlend !== previousBlend) {
+    for (let i = 0; i < tPos.count; i++) {
+      tPos.setY(i, heightAt(tPos.getX(i) + ox, tPos.getZ(i) + oz, t));
+    }
+    tPos.needsUpdate = true;
+    previousGridX = ox; previousGridZ = oz;
+    previousBiome = biomeIndex; previousBlend = biomeBlend;
   }
-  tPos.needsUpdate = true;
 
   // glide: follow the ground smoothly, never crash
-  const groundHere = heightAt(wx, wz - 6, dist, t);
+  const groundHere = heightAt(wx, wz - 6, t);
   const targetY = groundHere + 9;
   shipY += (targetY - shipY) * Math.min(1, dt * 2.2);
 
