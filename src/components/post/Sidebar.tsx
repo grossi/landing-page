@@ -1,4 +1,3 @@
-import React from 'react';
 import { Box, Flex, Text } from '@chakra-ui/react';
 import SocialLinks from 'components/post/SocialLinks';
 import { monoFont as mono, socialLinks } from 'config/site';

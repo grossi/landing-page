@@ -1,4 +1,3 @@
-import * as React from "react";
 import { SimpleGrid, GridItem } from "@chakra-ui/react";
 import Markdown from "components/post/Markdown";
 import Sidebar from "components/post/Sidebar";

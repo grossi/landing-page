@@ -2,7 +2,7 @@ import React from 'react';
 import { Box, Flex } from '@chakra-ui/react';
 import { motion } from 'framer-motion';
 import { TimelineItem as TimelineItemType } from 'components/timeline/types';
-import { particleConfig, timelineColors } from 'components/timeline/config';
+import { particleConfig } from 'components/timeline/config';
 import TimelineCard from 'components/timeline/TimelineCard';
 import TimelineIcon from 'components/timeline/TimelineIcon';
 import AnimatedParticleContainer from 'components/timeline/AnimatedParticleContainer';

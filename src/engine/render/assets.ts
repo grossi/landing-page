@@ -13,7 +13,6 @@ export const wireMat = (opacity: number) =>
 // unit icospheres — scale per mesh to size bodies
 export const ICO_LOW = new THREE.IcosahedronGeometry(1, 0);
 export const ICO_MID = new THREE.IcosahedronGeometry(1, 1);
-export const ICO_HIGH = new THREE.IcosahedronGeometry(1, 2);
 
 // other unit primitives — scale per mesh
 export const RING = new THREE.TorusGeometry(1.9, 0.1, 4, 42);

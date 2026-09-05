@@ -205,7 +205,7 @@ export function bankBody(body: THREE.Object3D, steerX: number, dt: number): void
 /**
  * Writes the chase camera's target pose position into `out` and returns it.
  * `lag` pushes the offset further behind the ship (local frame, before the
- * world rotation) — world-streams-past callers pass `chaseLag(speed)` to
+ * world rotation) — world-streams-past callers pass their eased stream lag to
  * stand in for the trail the position lerp would develop on a moving ship.
  */
 export function chaseTarget(
@@ -217,15 +217,6 @@ export function chaseTarget(
   out.copy(CHASE_OFFSET);
   out.z += lag;
   return out.applyQuaternion(shipQuaternion).add(shipPosition);
-}
-
-/**
- * Steady-state trail the chase position lerp develops at `speed` (units
- * behind the pose, clamped like the lerp is) — feeds `chaseTarget` from
- * stationary-ship callers to keep the apparent ship distance in parity.
- */
-export function chaseLag(speed: number): number {
-  return Math.min(speed / CHASE_POS_RATE, CAMERA_MAX_LAG);
 }
 
 /**
