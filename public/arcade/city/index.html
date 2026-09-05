@@ -190,7 +190,7 @@ function press() {
 }
 
 let hudElapsed = 0.1;
-function tick(dt, now) {
+function tick(dt) {
   hudElapsed += dt;
   const refreshHud = hudElapsed >= 0.1;
   if (refreshHud) hudElapsed = 0;

@@ -133,7 +133,7 @@ const { keys, pointer } = input;
 let wx = 0, wz = 0, heading = 0, dist = 0, shipY = 10, t = 0, lastBiome = '';
 
 let hudElapsed = 0.1;
-function tick(dt, now) {
+function tick(dt) {
   hudElapsed += dt;
   const refreshHud = hudElapsed >= 0.1;
   if (refreshHud) hudElapsed = 0;

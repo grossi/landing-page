@@ -123,7 +123,7 @@ function gameOver() {
 
 let lockUntil = 0;
 const input = createInput({ onPress: press });
-const { keys, pointer } = input;
+const { keys } = input;
 function press() {
   if (performance.now() < lockUntil) return;
   if (state !== 'play') reset();

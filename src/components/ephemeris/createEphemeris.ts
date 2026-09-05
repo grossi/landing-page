@@ -580,7 +580,7 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
     // virtual chase camera + FOV boost cue (engine/render/flightRig:
     // trailing lerp capped at CAMERA_MAX_LAG), then project the rig's pose
     // onto the real camera — the projection matrix rebuilds only when the
-    // eased FOV actually moved, the same dead-band cadence updateFov had
+    // eased FOV actually moved beyond the scalar law's dead band
     rig.update(dt, boost);
     camera.position.copy(rig.pose.position);
     camera.quaternion.copy(rig.pose.quaternion);

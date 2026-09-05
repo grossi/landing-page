@@ -177,7 +177,7 @@ function press() {
 }
 
 const input = createInput({ onPress: press, pressKeys: ['Space', 'Enter'] });
-function tick(dt, now) {
+function tick(dt) {
   t += dt;
 
   if (state === 'play' && moving) {

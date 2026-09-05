@@ -72,6 +72,8 @@ function terrainH(wx, wz) {
 const W = 340, D = 460, SX = 52, SZ = 64;
 const terrGeo = new THREE.PlaneGeometry(W, D, SX, SZ);
 terrGeo.rotateX(-Math.PI / 2);
+// Every possible height lies in [-6, 16], including rows not sampled yet.
+terrGeo.boundingSphere = new THREE.Sphere(new THREE.Vector3(), Math.hypot(W / 2, D / 2, 16));
 const terrain = new THREE.Mesh(terrGeo, new THREE.MeshBasicMaterial({
   color: 0xffffff, wireframe: true, transparent: true, opacity: 0.3
 }));
@@ -175,7 +177,7 @@ function press() {
 
 let keyboardBias = 0;
 let hudElapsed = 0.1;
-function tick(dt, now) {
+function tick(dt) {
   hudElapsed += dt;
   const refreshHud = hudElapsed >= 0.1;
   if (refreshHud) hudElapsed = 0;

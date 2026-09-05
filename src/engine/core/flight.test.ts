@@ -11,7 +11,6 @@ import {
   easeFovValue,
   easeUpVector,
   FORWARD,
-  FOV_RATE,
   KEY_STEER,
   LEVEL_RATE,
   LEVEL_STEER_FADE,
