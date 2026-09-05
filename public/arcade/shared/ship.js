@@ -104,13 +104,7 @@ export function createShipBody(THREE) {
     loop(engines, ring(1.56, 0.175));
     line(engines, [side * 0.75, 0, 1.565], [side * 0.97, 0, 1.565]);
 
-    // Canted tail fins and three short radiator slits on each nacelle.
-    const fin = mirror([
-      [0.88, 0.23, 0.25],
-      [1.11, 0.72, 0.94],
-      [1.13, 0.25, 1.3],
-    ]);
-    loft([fin, fin.map(([x, y, z]) => [x + side * 0.045, y, z])]);
+    // Three short radiator slits on each nacelle.
     for (let z = 0.5; z < 0.95; z += 0.16) {
       line(panels, [side * 0.73, 0.256, z], [side * 0.99, 0.256, z]);
     }
