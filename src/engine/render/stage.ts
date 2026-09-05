@@ -139,7 +139,14 @@ export function createStage(container: HTMLElement, opts: StageOptions = {}): St
   // the big lever. Its dustFraction/lodBias knobs are read by the
   // experiences' frame loops via quality() to shed dust and LOD rungs too.
   const governor = createGovernorState();
-  const gpuTimer = createGpuTimer(renderer.getContext());
+  let gpuTimer = createGpuTimer(renderer.getContext());
+  // Extensions must be enabled again on the restored context. Old query
+  // objects were invalidated by the loss and must not be reused/deleted there.
+  const onContextRestored = () => {
+    gpuTimer = createGpuTimer(renderer.getContext());
+    governor.gpuEma = undefined;
+  };
+  renderer.domElement.addEventListener('webglcontextrestored', onContextRestored);
   let gpuSampleAt = 0;
   const applyGovernorPixelRatio = () =>
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, pixelRatioCap(governor.level, maxPixelRatio)));
@@ -251,6 +258,7 @@ export function createStage(container: HTMLElement, opts: StageOptions = {}): St
       intersectionObserver?.disconnect();
       document.removeEventListener('visibilitychange', onVisibilityChange);
       gpuTimer.reset();
+      renderer.domElement.removeEventListener('webglcontextrestored', onContextRestored);
       tracker.dispose();
       renderer.dispose();
       renderer.domElement.remove();

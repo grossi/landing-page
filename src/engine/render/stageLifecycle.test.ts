@@ -11,7 +11,7 @@ vi.mock('three', async importOriginal => {
     setSize = vi.fn();
     render = vi.fn();
     dispose = vi.fn();
-    getContext = () => ({ getExtension: () => null });
+    getContext = vi.fn(() => ({ getExtension: () => null }));
     setAnimationLoop(callback: ((now: number) => void) | null) { drawing.frame = callback; }
   } };
 });
@@ -54,7 +54,13 @@ it('combines real pause sources, resets the clock on resume, and disposes a moun
   drawing.frame!(60016);
   expect(onFrame.mock.calls[1][0]).toBeCloseTo(0.016);
 
+  stage.governor.gpuEma = 50;
+  stage.renderer.domElement.dispatchEvent(new Event('webglcontextrestored'));
+  expect(stage.governor.gpuEma).toBeUndefined();
+  expect(stage.renderer.getContext).toHaveBeenCalledTimes(2);
   stage.dispose(); stage.dispose();
+  stage.renderer.domElement.dispatchEvent(new Event('webglcontextrestored'));
+  expect(stage.renderer.getContext).toHaveBeenCalledTimes(2);
   expect(drawing.frame).toBeNull();
   expect(container.children).toHaveLength(0);
   expect(owned.dispose).toHaveBeenCalledTimes(1);
