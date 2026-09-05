@@ -50,6 +50,8 @@ export interface GovernorState {
   level: number;
   /** ~30-frame exponential moving average of frame time (ms). */
   ema: number;
+  /** Latest smoothed GPU workload; absent when timer queries are unavailable/invalid. */
+  gpuEma?: number;
   /** Consecutive frames with ema > DEGRADE_MS. */
   overCount: number;
   /** Consecutive frames with ema < UPGRADE_MS. */
@@ -79,13 +81,13 @@ export const qualityForLevel = (level: number): QualityLevel =>
   GOVERNOR_LEVELS[Math.min(Math.max(level, 0), GOVERNOR_LEVELS.length - 1)];
 
 /**
- * Feed one frame's duration (ms). Steps `state.level` down after
+ * Feed one frame's JS duration and optionally a newly completed GPU sample (ms). Steps `state.level` down after
  * DEGRADE_FRAMES consecutive over-budget frames, and back up after
  * UPGRADE_FRAMES consecutive comfortably-under-budget frames. The gap
  * between UPGRADE_MS and DEGRADE_MS is a dead band, so loads that hover
  * between the two never oscillate.
  */
-export function pushFrameTime(state: GovernorState, ms: number): GovernorState {
+export function pushFrameTime(state: GovernorState, ms: number, gpuMs?: number | null): GovernorState {
   state.history[state.historyIndex] = ms;
   state.historyIndex = (state.historyIndex + 1) % FRAME_HISTORY;
   if (state.historyCount < FRAME_HISTORY) state.historyCount++;
@@ -93,8 +95,15 @@ export function pushFrameTime(state: GovernorState, ms: number): GovernorState {
   // Seed the EMA with the first sample so warmup doesn't drag through 0.
   state.ema = state.historyCount === 1 ? ms : state.ema + EMA_ALPHA * (ms - state.ema);
 
-  state.overCount = state.ema > DEGRADE_MS ? state.overCount + 1 : 0;
-  state.underCount = state.ema < UPGRADE_MS ? state.underCount + 1 : 0;
+  if (gpuMs === null) state.gpuEma = undefined;
+  else if (gpuMs !== undefined) {
+    // Samples arrive about every ten frames; don't smooth them a second time per frame.
+    const alpha = 0.5;
+    state.gpuEma = state.gpuEma === undefined ? gpuMs : state.gpuEma + alpha * (gpuMs - state.gpuEma);
+  }
+  const workload = Math.max(state.ema, state.gpuEma ?? 0);
+  state.overCount = workload > DEGRADE_MS ? state.overCount + 1 : 0;
+  state.underCount = workload < UPGRADE_MS ? state.underCount + 1 : 0;
 
   if (state.overCount >= DEGRADE_FRAMES && state.level < GOVERNOR_LEVELS.length - 1) {
     state.level++;
