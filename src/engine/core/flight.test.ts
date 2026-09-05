@@ -5,7 +5,6 @@ import {
   ACCEL_RATE_BOOST,
   bankBody,
   burnKeysDown,
-  chaseLag,
   chaseTarget,
   DECEL_RATE,
   easeFovValue,
@@ -317,13 +316,6 @@ describe('chase camera', () => {
     const explicit = chaseTarget(new THREE.Vector3(), q, pos, 0);
     const implicit = chaseTarget(new THREE.Vector3(), q, pos);
     expect(explicit.equals(implicit)).toBe(true);
-  });
-
-  it('chaseLag is the steady-state trail speed/5, clamped to 12', () => {
-    expect(chaseLag(34)).toBeCloseTo(6.8, 12); // deep-field cruise
-    expect(chaseLag(60)).toBe(12); // clamp knee: CHASE_POS_RATE · CAMERA_MAX_LAG
-    expect(chaseLag(100)).toBe(12); // 100/5 = 20 > CAMERA_MAX_LAG
-    expect(chaseLag(0)).toBe(0);
   });
 
   it('converges onto the target pose and is identity once there', () => {

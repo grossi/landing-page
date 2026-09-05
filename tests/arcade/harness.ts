@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import * as THREE from '../../public/arcade/vendor/three.module.min.js';
+import { createShipBody } from '../../public/arcade/shared/ship.js';
 
 /** Execute the shipped scripts, replacing only browser surfaces and drawing. */
 export function mountGame(name: string) {
@@ -24,6 +25,7 @@ export function mountGame(name: string) {
   });
   const target = new EventTarget();
   const host: Record<string, any> = {
+    createShipBody,
     THREE: { ...THREE, WebGLRenderer: class {
       domElement = {};
       setPixelRatio() {} setSize() {} render() {}
@@ -49,9 +51,6 @@ export function mountGame(name: string) {
     .replace(/^createInput\(/m, 'const input = createInput(');
   const runtime = readFileSync(new URL('../../public/arcade/shared/runtime.js', import.meta.url), 'utf8')
     .replace(/export function /g, 'function ');
-  const shipModel = readFileSync(new URL('../../public/arcade/shared/ship.js', import.meta.url), 'utf8')
-    .replace(/export function /g, 'function ');
-  vm.runInContext(shipModel, context);
   vm.runInContext(runtime, context);
   vm.runInContext(code, context);
   return {

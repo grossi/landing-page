@@ -45,14 +45,16 @@ describe('buildShipRig', () => {
         materials.forEach((material) => resources.add(material));
       }
     });
-    let disposed = 0;
+    const disposed = new Map<THREE.BufferGeometry | THREE.Material, number>();
     resources.forEach((resource) =>
-      resource.addEventListener('dispose', () => disposed++)
+      resource.addEventListener('dispose', () =>
+        disposed.set(resource, (disposed.get(resource) ?? 0) + 1)
+      )
     );
     expect(resources.size).toBeGreaterThan(0);
     tracker.dispose();
-    expect(disposed).toBe(resources.size);
+    for (const resource of resources) expect(disposed.get(resource)).toBe(1);
     tracker.dispose();
-    expect(disposed).toBe(resources.size);
+    for (const resource of resources) expect(disposed.get(resource)).toBe(1);
   });
 });

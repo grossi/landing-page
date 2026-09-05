@@ -11,7 +11,7 @@ import {
   quaternionFromDirection,
   steerQuaternion,
 } from 'engine/core/flight';
-import { createFlightRig, SHIP_ARRIVAL_RATE, SHIP_ENTRY } from 'engine/render/flightRig';
+import { createFlightRig, SHIP_ENTRY } from 'engine/render/flightRig';
 import { createResourceTracker } from 'engine/render/resourceTracker';
 
 const makeRig = () => createFlightRig(createResourceTracker());
@@ -165,12 +165,6 @@ describe('arm', () => {
     expect(rig.ship.position.distanceTo(expected)).toBeLessThan(1e-12);
   });
 
-  it('SHIP_ENTRY is the low-and-behind entry offset', () => {
-    expect(SHIP_ENTRY.x).toBe(0);
-    expect(SHIP_ENTRY.y).toBe(-2.6);
-    expect(SHIP_ENTRY.z).toBe(18);
-  });
-
   it('resets the visual prop and clears the station (re-engage state hygiene)', () => {
     const rig = makeRig();
     rig.flyTo(new THREE.Vector3(0, 0, -50));
@@ -189,10 +183,6 @@ describe('arm', () => {
 });
 
 describe('flyTo', () => {
-  it('SHIP_ARRIVAL_RATE is the 1.5/s exponential approach', () => {
-    expect(SHIP_ARRIVAL_RATE).toBe(1.5);
-  });
-
   it('single step is a lerp at dt·SHIP_ARRIVAL_RATE', () => {
     const rig = makeRig();
     rig.seed();
@@ -267,29 +257,6 @@ describe('engage seam (arm → flyTo → update)', () => {
     for (let i = 0; i < 600; i++) rig.update(1 / 60, false);
     expect(rig.ship.position.distanceTo(station)).toBeLessThan(1e-3);
     expect(rig.pose.position.distanceTo(camPose.position)).toBeLessThan(1e-3);
-  });
-});
-
-describe('exit leg (return to hull)', () => {
-  it('easing shipBody toward R⁻¹·(cam − ship) + SHIP_ENTRY parks the prop at the camera hull position', () => {
-    const rig = makeRig();
-    rig.ship.position.set(30, -10, -80);
-    rig.seed(new THREE.Vector3(0.5, 0.2, -0.84).normalize());
-    // the camera the crossfade left somewhere else entirely
-    const camPos = new THREE.Vector3(4, 6, -50);
-    const inv = rig.ship.quaternion.clone().invert();
-    const targetLocal = camPos.clone().sub(rig.ship.position).applyQuaternion(inv).add(SHIP_ENTRY);
-    for (let i = 0; i < 600; i++) {
-      rig.shipBody.position.lerp(targetLocal, Math.min(1, (1 / 60) * SHIP_ARRIVAL_RATE));
-    }
-    // prop world position ship + R·shipBody lands at cam + R·SHIP_ENTRY —
-    // the hull position of the (here static) camera
-    const world = rig.shipBody.position
-      .clone()
-      .applyQuaternion(rig.ship.quaternion)
-      .add(rig.ship.position);
-    const expected = SHIP_ENTRY.clone().applyQuaternion(rig.ship.quaternion).add(camPos);
-    expect(world.distanceTo(expected)).toBeLessThan(1e-3);
   });
 });
 

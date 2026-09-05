@@ -1,27 +1,40 @@
+// @ts-check
+
+/** @typedef {[number, number, number]} Point */
+
 /**
  * Shared terminal interceptor. Local forward is -Z, up is +Y.
  * Inject THREE so the app and standalone games use their own renderer version.
  * All surfaces / outlines / panel seams / engine apertures are batched: four
  * draw calls, no textures, lighting, loaders, or per-frame allocations.
+ * @param {typeof import('three')} THREE
  */
 export function createShipBody(THREE) {
   const body = new THREE.Group();
   body.name = 'terminal-interceptor';
-  const faces = [],
-    edges = [],
-    panels = [],
-    engines = [];
+  /** @type {number[]} */
+  const faces = [];
+  /** @type {number[]} */
+  const edges = [];
+  /** @type {number[]} */
+  const panels = [];
+  /** @type {number[]} */
+  const engines = [];
 
+  /** @param {number[]} target @param {Point} a @param {Point} b */
   function line(target, a, b) {
     target.push(...a, ...b);
   }
+  /** @param {number[]} target @param {Point[]} points */
   function loop(target, points) {
     points.forEach((p, i) => line(target, p, points[(i + 1) % points.length]));
   }
+  /** @param {Point[]} points */
   function face(points) {
     for (let i = 1; i < points.length - 1; i++)
       faces.push(...points[0], ...points[i], ...points[i + 1]);
   }
+  /** @param {Point[][]} rings */
   function loft(rings) {
     face([...rings[0]].reverse());
     face(rings[rings.length - 1]);
@@ -36,6 +49,7 @@ export function createShipBody(THREE) {
   }
 
   // Chined fuselage: a long needle nose, broad shoulders, and a tapered stern.
+  /** @param {number} z @param {number} w @param {number} top @param {number} bottom @returns {Point[]} */
   const section = (z, w, top, bottom) => [
     [0, top, z],
     [w, 0, z],
@@ -69,6 +83,7 @@ export function createShipBody(THREE) {
   ]);
 
   for (const side of [-1, 1]) {
+    /** @param {Point[]} points @returns {Point[]} */
     const mirror = (points) => points.map(([x, y, z]) => [x * side, y, z]);
     // Swept, clipped delta wings with real thickness and a recessed panel seam.
     const wing = mirror([
@@ -86,6 +101,7 @@ export function createShipBody(THREE) {
     for (let i = 1; i < seam.length; i++) line(panels, seam[i - 1], seam[i]);
 
     // Twin hexagonal engine nacelles; the open white exhausts anchor the rear.
+    /** @param {number} z @param {number} radius @returns {Point[]} */
     const ring = (z, radius) =>
       Array.from({ length: 6 }, (_, i) => {
         const angle = (i * Math.PI) / 3;
@@ -110,6 +126,7 @@ export function createShipBody(THREE) {
     }
   }
 
+  /** @param {number[]} positions */
   function geometry(positions) {
     const result = new THREE.BufferGeometry();
     result.setAttribute(
@@ -130,11 +147,13 @@ export function createShipBody(THREE) {
   );
   hull.name = 'hull';
   body.add(hull);
-  for (const [name, positions, color] of [
+  /** @type {[string, number[], number][]} */
+  const lineLayers = [
     ['outline', edges, 0xd9d9d9],
     ['panels', panels, 0x707070],
     ['engines', engines, 0xffffff],
-  ]) {
+  ];
+  for (const [name, positions, color] of lineLayers) {
     const lines = new THREE.LineSegments(
       geometry(positions),
       new THREE.LineBasicMaterial({ color })

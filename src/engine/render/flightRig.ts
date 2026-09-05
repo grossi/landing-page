@@ -37,7 +37,7 @@ export interface FlightRigPose {
 }
 
 /**
- * The stateful flight rig: the shared wireframe ship (mesh + quaternion
+ * The stateful flight rig: the shared terminal ship (mesh + quaternion
  * control frame) plus a VIRTUAL chase-camera pose, advanced by the shared
  * flight laws (engine/core/flight). The rig never touches a real camera —
  * scenes copy `pose` verbatim (EPHEMERIS) or crossfade toward it (the
@@ -82,7 +82,7 @@ export interface FlightRig {
    * One frame of the rig's own dynamics: arrival ease (if a station is
    * set), then the chase lerp/slerp onto `pose`, then the FOV boost cue.
    * `trailLag` extends the chase offset for world-streams-past scenes
-   * (chaseLag) — default 0, the plain translating-ship chase. Positional
+   * — default 0, the plain translating-ship chase. Positional
    * args: an options object would be one allocation per frame.
    */
   update(dt: number, boost: boolean, trailLag?: number): void;

@@ -3,7 +3,7 @@ import { Particle } from 'components/timeline/types';
 /**
  * Creates particles around the border of a circular element
  */
-export const createCircularParticles = (width: number, height: number, particleCount: number = 20): Particle[] => {
+const createCircularParticles = (width: number, particleCount: number = 20): Particle[] => {
   const particles: Particle[] = [];
   const radius = width / 2;
   const borderOffset = 5; // Start particles slightly outside the border
@@ -25,7 +25,7 @@ export const createCircularParticles = (width: number, height: number, particleC
 /**
  * Creates particles around the border of a rectangular element
  */
-export const createRectangularParticles = (width: number, height: number, particleCount: number = 32): Particle[] => {
+const createRectangularParticles = (width: number, height: number, particleCount: number = 32): Particle[] => {
   const particles: Particle[] = [];
   const margin = -5; // Start particles outside the border
   const adjustedWidth = width - 2 * margin;
@@ -71,7 +71,7 @@ export const createParticlesAroundBorder = (
   particleCount?: number
 ): Particle[] => {
   return isCircle
-    ? createCircularParticles(width, height, particleCount)
+    ? createCircularParticles(width, particleCount)
     : createRectangularParticles(width, height, particleCount);
 };
 

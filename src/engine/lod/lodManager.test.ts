@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import * as THREE from 'three';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { GeometryCache, GeometryJobQueue, lodGeometryKey } from 'engine/lod/geometry';
 import {
   apparentScale,
@@ -28,6 +28,17 @@ import {
 } from 'engine/lod/lodManager';
 
 const VIEW_H = 800;
+
+// Exercise the real geometry queue with a fixed cost per slice. These tests
+// cover LOD transitions; machine load must not decide when a build completes.
+const updateQueue = GeometryJobQueue.prototype.update;
+beforeEach(() => {
+  vi.spyOn(GeometryJobQueue.prototype, 'update').mockImplementation(function (this: GeometryJobQueue, budget, now) {
+    let elapsed = 0;
+    return updateQueue.call(this, budget, now ?? (() => (elapsed += 0.01)));
+  });
+});
+afterEach(() => vi.restoreAllMocks());
 
 const makeCamera = (): THREE.PerspectiveCamera =>
   new THREE.PerspectiveCamera(64, 16 / 9, 0.5, 12000); // looks down -z from the origin
