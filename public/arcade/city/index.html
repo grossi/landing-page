@@ -43,6 +43,7 @@
 </script>
 <script type="module">
 import * as THREE from 'three';
+import { createInput, startLoop, setText } from '../shared/runtime.js';
 
 const DEMO = new URLSearchParams(location.search).has('demo');
 const scene = new THREE.Scene();
@@ -126,7 +127,7 @@ const scoreEl = document.getElementById('score'), multEl = document.getElementBy
 
 let state = 'menu', px = 0, py = 8, vx = 0, vy = 0, speed = 0, score = 0, lockUntil = 0;
 let best = +(localStorage.getItem('gc_best') || 0);
-bestEl.textContent = 'BEST ' + Math.floor(best);
+setText(bestEl, 'BEST ' + Math.floor(best));
 
 function reset() {
   px = 0; py = 9; vx = vy = 0; speed = 45; score = 0;
@@ -149,34 +150,25 @@ function gameOver() {
   state = 'over';
   const s = Math.floor(score);
   if (s > best) { best = s; localStorage.setItem('gc_best', best); }
-  bestEl.textContent = 'BEST ' + best;
-  finalEl.textContent = 'SCORE ' + s;
+  setText(bestEl, 'BEST ' + best);
+  setText(finalEl, 'SCORE ' + s);
   overEl.classList.remove('hidden');
   lockUntil = performance.now() + 600;
 }
 
-const keys = {};
-let pointer = null, keyboardBias = 0;
+const input = createInput({ onPress: press });
+const { keys, pointer } = input;
+let keyboardBias = 0;
 function press() {
   if (performance.now() < lockUntil) return;
   if (state !== 'play') reset();
 }
-addEventListener('keydown', e => {
-  if (e.code.startsWith('Arrow') || e.code === 'Space') e.preventDefault();
-  keys[e.code] = true; press();
-});
-addEventListener('keyup', e => { keys[e.code] = false; });
-addEventListener('pointermove', e => { pointer = { x: e.clientX / innerWidth * 2 - 1, y: e.clientY / innerHeight * 2 - 1 }; });
-addEventListener('pointerdown', press);
-addEventListener('touchmove', e => {
-  pointer = { x: e.touches[0].clientX / innerWidth * 2 - 1, y: e.touches[0].clientY / innerHeight * 2 - 1 };
-}, { passive: true });
 
-let last = performance.now();
-function tick(now) {
-  requestAnimationFrame(tick);
-  const dt = Math.max(0, Math.min((now - last) / 1000, 0.05));
-  last = now;
+let hudElapsed = 0.1;
+function tick(dt, now) {
+  hudElapsed += dt;
+  const refreshHud = hudElapsed >= 0.1;
+  if (refreshHud) hudElapsed = 0;
 
   if (state === 'play') {
     let ax = (keys.ArrowLeft || keys.KeyA ? -1 : 0) + (keys.ArrowRight || keys.KeyD ? 1 : 0);
@@ -197,7 +189,7 @@ function tick(now) {
         }
       vx += (Math.max(-1, Math.min(1, (target - px) / 10)) * 115 - vx * 5) * dt;
       vy += ((9 - py) * 3 - vy * 4) * dt;
-    } else if (usingKeys || !pointer || keyboardBias > 0) {
+    } else if (usingKeys || !input.pointerActive || keyboardBias > 0) {
       vx += (ax * 105 - vx * 4.5) * dt;
       vy += (ay * 80 - vy * 4.5) * dt;
     } else {
@@ -211,8 +203,8 @@ function tick(now) {
     speed = Math.min(115, speed + dt * 2);
     const low = py < 14;
     score += speed * dt * 0.1 * (low ? 3 : 1);
-    scoreEl.textContent = 'SCORE ' + Math.floor(score);
-    multEl.textContent = low ? 'LOW ALT ×3' : '';
+    refreshHud && setText(scoreEl, 'SCORE ' + Math.floor(score));
+    setText(multEl, low ? 'LOW ALT ×3' : '');
 
     // scroll rows, collide
     for (const row of buildings) {
@@ -244,7 +236,7 @@ function tick(now) {
   renderer.render(scene, camera);
 }
 for (let r = 0; r < ROWS; r++) rollRow(buildings[r], -60 - r * ROW_D); // menu backdrop
-requestAnimationFrame(tick);
+const loop = startLoop(tick);
 
 addEventListener('resize', () => {
   camera.aspect = innerWidth / innerHeight;

@@ -41,6 +41,7 @@
 </script>
 <script type="module">
 import * as THREE from 'three';
+import { createInput, startLoop, setText } from '../shared/runtime.js';
 
 const DEMO = new URLSearchParams(location.search).has('demo');
 const scene = new THREE.Scene();
@@ -101,7 +102,7 @@ const finalEl = document.getElementById('finalScore');
 
 let state = 'menu', angle = -Math.PI / 2, steer = 0, speed = 0, dist = 0, nextSpawn = 0;
 let best = +(localStorage.getItem('ht_best') || 0);
-bestEl.textContent = 'BEST ' + best;
+setText(bestEl, 'BEST ' + best);
 
 function reset() {
   for (const o of obstacles) { scene.remove(o); o.geometry.dispose(); }
@@ -114,36 +115,31 @@ function gameOver() {
   state = 'over';
   const s = Math.floor(dist);
   if (s > best) { best = s; localStorage.setItem('ht_best', best); }
-  bestEl.textContent = 'BEST ' + best;
-  finalEl.textContent = 'DISTANCE ' + s;
+  setText(bestEl, 'BEST ' + best);
+  setText(finalEl, 'DISTANCE ' + s);
   overEl.classList.remove('hidden');
   lockUntil = performance.now() + 600; // ignore keys briefly
 }
 
 let lockUntil = 0;
-const keys = {};
+const input = createInput({ onPress: press });
+const { keys, pointer } = input;
 function press() {
   if (performance.now() < lockUntil) return;
   if (state !== 'play') reset();
 }
-addEventListener('keydown', e => { keys[e.code] = true; press(); });
-addEventListener('keyup', e => { keys[e.code] = false; });
-let touchDir = 0;
-addEventListener('touchstart', e => { touchDir = e.touches[0].clientX < innerWidth / 2 ? -1 : 1; press(); }, { passive: true });
-addEventListener('touchend', () => { touchDir = 0; }, { passive: true });
-addEventListener('pointerdown', e => { if (e.pointerType === 'mouse') press(); });
 
 const angDiff = (a, b) => { let d = (a - b) % (Math.PI * 2); if (d > Math.PI) d -= Math.PI * 2; if (d < -Math.PI) d += Math.PI * 2; return d; };
 
-let last = performance.now();
-function tick(now) {
-  requestAnimationFrame(tick);
-  const dt = Math.max(0, Math.min((now - last) / 1000, 0.05));
-  last = now;
+let hudElapsed = 0.1;
+function tick(dt, now) {
+  hudElapsed += dt;
+  const refreshHud = hudElapsed >= 0.1;
+  if (refreshHud) hudElapsed = 0;
 
   if (state === 'play') {
     // input
-    let dir = (keys.ArrowLeft || keys.KeyA ? 1 : 0) + (keys.ArrowRight || keys.KeyD ? -1 : 0) - touchDir;
+    let dir = (keys.ArrowLeft || keys.KeyA ? 1 : 0) + (keys.ArrowRight || keys.KeyD ? -1 : 0) - input.touchDirection;
     if (DEMO) {
       const next = obstacles.find(o => o.position.z < PLAYER_Z + 2);
       if (next) { const d = angDiff(next.userData.gapCenter, angle); dir = Math.abs(d) > 0.06 ? Math.sign(d) : 0; }
@@ -155,7 +151,7 @@ function tick(now) {
 
     speed = Math.min(95, speed + dt * 1.6);
     dist += speed * dt;
-    scoreEl.textContent = 'DIST ' + Math.floor(dist);
+    refreshHud && setText(scoreEl, 'DIST ' + Math.floor(dist));
 
     // spawn
     if (dist > nextSpawn) {
@@ -189,7 +185,7 @@ function tick(now) {
   camera.rotation.z += ((angDiff(-Math.PI / 2, angle) * 0.22) - camera.rotation.z) * Math.min(1, dt * 6 * (state === 'play' ? 1 : 0.3));
   renderer.render(scene, camera);
 }
-requestAnimationFrame(tick);
+const loop = startLoop(tick);
 
 addEventListener('resize', () => {
   camera.aspect = innerWidth / innerHeight;

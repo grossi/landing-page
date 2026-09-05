@@ -13,7 +13,7 @@
   .score { position: absolute; top: 18px; left: 20px; font-size: 15px; letter-spacing: .18em; }
   .timer { position: absolute; top: 18px; right: 20px; font-size: 15px; letter-spacing: .18em; }
   .dist  { position: absolute; top: 42px; right: 20px; font-size: 12px; letter-spacing: .18em; opacity: .5; }
-  .marker { position: absolute; font-size: 18px; transform: translate(-50%, -50%); text-shadow: 0 0 6px #000; }
+  .marker { position: absolute; left: 0; top: 0; font-size: 18px; transform: translate(-50%, -50%); text-shadow: 0 0 6px #000; }
   .reticle {
     position: absolute; left: 50%; top: 50%; width: 14px; height: 14px;
     transform: translate(-50%, -50%); border: 1px solid rgba(255,255,255,.4); border-radius: 50%;
@@ -50,7 +50,10 @@
 </script>
 <script type="module">
 import * as THREE from 'three';
+import { createInput, startLoop, setText } from '../shared/runtime.js';
 
+const flightEuler = new THREE.Euler();
+const inverseShip = new THREE.Quaternion();
 const DEMO = new URLSearchParams(location.search).has('demo');
 const scene = new THREE.Scene();
 scene.fog = new THREE.Fog(0x000000, 100, 320);
@@ -140,44 +143,37 @@ function reset() {
 }
 function gameOver(title) {
   state = 'over';
-  overTitle.textContent = title;
-  finalEl.textContent = 'BEACONS ' + score;
+  setText(overTitle, title);
+  setText(finalEl, 'BEACONS ' + score);
   overEl.classList.remove('hidden');
   lockUntil = performance.now() + 600;
 }
 
-const keys = {};
-let pointer = { x: 0, y: 0 }, pointerDown = false;
+const input = createInput({ onPress: press });
+const { keys, pointer } = input;
+
 function press() {
   if (performance.now() < lockUntil) return;
   if (state !== 'play') reset();
 }
-addEventListener('keydown', e => { keys[e.code] = true; press(); });
-addEventListener('keyup', e => { keys[e.code] = false; });
-addEventListener('pointermove', e => { pointer = { x: e.clientX / innerWidth * 2 - 1, y: e.clientY / innerHeight * 2 - 1 }; });
-addEventListener('pointerdown', e => { pointerDown = true; press(); });
-addEventListener('pointerup', () => { pointerDown = false; });
-addEventListener('touchmove', e => {
-  pointer = { x: e.touches[0].clientX / innerWidth * 2 - 1, y: e.touches[0].clientY / innerHeight * 2 - 1 };
-}, { passive: true });
 
 const fwd = new THREE.Vector3(), toB = new THREE.Vector3(), tmp = new THREE.Vector3();
 
-let last = performance.now();
-function tick(now) {
-  requestAnimationFrame(tick);
-  const dt = Math.max(0, Math.min((now - last) / 1000, 0.05));
-  last = now;
+let hudElapsed = 0.1;
+function tick(dt, now) {
+  hudElapsed += dt;
+  const refreshHud = hudElapsed >= 0.1;
+  if (refreshHud) hudElapsed = 0;
 
   if (state === 'play') {
     // steering input
     let sx = pointer.x, sy = pointer.y;
-    boost = pointerDown || keys.KeyW || keys.ArrowUp || keys.Space;
+    boost = input.pointerDown || keys.KeyW || keys.ArrowUp || keys.Space;
     if (keys.ArrowLeft || keys.KeyA) sx = -0.7;
     if (keys.ArrowRight || keys.KeyD) sx = 0.7;
     if (DEMO) {
       toB.copy(beacon.position).sub(ship.position);
-      const local = tmp.copy(toB).applyQuaternion(ship.quaternion.clone().invert()).normalize();
+      const local = tmp.copy(toB).applyQuaternion(inverseShip.copy(ship.quaternion).invert()).normalize();
       if (local.z > 0) { // beacon behind — commit to a hard turn
         sx = local.x >= 0 ? 0.85 : -0.85;
         sy = Math.max(-0.6, Math.min(0.6, -local.y * 2));
@@ -192,7 +188,7 @@ function tick(now) {
         tmp.copy(a.position).sub(ship.position);
         const d = tmp.length();
         if (d < 34) {
-          const l = tmp.applyQuaternion(ship.quaternion.clone().invert());
+          const l = tmp.applyQuaternion(inverseShip.copy(ship.quaternion).invert());
           if (l.z < 0 && Math.hypot(l.x, l.y) < a.userData.r + 9) {
             sx = l.x > 0 ? -0.9 : 0.9;
             sy = l.y > 0 ? 0.9 : -0.9;
@@ -206,7 +202,7 @@ function tick(now) {
     yawPitch.yaw -= sx * 2.7 * dt;
     yawPitch.pitch -= sy * 2.1 * dt;
     yawPitch.pitch = Math.max(-1.35, Math.min(1.35, yawPitch.pitch));
-    ship.quaternion.setFromEuler(new THREE.Euler(yawPitch.pitch, yawPitch.yaw, 0, 'YXZ'));
+    ship.quaternion.setFromEuler(flightEuler.set(yawPitch.pitch, yawPitch.yaw, 0, 'YXZ'));
     body.rotation.z += ((-sx * 0.9) - body.rotation.z) * Math.min(1, dt * 8); // visual bank only
 
     // momentum flight
@@ -233,12 +229,12 @@ function tick(now) {
       score++; timeLeft = Math.min(60, timeLeft + 9);
       placeBeacon();
     }
-    distEl.textContent = 'BEACON ' + Math.floor(bd) + 'm';
+    refreshHud && setText(distEl, 'BEACON ' + Math.floor(bd) + 'm');
 
     timeLeft -= dt;
     if (timeLeft <= 0) { timeLeft = 0; gameOver('OUT OF TIME'); }
-    scoreEl.textContent = 'BEACONS ' + score;
-    timerEl.textContent = timeLeft.toFixed(1);
+    refreshHud && setText(scoreEl, 'BEACONS ' + score);
+    refreshHud && setText(timerEl, timeLeft.toFixed(1));
     timerEl.style.opacity = timeLeft < 8 && Math.floor(now / 250) % 2 ? 0.25 : 1;
 
     // beacon screen marker
@@ -251,22 +247,21 @@ function tick(now) {
       my = Math.max(24, Math.min(innerHeight - 24, my));
     }
     markerEl.classList.remove('hidden');
-    markerEl.style.left = mx + 'px';
-    markerEl.style.top = my + 'px';
-    markerEl.textContent = bd < 40 ? '◆' : '◇';
+    markerEl.style.transform = `translate(${mx}px, ${my}px) translate(-50%, -50%)`;
+    setText(markerEl, bd < 40 ? '◆' : '◇');
   } else {
     markerEl.classList.add('hidden');
   }
 
   // chase camera
-  const camTarget = tmp.copy(new THREE.Vector3(0, 2.6, 9)).applyQuaternion(ship.quaternion).add(ship.position);
+  const camTarget = tmp.set(0, 2.6, 9).applyQuaternion(ship.quaternion).add(ship.position);
   camera.position.lerp(camTarget, Math.min(1, 0.016 * 60 * dt * 5));
   camera.quaternion.slerp(ship.quaternion, Math.min(1, dt * 6));
   renderer.render(scene, camera);
 }
 for (const a of asteroids) placeAsteroid(a, true); // menu backdrop
 placeBeacon();
-requestAnimationFrame(tick);
+const loop = startLoop(tick);
 
 addEventListener('resize', () => {
   camera.aspect = innerWidth / innerHeight;

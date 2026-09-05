@@ -41,6 +41,7 @@
 </script>
 <script type="module">
 import * as THREE from 'three';
+import { createInput, startLoop, setText } from '../shared/runtime.js';
 
 const DEMO = new URLSearchParams(location.search).has('demo');
 const scene = new THREE.Scene();
@@ -142,33 +143,25 @@ function reset() {
 }
 function gameOver() {
   state = 'over';
-  finalEl.textContent = 'GATES ' + gateCount + ' · DIST ' + Math.floor(travel);
+  setText(finalEl, 'GATES ' + gateCount + ' · DIST ' + Math.floor(travel));
   overEl.classList.remove('hidden');
   lockUntil = performance.now() + 600;
 }
 
-const keys = {};
-let pointer = null;
+const input = createInput({ onPress: press });
+const { keys, pointer } = input;
+
 function press() {
   if (performance.now() < lockUntil) return;
   if (state !== 'play') reset();
 }
-addEventListener('keydown', e => {
-  if (e.code.startsWith('Arrow') || e.code === 'Space') e.preventDefault();
-  keys[e.code] = true; press();
-});
-addEventListener('keyup', e => { keys[e.code] = false; });
-addEventListener('pointermove', e => { pointer = { x: e.clientX / innerWidth * 2 - 1, y: e.clientY / innerHeight * 2 - 1 }; });
-addEventListener('pointerdown', press);
-addEventListener('touchmove', e => {
-  pointer = { x: e.touches[0].clientX / innerWidth * 2 - 1, y: e.touches[0].clientY / innerHeight * 2 - 1 };
-}, { passive: true });
 
-let last = performance.now(), keyboardBias = 0;
-function tick(now) {
-  requestAnimationFrame(tick);
-  const dt = Math.max(0, Math.min((now - last) / 1000, 0.05));
-  last = now;
+let keyboardBias = 0;
+let hudElapsed = 0.1;
+function tick(dt, now) {
+  hudElapsed += dt;
+  const refreshHud = hudElapsed >= 0.1;
+  if (refreshHud) hudElapsed = 0;
 
   if (state === 'play') {
     // input: keyboard wins while held; else mouse position steers
@@ -189,7 +182,7 @@ function tick(now) {
       ty = Math.max(ty, maxG + 5);
       vx += (Math.max(-1, Math.min(1, (tx - px) / 14)) * 95 - vx * 4) * dt;
       vy += (Math.max(-1, Math.min(1, (ty - py) / 7)) * 95 - vy * 4.5) * dt;
-    } else if (usingKeys || !pointer || keyboardBias > 0) {
+    } else if (usingKeys || !input.pointerActive || keyboardBias > 0) {
       vx += (ax * 95 - vx * 4) * dt;
       vy += (ay * 75 - vy * 4) * dt;
     } else {
@@ -201,8 +194,8 @@ function tick(now) {
 
     speed = Math.min(115, speed + dt * 2);
     travel += speed * dt;
-    scoreEl.textContent = 'DIST ' + Math.floor(travel);
-    gatesEl.textContent = 'GATES ' + gateCount;
+    refreshHud && setText(scoreEl, 'DIST ' + Math.floor(travel));
+    setText(gatesEl, 'GATES ' + gateCount);
 
     // terrain collision
     const ground = terrainH(px, -travel);
@@ -247,7 +240,7 @@ function tick(now) {
   renderer.render(scene, camera);
 }
 updateTerrain();
-requestAnimationFrame(tick);
+const loop = startLoop(tick);
 
 addEventListener('resize', () => {
   camera.aspect = innerWidth / innerHeight;

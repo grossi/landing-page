@@ -41,7 +41,11 @@ export function mountGame(name: string) {
   const context = vm.createContext(host);
   const html = readFileSync(new URL(`../../public/arcade/${name}/index.html`, import.meta.url), 'utf8');
   const code = html.match(/<script type="module">([\s\S]*?)<\/script>/)![1]
-    .replace("import * as THREE from 'three';", '');
+    .replace("import * as THREE from 'three';", '')
+    .replace(/import \{.*\} from '\.\.\/shared\/runtime.js';/, '');
+  const runtime = readFileSync(new URL('../../public/arcade/shared/runtime.js', import.meta.url), 'utf8')
+    .replace(/export function /g, 'function ');
+  vm.runInContext(runtime, context);
   vm.runInContext(code, context);
   return {
     run<T = any>(code: string): T { return vm.runInContext(code, context); },

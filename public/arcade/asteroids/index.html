@@ -43,6 +43,7 @@
 </script>
 <script type="module">
 import * as THREE from 'three';
+import { createInput, startLoop, setText } from '../shared/runtime.js';
 
 const DEMO = new URLSearchParams(location.search).has('demo');
 const scene = new THREE.Scene();
@@ -125,9 +126,9 @@ let state = 'menu', heading = 0, vel = new THREE.Vector2(), score = 0, lives = 3
     fireCd = 0, invuln = 0, lockUntil = 0;
 
 function hud() {
-  scoreEl.textContent = String(score).padStart(6, '0');
-  livesEl.textContent = '▲'.repeat(Math.max(0, lives));
-  waveEl.textContent = 'WAVE ' + wave;
+  setText(scoreEl, String(score).padStart(6, '0'));
+  setText(livesEl, '▲'.repeat(Math.max(0, lives)));
+  setText(waveEl, 'WAVE ' + wave);
 }
 function newWave() {
   wave++;
@@ -153,7 +154,7 @@ function die() {
   lives--;
   if (lives <= 0) {
     state = 'over'; ship.visible = false;
-    finalEl.textContent = 'SCORE ' + score;
+    setText(finalEl, 'SCORE ' + score);
     overEl.classList.remove('hidden');
     lockUntil = performance.now() + 600;
   } else {
@@ -162,28 +163,19 @@ function die() {
   hud();
 }
 
-const keys = {};
+const input = createInput({ onPress: press });
+const { keys, pointer } = input;
 function press() {
   if (performance.now() < lockUntil) return;
   if (state !== 'play') reset();
 }
-addEventListener('keydown', e => {
-  if (['ArrowUp', 'ArrowDown', 'Space'].includes(e.code)) e.preventDefault();
-  keys[e.code] = true; press();
-});
-addEventListener('keyup', e => { keys[e.code] = false; });
-addEventListener('pointerdown', press);
 
 const wrap = m => {
   if (m.position.x > BX) m.position.x = -BX; if (m.position.x < -BX) m.position.x = BX;
   if (m.position.z > BZ) m.position.z = -BZ; if (m.position.z < -BZ) m.position.z = BZ;
 };
 
-let last = performance.now();
-function tick(now) {
-  requestAnimationFrame(tick);
-  const dt = Math.max(0, Math.min((now - last) / 1000, 0.05));
-  last = now;
+function tick(dt, now) {
 
   if (state === 'play') {
     // demo autopilot
@@ -278,7 +270,7 @@ function tick(now) {
   }
   renderer.render(scene, camera);
 }
-requestAnimationFrame(tick);
+const loop = startLoop(tick);
 
 addEventListener('resize', () => {
   camera.aspect = innerWidth / innerHeight;
