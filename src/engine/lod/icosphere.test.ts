@@ -84,3 +84,19 @@ describe('getIcosphereTables', () => {
     expect(getIcosphereTables(3)).toBe(getIcosphereTables(3));
   });
 });
+
+it('shares preparation safely when different levels are stepped in alternation', async () => {
+  const { vi } = await import('vitest');
+  vi.resetModules();
+  const { prepareIcosphereTables, getIcosphereTables: get } = await import('engine/lod/icosphere');
+  const high = prepareIcosphereTables(6), middle = prepareIcosphereTables(4);
+  let hi = high.next(), mid = middle.next();
+  for (let i = 0; i < 2000 && (!hi.done || !mid.done); i++) {
+    if (!hi.done) hi = high.next();
+    if (!mid.done) mid = middle.next();
+  }
+  expect(hi.done && mid.done).toBe(true);
+  expect(hi.value).toBe(get(6));
+  expect(mid.value).toBe(get(4));
+  expect(get(6).dirs.subarray(0, get(4).dirs.length)).toEqual(get(4).dirs);
+});

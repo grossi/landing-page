@@ -611,11 +611,10 @@ export function createLodManager(scene: THREE.Scene, opts: LodManagerOptions = {
       beginFade(body, target, cached, key);
       return;
     }
-    const tables = getIcosphereTables(level);
     // sub1 stays undisplaced — at ≤20px the silhouette change would be noise
     const amplitude = level === 1 ? 0 : body.preset.amplitude;
     if (level <= SYNC_LEVEL_MAX) {
-      const geometry = buildLodGeometrySync(tables, body.field, body.radius, amplitude);
+      const geometry = buildLodGeometrySync(getIcosphereTables(level), body.field, body.radius, amplitude);
       cache.set(key, geometry);
       beginFade(body, target, geometry, key);
       return;
@@ -623,7 +622,7 @@ export function createLodManager(scene: THREE.Scene, opts: LodManagerOptions = {
     body.pendingLevel = target;
     body.pendingKey = key;
     queue
-      .enqueue({ key, tables, field: body.field, radius: body.radius, amplitude, priority: px })
+      .enqueue({ key, tables: level, field: body.field, radius: body.radius, amplitude, priority: px })
       .then((geometry) => {
         if (geometry) cache.set(key, geometry); // keep even a stale build — re-approach is free
         if (body.pendingLevel !== target) return; // cancelled or superseded

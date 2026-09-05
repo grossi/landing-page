@@ -64,7 +64,7 @@ function baseIcosahedron(): MutableMesh {
 }
 
 /** One midpoint-subdivision pass; appends new vertices after existing ones. */
-function subdivide(mesh: MutableMesh): MutableMesh {
+function* subdivide(mesh: MutableMesh): Generator<void, MutableMesh> {
   const dirs = mesh.dirs.slice();
   const tris: number[] = [];
   // Midpoint cache keyed by the unordered vertex pair. Vertex indices stay
@@ -94,12 +94,13 @@ function subdivide(mesh: MutableMesh): MutableMesh {
     const bc = midpoint(b, c);
     const ca = midpoint(c, a);
     tris.push(a, ab, ca, b, bc, ab, c, ca, bc, ab, bc, ca);
+    if ((i / 3 + 1) % 256 === 0) yield;
   }
   return { dirs, tris };
 }
 
 /** Dedupe triangle edges into a flat (a, b) index list with a < b. */
-function buildEdgeIndex(tris: number[]): Uint32Array {
+function* buildEdgeIndex(tris: number[]): Generator<void, Uint32Array> {
   const seen = new Set<number>();
   const edges: number[] = [];
   const addEdge = (a: number, b: number): void => {
@@ -114,33 +115,56 @@ function buildEdgeIndex(tris: number[]): Uint32Array {
     addEdge(tris[i], tris[i + 1]);
     addEdge(tris[i + 1], tris[i + 2]);
     addEdge(tris[i + 2], tris[i]);
+    if ((i / 3 + 1) % 256 === 0) yield;
   }
   return Uint32Array.from(edges);
 }
 
-// Memoized meshes by level (index 0 = base icosahedron) and finished tables.
+// Both completed tables and in-progress work are shared across body jobs.
 const meshes: MutableMesh[] = [];
 const tables = new Map<number, IcosphereTables>();
+const preparations = new Map<number, Generator<void, IcosphereTables>>();
+
+function* buildTables(level: IcosphereLevel): Generator<void, IcosphereTables> {
+  if (level > 1) yield* prepareIcosphereTables((level - 1) as IcosphereLevel);
+  else meshes[0] ??= baseIcosahedron();
+  const mesh = yield* subdivide(meshes[level - 1]);
+  meshes[level] = mesh;
+  const dirs = Float32Array.from(mesh.dirs);
+  yield;
+  const triIndex = Uint32Array.from(mesh.tris);
+  yield;
+  const edgeIndex = yield* buildEdgeIndex(mesh.tris);
+  return { level, vertexCount: mesh.dirs.length / 3, dirs, triIndex, edgeIndex };
+}
 
 /**
- * Subdivision tables for one level. Cached per level at module scope —
- * callers share the returned typed arrays and must never mutate them.
+ * Resumable topology preparation. Each yield bounds subdivision/edge work to
+ * 256 triangles; geometry jobs charge these steps to their frame budget too.
+ * Interleaved requests share progress, so canceling a body never wastes tables.
  */
+export function* prepareIcosphereTables(level: IcosphereLevel): Generator<void, IcosphereTables> {
+  while (!tables.has(level)) {
+    let task = preparations.get(level);
+    if (!task) {
+      task = buildTables(level);
+      preparations.set(level, task);
+    }
+    const step = task.next();
+    if (step.done) {
+      tables.set(level, step.value);
+      preparations.delete(level);
+    } else yield;
+  }
+  return tables.get(level)!;
+}
+
+/** Synchronous access for tiny rungs, tests, or tables already prepared by a job. */
 export function getIcosphereTables(level: IcosphereLevel): IcosphereTables {
   const cached = tables.get(level);
   if (cached) return cached;
-
-  if (meshes.length === 0) meshes.push(baseIcosahedron());
-  while (meshes.length <= level) meshes.push(subdivide(meshes[meshes.length - 1]));
-
-  const mesh = meshes[level];
-  const built: IcosphereTables = {
-    level,
-    vertexCount: mesh.dirs.length / 3,
-    dirs: Float32Array.from(mesh.dirs),
-    triIndex: Uint32Array.from(mesh.tris),
-    edgeIndex: buildEdgeIndex(mesh.tris),
-  };
-  tables.set(level, built);
-  return built;
+  const preparation = prepareIcosphereTables(level);
+  let step = preparation.next();
+  while (!step.done) step = preparation.next();
+  return step.value;
 }
