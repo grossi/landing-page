@@ -63,12 +63,13 @@ scene.add(sun);
 const SIZE = 10, H = 2, AMP = 15;
 const boxGeo = new THREE.BoxGeometry(1, 1, 1);
 const edgeGeo = new THREE.EdgesGeometry(boxGeo);
+const edgeMat = new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.85 });
 
 function makeBlock(w, d, y, shade) {
   const g = new THREE.Group();
   const mat = new THREE.MeshLambertMaterial({ color: new THREE.Color().setHSL(0, 0, shade) });
   g.add(new THREE.Mesh(boxGeo, mat));
-  g.add(new THREE.LineSegments(edgeGeo, new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.85 })));
+  g.add(new THREE.LineSegments(edgeGeo, edgeMat));
   g.scale.set(w, H, d);
   g.position.y = y;
   scene.add(g);
@@ -81,10 +82,17 @@ const scoreEl = document.getElementById('score'), comboEl = document.getElementB
       finalEl = document.getElementById('finalScore');
 
 let state = 'menu', stack = [], falling = [], moving = null, level = 0, score = 0, combo = 0,
-    axis = 'x', dir = 1, speed = 9, camY = 0, lockUntil = 0, t = 0;
+    axis = 'x', speed = 9, camY = 0, lockUntil = 0, t = 0;
 
+function retireBlock(mesh) {
+  scene.remove(mesh);
+  // Geometry and edge material are shared; only the face material is owned.
+  mesh.children[0].material.dispose();
+}
 function clearAll() {
-  for (const b of [...stack, ...falling, ...(moving ? [moving.mesh] : [])]) scene.remove(b.mesh || b);
+  for (const b of stack) retireBlock(b.mesh);
+  for (const b of falling) retireBlock(b.mesh);
+  if (moving) retireBlock(moving.mesh);
   stack = []; falling = []; moving = null;
 }
 function reset() {
@@ -103,8 +111,6 @@ function spawnMoving() {
   const top = stack[stack.length - 1];
   level++;
   axis = level % 2 ? 'x' : 'z';
-  dir = 1;
-  const y = (level - 0.5) * H - H / 2 - H / 2 + H; // top of stack + half height
   const mesh = makeBlock(top.w, top.d, level * H - H / 2, shadeFor(level));
   moving = { mesh, w: top.w, d: top.d, x: top.x, z: top.z, phase: -Math.PI / 2,
              demoOffset: DEMO && Math.random() < 0.55 ? (Math.random() - 0.5) * 2.4 : 0 };
@@ -127,7 +133,6 @@ function drop() {
     combo++;
     score += 2 * combo;
     comboEl.textContent = 'PERFECT ×' + combo;
-    pulse(m.mesh);
   } else {
     combo = 0; comboEl.textContent = '';
     score += 1;
@@ -156,12 +161,10 @@ function drop() {
   scoreEl.textContent = String(score);
   spawnMoving();
 }
-let pulses = [];
-function pulse(mesh) { pulses.push({ mesh, t: 0 }); }
 
 function gameOver() {
   state = 'over';
-  finalEl.textContent = 'SCORE ' + score + ' · HEIGHT ' + (stack.length - 1);
+  finalEl.textContent = 'SCORE ' + score + ' · HEIGHT ' + (level - 1);
   overEl.classList.remove('hidden');
   lockUntil = performance.now() + 600;
 }
@@ -201,17 +204,14 @@ function tick(now) {
     f.vy += 38 * dt;
     f.mesh.position.y -= f.vy * dt;
     f.mesh.rotation.z += f.vr * dt;
-    if (f.mesh.position.y < camY - 50) { scene.remove(f.mesh); falling.splice(i, 1); }
+    if (f.mesh.position.y < camY - 50) { retireBlock(f.mesh); falling.splice(i, 1); }
   }
-  // perfect pulse
-  for (let i = pulses.length - 1; i >= 0; i--) {
-    const p = pulses[i]; p.t += dt * 5;
-    const s = 1 + Math.sin(Math.min(p.t, Math.PI)) * 0.06;
-    p.mesh.scale.x *= 1; // scale is meaningful; pulse via position bump instead
-    if (p.t >= Math.PI) pulses.splice(i, 1);
+  // The top and logical level are enough to score; old blocks are out of view.
+  while (stack.length > 1 && stack[0].mesh.position.y < camY - 50) {
+    retireBlock(stack.shift().mesh);
   }
 
-  const targetY = Math.max(0, (stack.length - 1) * H);
+  const targetY = Math.max(0, (level - 1) * H);
   camY += (targetY - camY) * Math.min(1, dt * 3);
   const orbit = state === 'over' ? t * 0.25 : 0;
   const a = Math.PI / 4 + orbit;

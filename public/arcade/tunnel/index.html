@@ -150,6 +150,7 @@ function tick(now) {
       else dir = 0;
     }
     steer += (dir * 4.2 - steer) * Math.min(1, dt * 10);
+    const previousAngle = angle;
     angle += steer * dt;
 
     speed = Math.min(95, speed + dt * 1.6);
@@ -165,10 +166,17 @@ function tick(now) {
     // move obstacles, collide
     for (let i = obstacles.length - 1; i >= 0; i--) {
       const o = obstacles[i];
+      const previousZ = o.position.z;
       o.position.z += speed * dt;
-      if (!o.userData.hit && o.position.z > PLAYER_Z - 0.8 && o.position.z < PLAYER_Z + 0.8) {
+      // Sweep across the player's plane; a slow frame can cross the whole ring.
+      if (!o.userData.hit && previousZ <= PLAYER_Z && o.position.z >= PLAYER_Z) {
         o.userData.hit = true;
-        if (Math.abs(angDiff(angle, o.userData.gapCenter)) > o.userData.gapWidth / 2 - 0.12) gameOver();
+        const fraction = (PLAYER_Z - previousZ) / Math.max(1e-9, o.position.z - previousZ);
+        const crossingAngle = previousAngle + (angle - previousAngle) * fraction;
+        if (Math.abs(angDiff(crossingAngle, o.userData.gapCenter)) > o.userData.gapWidth / 2 - 0.12) {
+          gameOver();
+          break;
+        }
       }
       if (o.position.z > 6) { scene.remove(o); o.geometry.dispose(); obstacles.splice(i, 1); }
     }
@@ -178,7 +186,7 @@ function tick(now) {
 
   ship.position.set(Math.cos(angle) * PLAYER_R, Math.sin(angle) * PLAYER_R, PLAYER_Z);
   ship.rotation.z = angle + Math.PI / 2;
-  camera.rotation.z += ((angDiff(-Math.PI / 2, angle) * 0.22) - camera.rotation.z) * Math.min(1, 0.016 * 6 * (state === 'play' ? 1 : 0.3));
+  camera.rotation.z += ((angDiff(-Math.PI / 2, angle) * 0.22) - camera.rotation.z) * Math.min(1, dt * 6 * (state === 'play' ? 1 : 0.3));
   renderer.render(scene, camera);
 }
 requestAnimationFrame(tick);

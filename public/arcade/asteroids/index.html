@@ -269,7 +269,10 @@ function tick(now) {
         continue;
       }
       // ship hit
-      if (invuln <= 0 && a.position.distanceTo(ship.position) < r + 1.2) die();
+      if (invuln <= 0 && a.position.distanceTo(ship.position) < r + 1.2) {
+        die();
+        if (state !== 'play') break;
+      }
     }
     if (state === 'play' && asteroids.length === 0) newWave();
   }
