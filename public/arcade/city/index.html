@@ -43,6 +43,7 @@
 </script>
 <script type="module">
 import * as THREE from 'three';
+import { createShipBody } from '../shared/ship.js';
 import { createInput, startLoop, setText } from '../shared/runtime.js';
 
 const DEMO = new URLSearchParams(location.search).has('demo');
@@ -135,14 +136,7 @@ const gridLines = new THREE.LineSegments(gridGeo,
 scene.add(gridLines);
 
 // ship
-const ship = new THREE.Group();
-const shipGeo = new THREE.ConeGeometry(0.9, 3, 4);
-shipGeo.rotateX(-Math.PI / 2);
-ship.add(new THREE.Mesh(shipGeo, new THREE.MeshBasicMaterial({ color: 0xffffff, wireframe: true })));
-const wingGeo = new THREE.BufferGeometry().setFromPoints([
-  new THREE.Vector3(-2.4, 0, 1.2), new THREE.Vector3(0, 0, -1), new THREE.Vector3(2.4, 0, 1.2), new THREE.Vector3(-2.4, 0, 1.2)
-]);
-ship.add(new THREE.Line(wingGeo, new THREE.LineBasicMaterial({ color: 0xffffff })));
+const ship = createShipBody(THREE);
 scene.add(ship);
 
 const scoreEl = document.getElementById('score'), multEl = document.getElementById('mult'),

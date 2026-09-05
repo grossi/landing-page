@@ -32,6 +32,7 @@
 </script>
 <script type="module">
 import * as THREE from 'three';
+import { createShipBody } from '../shared/ship.js';
 import { createInput, startLoop, setText } from '../shared/runtime.js';
 
 const flightEuler = new THREE.Euler();
@@ -104,14 +105,7 @@ const target = new THREE.Vector3(0, 0, -140);
 
 // ship
 const ship = new THREE.Group();
-const body = new THREE.Group();
-const shipGeo = new THREE.ConeGeometry(0.8, 2.6, 4);
-shipGeo.rotateX(-Math.PI / 2);
-body.add(new THREE.Mesh(shipGeo, new THREE.MeshBasicMaterial({ color: 0xffffff, wireframe: true })));
-const wingGeo = new THREE.BufferGeometry().setFromPoints([
-  new THREE.Vector3(-2, 0, 1), new THREE.Vector3(0, 0, -1), new THREE.Vector3(2, 0, 1), new THREE.Vector3(-2, 0, 1)
-]);
-body.add(new THREE.Line(wingGeo, new THREE.LineBasicMaterial({ color: 0xffffff })));
+const body = createShipBody(THREE); // banked visually; ship carries the control frame
 ship.add(body);
 scene.add(ship);
 
