@@ -1,11 +1,33 @@
-# Repository guidance
+# Project overview
 
-This is a React + TypeScript + Vite site with Three.js flight experiences.
+This is Gabriel Rossi's personal portfolio/blog website, deployed at
+`grossi.tech` on Vercel. It also includes interactive Three.js flight experiences
+and a collection of standalone arcade games.
+
+Vercel's GitHub integration deploys pushes to `main` to production and creates
+preview deployments for pull requests.
+
+## Architecture and validation
+
+The site uses React + TypeScript + Vite.
 The standalone arcade games live in `public/arcade/` and use their vendored
 Three.js version; the React app uses the version in `package-lock.json`.
 
+Imports are rooted at `src/` (for example, `components/post/Post`). Keep the
+alias regex in `vite.config.ts` aligned with any new source-root imports.
+
 Install dependencies with `npm ci`. Validate changes with `npm run build`
 (including TypeScript checks) and `npm test`. Use `gh` for GitHub operations.
+
+## Content management
+
+Blog content lives in `src/assets/`; `npm-library.md` is rendered at `/blog`.
+Markdown files are imported as asset URLs through Vite's `assetsInclude` and
+fetched at runtime by `useMarkdownAsset`.
+
+Posts start with a front-matter header (`---` / `date: YYYY-MM-DD` / `---`),
+parsed by `components/post/frontMatter.ts` and displayed as a "Published on …"
+byline. Give new posts their date.
 
 ## Code Review Rules
 
