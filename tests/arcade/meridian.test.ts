@@ -597,12 +597,34 @@ describe('the view', () => {
     expect(view.scene.children.length).toBe(0);
   });
 
-  it('follows the ship with the camera and widens the view on an upright phone', () => {
+  it.each([[1440, 900], [390, 844]])('keeps the ship well inside a %i x %i screen through hard turns and climbs', (width, height) => {
     const { game, view, frame } = mountView(5);
+    view.resize(width, height);
     game.press();
-    for (let i = 0; i < 120; i++) frame(1 / 60, { x: 1, y: 0 });
-    expect(game.x).toBeGreaterThan(40);
-    expect(Math.abs(view.camera.position.x - game.x)).toBeLessThan(25);
+    game.runTime = TUNE.GRACE;
+    const spot = new THREE.Vector3();
+    let widest = 0, tallest = 0;
+    // Slam the stick from corner to corner: the camera lags, the ship must not leave.
+    for (let i = 0; i < 600; i++) {
+      const turn = Math.floor(i / 75) % 2 ? 1 : -1;
+      game.charge = TUNE.CHARGE;
+      game.world.surface = () => 0; // the track is not the subject here
+      game.y = Math.max(game.y, 10);
+      frame(1 / 60, { x: turn, y: turn });
+      view.camera.updateMatrixWorld();
+      spot.set(game.x, game.y, 0).project(view.camera);
+      widest = Math.max(widest, Math.abs(spot.x));
+      tallest = Math.max(tallest, Math.abs(spot.y));
+    }
+    expect(game.state).toBe('play');
+    expect(widest).toBeGreaterThan(0.15); // it does lag: the turn reads on screen
+    expect(widest).toBeLessThan(0.7);
+    expect(tallest).toBeLessThan(0.8);
+  });
+
+  it('widens the view on an upright phone', () => {
+    const { view, frame } = mountView(5);
+    frame();
     const wide = view.camera.fov;
     view.resize(390, 844);
     frame();

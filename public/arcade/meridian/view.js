@@ -8,6 +8,8 @@ const COLS = 64, ROWS = 66, BACK = 4;
 /** Tower rows and gates on screen at once, with room to spare. */
 const ROW_POOL = 14, GATE_POOL = 12;
 const VIEW_AHEAD = 440, VIEW_BEHIND = 30;
+/** The chase camera sits this far behind and above the ship. */
+const CAMERA_BACK = 16, CAMERA_UP = 5.2;
 
 /**
  * @param {{ THREE: typeof import('three'),
@@ -19,7 +21,7 @@ export function createView({ THREE, createShipBody, game, aspect }) {
   const scene = new THREE.Scene();
   scene.fog = new THREE.Fog(0x000000, 120, 400);
   const camera = new THREE.PerspectiveCamera(62, aspect, 0.5, 1200);
-  camera.position.set(0, game.y + 5.2, 16);
+  camera.position.set(0, game.y + CAMERA_UP, CAMERA_BACK);
 
   // ---- terrain: one grid whose rows are the track's lattice rows ----
   const W1 = COLS + 1;
@@ -209,7 +211,13 @@ export function createView({ THREE, createShipBody, game, aspect }) {
     ship.rotation.x = game.vy * 0.006;
     const ease = rate => Math.min(1, dt * rate);
     camera.position.x += (game.x - camera.position.x) * ease(5);
-    camera.position.y += (game.y + 5.2 - camera.position.y) * ease(4.5);
+    camera.position.y += (game.y + CAMERA_UP - camera.position.y) * ease(4.5);
+    // The camera trails the ship, but never so far that the ship nears the edge
+    // of the screen: on an upright phone the view is only a few units wide.
+    const halfHeight = Math.tan(camera.fov * Math.PI / 360) * CAMERA_BACK;
+    const slackX = halfHeight * camera.aspect * 0.6, slackY = halfHeight * 0.45;
+    camera.position.x = Math.max(game.x - slackX, Math.min(game.x + slackX, camera.position.x));
+    camera.position.y = Math.max(game.y + CAMERA_UP - slackY, Math.min(game.y + CAMERA_UP + slackY, camera.position.y));
     // A phone held upright sees a narrow slice: widen it. Speed opens it further.
     const fov = (camera.aspect < 1 ? 80 : 62) + (game.speed - TUNE.SPEED0) * 0.1;
     if (Math.abs(fov - camera.fov) > 0.01) { camera.fov = fov; camera.updateProjectionMatrix(); }
