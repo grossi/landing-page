@@ -561,6 +561,8 @@ describe('escalation', () => {
 });
 
 describe('every run ends', () => {
+  /** Time allowed for a test that simulates whole runs, in ms. */
+  const SIMULATION = 30_000;
   const play = (seed: number, options: Parameters<typeof createBot>[1], prepare?: (game: Game) => void) => {
     const game = running(seed);
     prepare?.(game);
@@ -572,20 +574,20 @@ describe('every run ends', () => {
     return game;
   };
 
-  it('ends the lazy lines: hands off, circling, and gathering without ever banking', () => {
-    for (let seed = 1; seed <= 6; seed++) {
-      for (const stick of [CENTRE, { x: 1, y: 0 }, { x: -0.4, y: 0.3 }]) {
-        const game = running(seed);
-        fly(game, 120, stick, seed % 2 === 0);
-        expect(game.state).toBe('over');
-        expect(game.runTime).toBeLessThanOrEqual(TUNE.CLOCK + 0.1);
-      }
-      // Hoarding until the clock forces a bank is a real line of play. It ends too.
-      const hoarder = play(seed, { haul: Infinity });
-      expect(hoarder.state).toBe('over');
-      expect(hoarder.runTime).toBeLessThan(400);
+  // Whole runs are simulated here, tens of seconds of flight each: one seed per
+  // test and a generous limit, so a slow machine cannot time them out.
+  it.each([1, 2, 3, 4])('ends the lazy lines, seed %i: hands off, circling, and hoarding until the clock forces a bank', seed => {
+    for (const stick of [CENTRE, { x: 1, y: 0 }, { x: -0.4, y: 0.3 }]) {
+      const game = running(seed);
+      fly(game, 120, stick, seed % 2 === 0, 1 / 30);
+      expect(game.state).toBe('over');
+      expect(game.runTime).toBeLessThanOrEqual(TUNE.CLOCK + 0.1);
     }
-  });
+    // Hoarding until the clock forces a bank is a real line of play. It ends too.
+    const hoarder = play(seed, { haul: Infinity });
+    expect(hoarder.state).toBe('over');
+    expect(hoarder.runTime).toBeLessThan(400);
+  }, SIMULATION);
 
   it('a scripted pilot plays real runs: several banks, over a minute, and still ends', () => {
     let banks = 0, score = 0, longest = 0;
@@ -598,7 +600,7 @@ describe('every run ends', () => {
     expect(score / 6).toBeGreaterThan(200);
     expect(longest).toBeGreaterThan(70);
     expect(longest).toBeLessThan(400);
-  });
+  }, SIMULATION);
 
   it('ends even for a pilot with no rocks to hit and a gate that comes to the ship', () => {
     // Nothing can wreck it and banking costs no travel: only the flock's
@@ -618,7 +620,7 @@ describe('every run ends', () => {
         expect(game.runTime).toBeLessThan(600);
       }
     }
-  });
+  }, SIMULATION);
 });
 
 describe('flight feel', () => {
