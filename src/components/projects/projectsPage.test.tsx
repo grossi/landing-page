@@ -116,6 +116,8 @@ describe('the projects page', () => {
     for (const [path, id] of [
       ['/projects#tools', 'tools'],
       ['/arcade#experiments', 'experiments'],
+      // A percent-encoded fragment names the same section, as it does to a browser.
+      ['/projects#%74ools', 'tools'],
     ]) {
       const page = await openApp(path);
       const section = page.querySelector(`section#${id}`);
@@ -127,9 +129,10 @@ describe('the projects page', () => {
     }
   });
 
-  it('stays at the top without a section in the address, or with an unknown one', async () => {
-    for (const path of ['/projects', '/projects#nowhere']) {
-      await openApp(path);
+  it('stays at the top without a section in the address, or with an unknown or malformed one', async () => {
+    for (const path of ['/projects', '/projects#', '/projects#nowhere', '/projects#%', '/projects#%E0%A4%A']) {
+      const page = await openApp(path);
+      expect(page.querySelectorAll('[data-project]').length, path).toBe(projects.length);
       expect(scrollIntoView, path).not.toHaveBeenCalled();
       act(() => root?.unmount());
       host?.remove();

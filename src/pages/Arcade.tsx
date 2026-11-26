@@ -19,6 +19,23 @@ const experiments = {
 
 const jumpLinks = [...projectSections, experiments].map(({ id, title }) => ({ id, title }));
 
+/**
+ * The element a URL fragment names. Like a browser, it tries the fragment as
+ * written, then percent-decoded (`#%74ools` is `#tools`).
+ */
+function fragmentTarget(hash: string): HTMLElement | null {
+  const fragment = hash.slice(1);
+  if (!fragment) return null;
+  const exact = document.getElementById(fragment);
+  if (exact) return exact;
+  try {
+    return document.getElementById(decodeURIComponent(fragment));
+  } catch {
+    // A malformed escape such as `#%` names nothing.
+    return null;
+  }
+}
+
 // The projects page. It is served at /projects and at /arcade, its old
 // address (this file keeps the old name); the canonical link names /projects.
 const Projects = () => {
@@ -28,7 +45,7 @@ const Projects = () => {
   // looks for the section before it exists and stays at the top. Go there once
   // the page has rendered.
   useEffect(() => {
-    if (hash.length > 1) document.getElementById(hash.slice(1))?.scrollIntoView();
+    fragmentTarget(hash)?.scrollIntoView();
   }, [hash]);
 
   return (
