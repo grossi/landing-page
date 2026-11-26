@@ -161,8 +161,13 @@ export function mount({ THREE, createShipBody, storage = safeStorage(), random =
   };
   // Whatever makes the runtime let go of held keys also lets go of the key's
   // ramp, the thumbs and the mouse's aim: a tab that was hidden must not come
-  // back still turning, and the next press starts from the first nudge.
-  const release = () => { axis.reset(); thumbs.clear(); aim = null; owner = ''; };
+  // back still turning, and the next press starts from the first nudge. The
+  // runtime does not hear `pagehide`, so the keys are let go here as well: a
+  // page restored from the back/forward cache never saw the key come up.
+  const release = () => {
+    for (const code in input.keys) input.keys[code] = false;
+    axis.reset(); thumbs.clear(); aim = null; owner = '';
+  };
   const RELEASES = ['blur', 'pointercancel', 'touchcancel', 'pagehide'];
   addEventListener('resize', resize);
   for (const type of RELEASES) addEventListener(type, release);

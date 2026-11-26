@@ -92,8 +92,6 @@ function layout(pattern, gap, limit, side) {
 export function createWorld(random = Math.random) {
   const world = {
     seed: 0,
-    /** Goes up with every `reseed`: anything built from the old tunnel is stale. */
-    epoch: 0,
     /** Sections handed out so far. */
     count: 0,
     reseed, next,
@@ -106,7 +104,6 @@ export function createWorld(random = Math.random) {
    */
   function reseed(angle, isDemo = false) {
     world.seed = Math.floor(random() * 0x100000000) >>> 0;
-    world.epoch++;
     world.count = 0;
     demo = isDemo; start = angle; last = null; bag = []; drawn = 'ZIGZAG';
   }

@@ -427,6 +427,29 @@ describe('the mouse', () => {
     expect(game.angle).toBeCloseTo(2.6, 3);
   });
 
+  it('does not take the stick from a key that is still held, and needs a new move once it is let go', () => {
+    // Holding a key is acting, for as long as it is held: a hand that brushes
+    // the mouse in the middle of a turn must not send the ship after the pointer.
+    const { game, view } = calm();
+    send(window, 'keydown', { code: 'ArrowRight' });
+    ticks(0.5, DT);
+    mouse(-2, 300);
+    ticks(0.5, DT);
+    expect(view.follow).toBe(true);
+    expect(game.spin).toBeGreaterThan(SHIP.TURN * 0.97); // still turning right, flat out
+    send(window, 'keyup', { code: 'ArrowRight' });
+    ticks(3, DT);
+    const stopped = game.angle;
+    expect(game.spin).toBeCloseTo(0, 6);
+    ticks(2, DT);
+    expect(game.angle).toBe(stopped);
+    // The next real move of the mouse has the stick.
+    mouse(-2, 340);
+    ticks(3, DT);
+    expect(view.follow).toBe(false);
+    expect(wrap(game.angle + 2)).toBeCloseTo(0, 3);
+  });
+
   it('comes back to the stick pointing nowhere until it points somewhere new', () => {
     const { game, view } = calm();
     mouse(2);
@@ -527,8 +550,10 @@ describe('letting go', () => {
         send(document, 'visibilitychange');
         Object.defineProperty(document, 'hidden', { configurable: true, get: () => false });
       } else send(window, how);
-      if (how !== 'pagehide') expect(input.keys.ArrowRight ?? false).toBe(false);
-      if (how === 'pagehide') send(window, 'keyup', { code: 'ArrowRight' });
+      // No keyup ever reaches a page that was hidden or put in the back/forward
+      // cache with the key down: the key is let go here and now.
+      expect(input.keys.ArrowRight ?? false).toBe(false);
+      if (how === 'pagehide') send(window, 'pageshow');
       // The very next frame steers nothing (a hidden tab resumes here, however
       // long it was away): the ship only runs out the turn it had.
       game.spin = 0;

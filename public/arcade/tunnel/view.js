@@ -3,7 +3,7 @@
 // when rings with those gaps come into view, shared by all of them, and
 // disposed when the last one has gone. `dispose` releases everything.
 import { BROKEN, TUNE } from './game.js';
-import { TAU, gapAngle, wrap } from './world.js';
+import { SHIP, TAU, gapAngle, wrap } from './world.js';
 
 /** The tunnel wall, the circle the ship rides, and the inner edge of a ring's wall. */
 const TUNNEL_R = 6, LANE_R = 4.6, WALL_IN = 3.3;
@@ -151,11 +151,14 @@ export function createView({ THREE, createShipBody, game, aspect }) {
   // ---- ship: the group is its place on the wall, the body banks inside it ----
   const ship = new THREE.Group();
   const body = createShipBody(THREE);
-  body.scale.setScalar(0.32); // a compact hull for the narrow lane
+  // The hull is drawn as wide as the rules say it is: its wingtips reach
+  // SHIP.HULL either side of its centre, so a ship seen to clear a wall does.
+  const span = new THREE.Box3().setFromObject(body);
+  body.scale.setScalar(Math.tan(SHIP.HULL) * LANE_R / Math.max(span.max.x, -span.min.x));
   ship.add(body);
   const halo = [];
   for (let k = 0; k < 40; k++) {
-    point(halo, k / 40 * TAU, 1.15); point(halo, (k + 1) / 40 * TAU, 1.15);
+    point(halo, k / 40 * TAU, 1); point(halo, (k + 1) / 40 * TAU, 1);
   }
   const shield = new THREE.LineSegments(geometry(halo), new THREE.LineBasicMaterial({ color: 0xffffff }));
   shield.visible = false;

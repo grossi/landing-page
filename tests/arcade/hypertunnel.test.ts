@@ -329,9 +329,9 @@ describe('the end of the tunnel', () => {
     expect(game).toMatchObject({
       state: 'over', cause: 'CLEARED', depth: TUNNEL.DEPTHS, bestChain: rings, score, newBest: true,
     });
-    // Under five minutes, however it is flown.
-    expect(game.time).toBeLessThan(300);
-    expect(game.time).toBeGreaterThan(150);
+    // About four minutes, however it is flown: speed is set by depth, not by the pilot.
+    expect(game.time).toBeGreaterThan(225);
+    expect(game.time).toBeLessThan(250);
   });
 
   it('kills the hands-off run on the second ring', () => {
@@ -401,14 +401,14 @@ describe('a run from start to game over to retry', () => {
     game.step(TUNE.LOCK / 2, 0);
     expect(game.press()).toBe(false);
     expect(game.state).toBe('over');
-    const epoch = game.world.epoch, best = game.best;
+    const seed = game.world.seed, best = game.best;
     game.step(TUNE.LOCK / 2 + 0.01, 0);
     expect(game.press()).toBe(true);
     expect(game).toMatchObject({
       state: 'play', score: 0, chain: 0, bestChain: 0, shield: false, passed: 0, depth: 1, pattern: 'SPIRAL',
       dist: 0, time: 0, cause: '', newBest: false, best,
     });
-    expect(game.world.epoch).toBe(epoch + 1);
+    expect(game.world.seed).not.toBe(seed);
     expect(game.rings.every(ring => ring.state === AHEAD && ring.d > 0)).toBe(true);
     expect([game.payout.at, game.bonus.at, game.charged, game.broke]).toEqual(Array(4).fill(-Infinity));
 
@@ -974,6 +974,98 @@ describe('the picture', () => {
       }
     }
     expect(disposed.size).toBeGreaterThan(4);
+    view.dispose();
+  });
+
+  it('draws the walls exactly where the rules say a ship is hit, and the ticks at the PERFECT zone', () => {
+    type Span = { from: number, width: number };
+    const walls = new Map<unknown, Span[]>(), ticks = new Map<unknown, number[]>();
+    /** The arc each wall triangle covers, in the drawing's own angles. */
+    const spans = (geometry: any) => {
+      if (walls.has(geometry)) return walls.get(geometry)!;
+      const at = geometry.attributes.position, out: Span[] = [];
+      for (let i = 0; i < at.count; i += 3) {
+        const angles = [0, 1, 2].map(k => Math.atan2(at.getY(i + k), at.getX(i + k)));
+        const offsets = angles.map(angle => wrap(angle - angles[0]));
+        const low = Math.min(...offsets);
+        out.push({ from: angles[0] + low, width: Math.max(...offsets) - low });
+      }
+      walls.set(geometry, out);
+      return out;
+    };
+    /** The angles of the short radial marks that stop a unit inside the tunnel wall. */
+    const marks = (geometry: any) => {
+      if (ticks.has(geometry)) return ticks.get(geometry)!;
+      const at = geometry.attributes.position, out: number[] = [];
+      for (let i = 0; i < at.count; i += 2) {
+        const radii = [Math.hypot(at.getX(i), at.getY(i)), Math.hypot(at.getX(i + 1), at.getY(i + 1))];
+        if (Math.abs(radii[0] - 6) < 1e-4 && Math.abs(radii[1] - 5) < 1e-4) out.push(Math.atan2(at.getY(i), at.getX(i)));
+      }
+      ticks.set(geometry, out);
+      return out;
+    };
+    const positive = (angle: number) => (angle % TAU + TAU) % TAU;
+    const patterns = new Set<string>();
+    let checked = 0;
+    for (let seed = 1; seed <= 2; seed++) {
+      const game = running(seed);
+      const view = createView({ THREE, createShipBody, game, aspect: 1.6 });
+      const renderer = new Renderer();
+      const done = new Set<string>();
+      while (game.state === 'play') {
+        cross(game);
+        view.render(renderer as any, 1 / 60);
+        for (const ring of game.rings) {
+          const ahead = ring.d - game.dist;
+          const slot = view.slots[ring.id % RING_POOL];
+          if (ahead > TUNE.AHEAD || ahead < SHIP_Z - 2 || !slot.group.visible) continue;
+          // Each ring far off, at mid distance and close by: a rotor has turned in between.
+          const key = `${ring.id}:${Math.floor(ahead / 100)}`;
+          if (done.has(key)) continue;
+          done.add(key);
+          const turned = slot.group.rotation.z, { gaps } = ring.section;
+          const covered = (angle: number) => spans(slot.walls.geometry)
+            .some(span => positive(angle - turned - span.from) <= span.width);
+          const open = (angle: number) => gaps
+            .some(gap => Math.abs(wrap(angle - gapAngle(ring, gap, game.time))) < gap.width / 2);
+          const nearEdge = (angle: number) => gaps
+            .some(gap => Math.abs(Math.abs(wrap(angle - gapAngle(ring, gap, game.time))) - gap.width / 2) < 0.01);
+          for (let k = 0; k < 180; k++) {
+            const angle = k / 180 * TAU + 0.003;
+            if (!nearEdge(angle)) expect(covered(angle)).toBe(!open(angle));
+            // Where the rules let the ship through, no wall is drawn across its hull.
+            if (meet(ring, angle, game.time) === HIT) continue;
+            expect(covered(angle - SHIP.HULL + 0.011) || covered(angle + SHIP.HULL - 0.011)).toBe(false);
+          }
+          const drawn = marks(slot.edges.geometry).map(angle => angle + turned);
+          expect(drawn).toHaveLength(gaps.length * 2);
+          for (const gap of gaps) {
+            for (const side of [-1, 1]) {
+              const tick = gapAngle(ring, gap, game.time) + side * gap.perfect;
+              expect(drawn.some(angle => Math.abs(wrap(angle - tick)) < 1e-5)).toBe(true);
+              // Just inside the tick is PERFECT; just outside it is not.
+              expect(meet(ring, tick - side * 0.001, game.time)).toBe(PERFECT);
+              expect(meet(ring, tick + side * 0.001, game.time)).not.toBe(PERFECT);
+            }
+          }
+          patterns.add(ring.section.pattern);
+          checked++;
+        }
+      }
+      view.dispose();
+    }
+    expect([...patterns].sort()).toEqual([...PATTERNS].sort());
+    expect(checked).toBeGreaterThan(2 * TUNNEL.DEPTHS * TUNNEL.RINGS * 2);
+  });
+
+  it('draws the hull as wide as the rules say it is', () => {
+    const game = running(4);
+    const view = createView({ THREE, createShipBody, game, aspect: 1.6 });
+    const box = new THREE.Box3().setFromObject(view.body);
+    const halfSpan = Math.atan(Math.max(box.max.x, -box.min.x) / 4.6);
+    expect(halfSpan).toBeLessThanOrEqual(SHIP.HULL + 1e-9);
+    expect(halfSpan).toBeGreaterThan(SHIP.HULL * 0.95);
+    expect(-box.min.x).toBeCloseTo(box.max.x, 6);
     view.dispose();
   });
 

@@ -4,8 +4,12 @@
 <link rel="icon" href="/logo98.png">
 <title>HYPERTUNNEL</title>
 <style>
-  /* touch-action: a held thumb steers the ship; the browser must not claim it. */
-  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; touch-action: none; }
+  /* touch-action: a held thumb steers the ship; the browser must not claim it,
+     nor answer a long hold with its own menu. */
+  html, body {
+    margin: 0; height: 100%; background: #000; overflow: hidden;
+    touch-action: none; -webkit-touch-callout: none;
+  }
   canvas { display: block; }
   .hud {
     position: fixed; inset: 0; pointer-events: none; color: #fff;
@@ -57,7 +61,7 @@
   <div class="center" id="menu">
     <div class="title">HYPERTUNNEL</div>
     <div class="sub">SLIP THROUGH THE GAPS<br>DEAD CENTRE = PERFECT, PERFECTS CHAIN<br>FIVE PERFECTS CHARGE A SHIELD</div>
-    <div class="sub">POINT THE MOUSE OR A / D &middot; HOLD A SIDE ON A PHONE</div>
+    <div class="sub">MOUSE OR A / D &middot; TOUCH: HOLD A SIDE</div>
     <div class="blink">CLICK, TAP OR PRESS A KEY</div>
   </div>
   <div class="center hidden" id="over">
