@@ -164,9 +164,11 @@ export function mount({ THREE, createShipBody, storage = safeStorage(), random =
   // back still turning, and the next press starts from the first nudge. The
   // runtime does not hear `pagehide`, so the keys are let go here as well: a
   // page restored from the back/forward cache never saw the key come up.
+  // Who had the stick keeps it: a window that loses focus can stay on screen
+  // with the run going on, and under the mouse the camera must stay level.
   const release = () => {
     for (const code in input.keys) input.keys[code] = false;
-    axis.reset(); thumbs.clear(); aim = null; owner = '';
+    axis.reset(); thumbs.clear(); aim = null;
   };
   const RELEASES = ['blur', 'pointercancel', 'touchcancel', 'pagehide'];
   addEventListener('resize', resize);

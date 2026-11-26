@@ -575,6 +575,39 @@ describe('letting go', () => {
   });
 });
 
+describe('losing focus under the mouse', () => {
+  it.each(['blur', 'pointercancel', 'pagehide'])('keeps the camera level through a %s while the run goes on', how => {
+    // The window can lose focus and stay on screen (a click on a second
+    // monitor): the run goes on, and the pointer and the ring must stay lined up.
+    const { game, view } = calm();
+    mouse(1.2);
+    ticks(2, DT);
+    expect(view.follow).toBe(false);
+    expect(wrap(view.camera.rotation.z)).toBeCloseTo(0, 3);
+    send(window, how);
+    for (let t = 0; t < 2; t += DT) {
+      page!.tick(DT);
+      expect(Math.abs(wrap(view.camera.rotation.z))).toBeLessThan(1e-3);
+    }
+    // The aim is gone with the focus: the ship holds where it is...
+    expect(game.angle).toBeCloseTo(1.2, 3);
+    // ...and the next move of the mouse steers at once, on a camera that never rolled.
+    mouse(-0.5);
+    ticks(2, DT);
+    expect(wrap(game.angle + 0.5)).toBeCloseTo(0, 3);
+    expect(Math.abs(wrap(view.camera.rotation.z))).toBeLessThan(1e-3);
+  });
+
+  it('leaves the camera following the ship when the keys had the stick', () => {
+    const { view } = calm();
+    send(window, 'keydown', { code: 'ArrowRight' });
+    ticks(0.5, DT);
+    send(window, 'blur');
+    ticks(0.5, DT);
+    expect(view.follow).toBe(true);
+  });
+});
+
 describe('MONOSTACK', () => {
   it('/arcade/stack/ redirects to HYPERTUNNEL and keeps the query and hash', () => {
     const html = read('stack/index.html');
