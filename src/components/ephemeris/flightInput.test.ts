@@ -350,6 +350,48 @@ describe('mouse and keys', () => {
     expect(input.burnHeld()).toBe(true);
   });
 
+  it('follows the primary button through presses and releases made with another button held', () => {
+    const event = (target: EventTarget, type: string, button: number, buttons: number) =>
+      target.dispatchEvent(new PointerEvent(type, { bubbles: true, button, buttons, pointerId: 9, pointerType: 'mouse', clientX: 200, clientY: 400 }));
+    // left down, middle down, left up, middle up: only the first and the last are down/up events
+    event(container, 'pointerdown', 0, 1);
+    event(container, 'pointermove', 1, 5);
+    expect(input.burnHeld()).toBe(true);
+    event(container, 'pointermove', 0, 4);
+    expect(input.burnHeld()).toBe(false);
+    event(window, 'pointerup', 1, 0);
+    expect(input.burnHeld()).toBe(false);
+
+    // middle down, left down, left up, middle up: the left button never gets a down or an up of its own
+    event(container, 'pointerdown', 1, 4);
+    expect(input.burnHeld()).toBe(false);
+    event(container, 'pointermove', 0, 5);
+    expect(input.burnHeld()).toBe(true);
+    // a plain move while held changes nothing
+    event(container, 'pointermove', -1, 5);
+    expect(input.burnHeld()).toBe(true);
+    event(container, 'pointermove', 0, 4);
+    expect(input.burnHeld()).toBe(false);
+    event(window, 'pointerup', 1, 0);
+    expect(input.burnHeld()).toBe(false);
+  });
+
+  it('ends a mouse burn whose button-up was lost, wherever the menu opened or the mouse next moves', () => {
+    // a menu opened over the site header, or from the keyboard: the event is not on the game
+    mouse('pointerdown', 200, 400);
+    window.dispatchEvent(new Event('contextmenu'));
+    expect(input.burnHeld()).toBe(false);
+    // no menu event at all: the next mouse move anywhere reports the button up
+    mouse('pointerdown', 200, 400);
+    document.body.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, button: -1, buttons: 0, pointerId: 9, pointerType: 'mouse' }));
+    expect(input.burnHeld()).toBe(false);
+    // a thumb's moves say nothing about a mouse button
+    mouse('pointerdown', 200, 400);
+    touchDown(100, 600, 1);
+    touchMove(120, 600, 1);
+    expect(input.burnHeld()).toBe(true);
+  });
+
   it('WASD and the arrows steer at the key deflection', () => {
     key('keydown', 'KeyD');
     key('keydown', 'ArrowUp');

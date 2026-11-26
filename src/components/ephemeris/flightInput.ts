@@ -157,10 +157,26 @@ export function createFlightInput(container: HTMLElement, options: FlightInputOp
     }
   };
 
+  // The primary button's state as every mouse event reports it. A browser
+  // sends `pointerdown` only for the first button down and `pointerup` only
+  // for the last one up: with another button held, the primary's press and
+  // release arrive as moves. And a button-up can be lost altogether (a menu
+  // opened from the keyboard takes it). So any mouse move, anywhere, that
+  // says the primary is up ends the burn.
+  const onMouseButtons = (e: PointerEvent) => {
+    if (e.pointerType !== 'touch' && mouseDown && (e.buttons & 1) === 0) mouseDown = false;
+  };
+
   const onPointerMove = (e: PointerEvent) => {
     if (e.pointerType !== 'touch') {
       pointerToNdc(pointer, e.clientX, e.clientY, container);
       touchSteers = false;
+      // a move whose changed button is the primary, now down: a press made
+      // with another button already held
+      if (!mouseDown && e.button === 0 && (e.buttons & 1) !== 0) {
+        const spent = onPress?.() ?? false;
+        if (!spent) mouseDown = true;
+      }
       return;
     }
     const point = touches.get(e.pointerId);
@@ -228,7 +244,9 @@ export function createFlightInput(container: HTMLElement, options: FlightInputOp
   listeners.add(container, 'pointerdown', onPointerDown);
   listeners.add(container, 'pointermove', onPointerMove);
   listeners.add(window, 'pointerup', onPointerUp);
-  listeners.add(container, 'contextmenu', onContextMenu);
+  listeners.add(window, 'pointermove', onMouseButtons);
+  // on the window: the menu can open over the header, or from the keyboard
+  listeners.add(window, 'contextmenu', onContextMenu);
   listeners.add(window, 'pointercancel', release);
   listeners.add(window, 'touchcancel', release);
   listeners.add(document, 'visibilitychange', onVisibilityChange);

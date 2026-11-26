@@ -765,7 +765,7 @@ describe('lifecycle', () => {
     expect(added).toEqual(expect.arrayContaining([
       'window:keydown', 'window:keyup', 'window:blur', 'window:pointerup', 'window:pointercancel',
       'window:touchcancel', 'document:visibilitychange', 'container:pointerdown', 'container:pointermove',
-      'container:contextmenu',
+      'window:contextmenu', 'window:pointermove',
     ]));
     game.dispose();
     expect([...live].filter(([, count]) => count !== 0)).toEqual([]);
