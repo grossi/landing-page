@@ -19,6 +19,7 @@ export function createBot(game, { haul = 60, boost = true, dodge = true } = {}) 
   const bot = { stick: { x: 0, y: 0 }, boost: false, mode: 'gather', update };
   const local = { x: 0, y: 0, z: 0 };
   const close = new Int16Array(game.belt.count);
+  let committed = false, banks = game.banks;
 
   function steerAt(x, y, z) {
     game.fromShip(x, y, z, local);
@@ -60,8 +61,11 @@ export function createBot(game, { haul = 60, boost = true, dodge = true } = {}) 
   function update() {
     const { ship, flock, belt, gate } = game;
     const gateFar = Math.hypot(gate.x - ship.x, gate.y - ship.y, gate.z - ship.z);
-    // Bank when the haul is in, or when the clock only just covers the trip.
-    const due = flock.wake >= haul || (flock.wake > 0 && game.clock < gateFar / 60 + 4);
+    // Bank when the haul is in, or when the clock only just covers the trip. Once
+    // on its way it goes through with it: birds shed in the reef do not turn it back.
+    if (game.banks !== banks || flock.wake === 0) { banks = game.banks; committed = false; }
+    if (flock.wake >= haul || (flock.wake > 0 && game.clock < gateFar / 60 + 4)) committed = true;
+    const due = committed;
     bot.mode = due ? 'bank' : 'gather';
     const target = due ? gate : flock.centre;
     const aim = steerAt(target.x, target.y, target.z);

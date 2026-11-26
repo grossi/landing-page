@@ -38,7 +38,6 @@
   #flockMark { margin-top: 9px; }
   #gateMark { margin-top: -9px; }
   .marker.edge { opacity: 1; }
-  .ended .marker, .ended .boost, .ended .reticle { display: none; }
   .reticle {
     position: absolute; left: 50%; top: 50%; width: 12px; height: 12px;
     transform: translate(-50%, -50%); border: 1px solid rgba(255,255,255,.3); border-radius: 50%;
@@ -56,6 +55,8 @@
     .boost { display: flex; }
     .reticle { display: none; }
   }
+  /* Once the run is over only the numbers stay: no markers, no reticle, no BOOST. */
+  #flight.ended .marker, #flight.ended .boost, #flight.ended .reticle { display: none; }
   .center {
     position: absolute; inset: 0; display: flex; flex-direction: column;
     align-items: center; justify-content: center; text-align: center; gap: 14px; padding: 0 16px;
@@ -64,7 +65,7 @@
   .title-screen { justify-content: space-between; padding: 10vh 16px 12vh; }
   .title-screen > div { display: flex; flex-direction: column; align-items: center; gap: 14px; }
   /* The end of a run darkens the middle so the result stays legible over the birds. */
-  .result-screen { background: radial-gradient(ellipse 60% 34% at center, rgba(0,0,0,.8) 0%, rgba(0,0,0,.55) 55%, rgba(0,0,0,0) 100%); }
+  .result-screen { background: radial-gradient(ellipse 80% 40% at center, rgba(0,0,0,.94) 0%, rgba(0,0,0,.85) 55%, rgba(0,0,0,0) 100%); }
   .title { font-size: clamp(28px, 8vw, 54px); letter-spacing: .32em; margin-right: -.32em; font-weight: 700; }
   .sub   { font-size: clamp(11px, 3.1vw, 13px); letter-spacing: .16em; opacity: .6; line-height: 2; }
   .record { font-size: 13px; letter-spacing: .3em; }
