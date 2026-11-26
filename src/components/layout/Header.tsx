@@ -21,17 +21,26 @@ const mono = {
   color: 'white',
 } as const;
 
-const navItems = [
+interface NavItem {
+  name: string;
+  path: string;
+  /** Other addresses that render the same page. */
+  aliases?: string[];
+}
+
+const navItems: NavItem[] = [
   { name: 'EXPERIENCE', path: '/experience' },
   { name: 'BLOG', path: '/blog' },
-  { name: 'PROJECTS', path: '/arcade' },
+  // /arcade is the projects page's old address and still renders it.
+  { name: 'PROJECTS', path: '/projects', aliases: ['/arcade'] },
 ];
 
 const Header = () => {
   const location = useLocation();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
-  const isActive = (path: string) => location.pathname === path;
+  const isActive = (item: NavItem) =>
+    location.pathname === item.path || (item.aliases ?? []).includes(location.pathname);
 
   return (
     <>
@@ -60,15 +69,16 @@ const Header = () => {
                 <RouterLink
                   key={item.path}
                   to={item.path}
+                  aria-current={isActive(item) ? 'page' : undefined}
                   style={{ textDecoration: 'none' }}
                 >
                   <Text
                     {...mono}
                     fontSize="12px"
                     letterSpacing=".22em"
-                    opacity={isActive(item.path) ? 1 : 0.55}
+                    opacity={isActive(item) ? 1 : 0.55}
                     borderBottom={
-                      isActive(item.path)
+                      isActive(item)
                         ? '1px solid rgba(255,255,255,.7)'
                         : '1px solid transparent'
                     }
@@ -116,6 +126,7 @@ const Header = () => {
                 <RouterLink
                   key={item.path}
                   to={item.path}
+                  aria-current={isActive(item) ? 'page' : undefined}
                   style={{ textDecoration: 'none' }}
                   onClick={() => setIsMobileMenuOpen(false)}
                 >
@@ -123,7 +134,7 @@ const Header = () => {
                     p={3}
                     borderRadius={0}
                     border={
-                      isActive(item.path)
+                      isActive(item)
                         ? '1px solid rgba(255,255,255,.35)'
                         : '1px solid transparent'
                     }
@@ -134,7 +145,7 @@ const Header = () => {
                       {...mono}
                       fontSize="12px"
                       letterSpacing=".22em"
-                      opacity={isActive(item.path) ? 1 : 0.55}
+                      opacity={isActive(item) ? 1 : 0.55}
                     >
                       {item.name}
                     </Text>

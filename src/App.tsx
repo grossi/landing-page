@@ -8,7 +8,8 @@ import Experience from 'pages/Experience';
 // Suspense fallback below is a plain black screen so the swap is invisible.
 const Home = React.lazy(() => import('pages/Home'));
 const Blog = React.lazy(() => import('pages/Blog'));
-const Arcade = React.lazy(() => import('pages/Arcade'));
+// The projects page; its file keeps the name of its old address, /arcade.
+const Projects = React.lazy(() => import('pages/Arcade'));
 const Ephemeris = React.lazy(() => import('pages/Ephemeris'));
 
 interface ErrorBoundaryState {
@@ -45,7 +46,10 @@ function App() {
         <React.Suspense fallback={null}>
           <Routes>
             <Route path="/blog" element={<Blog />} />
-            <Route path="/arcade" element={<Arcade />} />
+            <Route path="/projects" element={<Projects />} />
+            {/* The page's old address: existing links point here, and the
+                static demos are served from under it (public/arcade/). */}
+            <Route path="/arcade" element={<Projects />} />
             <Route path="/ephemeris" element={<Ephemeris />} />
             <Route
               path="/"
