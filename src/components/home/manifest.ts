@@ -3,7 +3,8 @@
  * the full list lives on the projects page (`/arcade`).
  *
  * Every entry is a checked fact. Links are public URLs or public repos only:
- * no private repo, no unreleased store listing.
+ * no private repo, no unreleased store listing. Only original work is listed:
+ * a fork of someone else's project is not an entry here.
  */
 
 export type ProjectStatus = 'LIVE' | 'IN TESTING' | 'PROTOTYPE' | 'OPEN SOURCE';
@@ -60,13 +61,6 @@ export const manifest: ManifestEntry[] = [
     summary: 'Android app that restores screen switching on Pixel Folds with a dead hinge sensor. No root.',
     linkLabel: 'GitHub',
     href: 'https://github.com/grossi/fold-fix',
-  },
-  {
-    name: 'IMAGE-GEN-MCP',
-    status: 'OPEN SOURCE',
-    summary: 'MCP server for text-to-image generation through the Stable Diffusion WebUI API.',
-    linkLabel: 'GitHub',
-    href: 'https://github.com/grossi/image-gen-mcp',
   },
   {
     name: 'FLIGHT DEMOS',
