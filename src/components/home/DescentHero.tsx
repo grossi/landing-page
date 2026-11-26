@@ -1,9 +1,12 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useImperativeHandle, useRef, useState } from 'react';
+import type { Ref } from 'react';
 import { Box, Flex, Text } from '@chakra-ui/react';
+import { Link as RouterLink } from 'react-router';
 import { motion, useReducedMotion, useScroll, useTransform } from 'framer-motion';
 import { createDeepField } from 'components/deepfield/createDeepField';
 import type { DeepFieldHandle, DeepFieldMode } from 'components/deepfield/createDeepField';
-import { currentRole } from 'components/home/content';
+import { kicker } from 'components/home/content';
+import HeroActions from 'components/home/HeroActions';
 import { focusRing, headerHeightVar, tone } from 'components/home/Section';
 import { monoFont } from 'config/site';
 
@@ -12,21 +15,26 @@ const mono = {
   color: 'white',
 } as const;
 
-interface DescentHeroProps {
-  /** Rendered height of the sticky header above the hero, in px. */
-  headerHeight: number;
-  /** Scrolls to the first section below the hero. */
-  onDescend: () => void;
-  /** True from PLAY until the field is back on its title screen. */
-  onFlightChange: (inFlight: boolean) => void;
+export interface DescentHeroHandle {
+  /** Leaves play for the title screen; a no-op on the title screen. */
+  exit(): void;
 }
 
-// The first screen of the page: the DEEP FIELD drift under the name, with
-// PLAY. Unlike the old single-screen home the page continues below, so the
-// field is told where its title-screen input ends (inputScope) and when it
-// has been scrolled away (setPaused), and the page stops scrolling while
-// the hero is a game.
-const DescentHero = ({ headerHeight, onDescend, onFlightChange }: DescentHeroProps) => {
+interface DescentHeroProps {
+  ref?: Ref<DescentHeroHandle>;
+  /** Rendered height of the sticky header above the hero, in px. */
+  headerHeight: number;
+  /** True from PLAY until the field is back on its title screen. */
+  onFlightChange: (inFlight: boolean) => void;
+  /** PLAY was pressed. */
+  onPlay?: () => void;
+}
+
+// The first screen of the page: the DEEP FIELD drift under the name, the
+// actions and PLAY. The page continues below, so the field is told where its
+// title-screen input ends (inputScope) and when it has been scrolled away
+// (setPaused), and the page stops scrolling while the hero is a game.
+const DescentHero = ({ ref, headerHeight, onFlightChange, onPlay }: DescentHeroProps) => {
   const heroRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const handleRef = useRef<DeepFieldHandle | null>(null);
@@ -45,6 +53,8 @@ const DescentHero = ({ headerHeight, onDescend, onFlightChange }: DescentHeroPro
       handle.dispose();
     };
   }, []);
+
+  useImperativeHandle(ref, () => ({ exit: () => handleRef.current?.exit() }), []);
 
   // Pause the field (loop and input) once the hero has scrolled up behind
   // the sticky header: the stage's own off-screen pause only sees the
@@ -81,12 +91,14 @@ const DescentHero = ({ headerHeight, onDescend, onFlightChange }: DescentHeroPro
   const titleOpacity = useTransform(scrollYProgress, [0, 0.7], [1, 0]);
   const titleLift = useTransform(scrollYProgress, [0, 1], [0, reduceMotion ? 0 : -70]);
 
+  // The hero comes back as the exit fades in; its links then queue behind
+  // the rest of the exit (Home), and PLAY turns it around.
   const heroVisible = mode === 'title' || mode === 'disengage';
-  const playVisible = mode === 'title';
 
   return (
     <Box
       ref={heroRef}
+      data-hero
       position="relative"
       overflow="hidden"
       bg="black"
@@ -96,7 +108,7 @@ const DescentHero = ({ headerHeight, onDescend, onFlightChange }: DescentHeroPro
         // the small viewport height keeps the canvas from resizing as a
         // phone's address bar collapses on scroll
         '@supports (height: 100svh)': { height: `calc(100svh - ${headerHeightVar})` },
-        minHeight: '420px',
+        minHeight: '480px',
       }}
     >
       <motion.div style={{ position: 'absolute', inset: 0, opacity: fieldOpacity }}>
@@ -113,120 +125,82 @@ const DescentHero = ({ headerHeight, onDescend, onFlightChange }: DescentHeroPro
           y: titleLift,
         }}
       >
+        {/* `inert` while flying: the faded-out hero takes no clicks or focus. */}
         <Flex
           flex="1"
           direction="column"
-          justify="center"
           userSelect="none"
-          px="34px"
           opacity={heroVisible ? 1 : 0}
           transition="opacity 600ms ease"
+          inert={!heroVisible}
         >
-          <Box maxW="1280px" mx="auto" w="100%">
-            <Flex direction="column" maxW="720px">
-              <Text
-                as="h1"
-                {...mono}
-                fontSize="clamp(34px, 7vw, 72px)"
-                fontWeight="bold"
-                letterSpacing=".14em"
-                lineHeight="1.05"
-                textShadow="0 0 24px rgba(0,0,0,.9)"
-              >
-                GABRIEL
-                <br />
-                ROSSI
-              </Text>
-              <Text
-                {...mono}
-                mt="16px"
-                fontSize={{ base: '11px', md: '13px' }}
-                letterSpacing={{ base: '.24em', md: '.34em' }}
-                lineHeight="1.7"
-                opacity={0.6}
-                textTransform="uppercase"
-              >
-                {currentRole.title}
-              </Text>
-              <Text
-                {...mono}
-                mt="18px"
-                maxW="520px"
-                fontSize={{ base: '14px', md: '16px' }}
-                lineHeight="1.6"
-                opacity={0.85}
-                textShadow="0 0 18px rgba(0,0,0,.9)"
-              >
-                Building AI solutions at {currentRole.organization} and indie games as Hoshi Labs.
-              </Text>
-            </Flex>
-          </Box>
+          <Flex flex="1" minH={0} direction="column" justify="center" px="34px">
+            <Box maxW="1280px" mx="auto" w="100%">
+              <Flex direction="column" maxW="720px">
+                <Text
+                  as="h1"
+                  {...mono}
+                  fontSize="clamp(34px, 7vw, 72px)"
+                  fontWeight="bold"
+                  letterSpacing=".14em"
+                  lineHeight="1.05"
+                  textShadow="0 0 24px rgba(0,0,0,.9)"
+                >
+                  GABRIEL
+                  <br />
+                  ROSSI
+                </Text>
+                <Text
+                  {...mono}
+                  mt="16px"
+                  fontSize={{ base: '11px', md: '13px' }}
+                  letterSpacing={{ base: '.24em', md: '.34em' }}
+                  lineHeight="1.7"
+                  opacity={0.6}
+                >
+                  {kicker.map((part, i) => (
+                    <Box as="span" key={part} whiteSpace="nowrap">
+                      {i > 0 && '· '}
+                      {part}{' '}
+                    </Box>
+                  ))}
+                </Text>
+                <Box mt={{ base: '26px', md: '34px' }}>
+                  <HeroActions
+                    onPlay={() => {
+                      // the game owns the whole first screen: line the hero up first
+                      window.scrollTo(0, 0);
+                      handleRef.current?.play();
+                      onPlay?.();
+                    }}
+                  />
+                </Box>
+              </Flex>
+            </Box>
+          </Flex>
+
+          <Flex justify="center" pb="18px">
+            <Box
+              asChild
+              {...mono}
+              fontSize="11px"
+              letterSpacing=".3em"
+              px="12px"
+              py="6px"
+              textDecoration="none"
+              pointerEvents="auto"
+              opacity={0.6}
+              transition="opacity 0.15s ease"
+              _hover={{ opacity: 1 }}
+              _focusVisible={focusRing}
+            >
+              <RouterLink to={{ pathname: '/', hash: '#about' }} aria-label="Scroll to the about section">
+                SCROLL ↓
+              </RouterLink>
+            </Box>
+          </Flex>
         </Flex>
       </motion.div>
-
-      <Flex
-        position="absolute"
-        bottom="22px"
-        left={0}
-        right={0}
-        direction="column"
-        align="center"
-        gap={{ base: '22px', md: '30px' }}
-        pointerEvents="none"
-        opacity={playVisible ? 1 : 0}
-        transition="opacity 600ms ease"
-      >
-        <Box
-          as="button"
-          onClick={(e) => {
-            e.currentTarget.blur();
-            // the game owns the whole first screen: line the hero up first
-            window.scrollTo(0, 0);
-            handleRef.current?.play();
-          }}
-          pointerEvents={playVisible ? 'auto' : 'none'}
-          tabIndex={playVisible ? 0 : -1}
-          aria-hidden={!playVisible}
-          {...mono}
-          fontSize="15px"
-          fontWeight="bold"
-          letterSpacing="0.3em"
-          px="40px"
-          py="14px"
-          bg="rgba(0,0,0,.55)"
-          borderWidth="1px"
-          borderColor={tone.border}
-          borderRadius={0}
-          cursor="pointer"
-          transition="border-color 0.15s ease, transform 0.15s ease"
-          _hover={{ borderColor: 'white', transform: 'translateY(-2px)' }}
-          _focusVisible={focusRing}
-        >
-          ▶ PLAY
-        </Box>
-
-        <Box
-          as="button"
-          onClick={onDescend}
-          pointerEvents={playVisible ? 'auto' : 'none'}
-          tabIndex={playVisible ? 0 : -1}
-          aria-hidden={!playVisible}
-          aria-label="Scroll to the about section"
-          {...mono}
-          fontSize="11px"
-          letterSpacing=".3em"
-          px="12px"
-          py="6px"
-          bg="transparent"
-          cursor="pointer"
-          opacity={0.6}
-          transition="opacity 0.15s ease"
-          _hover={{ opacity: 1 }}
-          _focusVisible={focusRing}
-        >
-          SCROLL ↓
-        </Box>
-      </Flex>
 
       <Box
         as="button"
@@ -241,7 +215,7 @@ const DescentHero = ({ headerHeight, onDescend, onFlightChange }: DescentHeroPro
         fontFamily={monoFont}
         fontSize="12px"
         letterSpacing="0.25em"
-        color={tone.dim}
+        color={tone.soft}
         bg="transparent"
         pointerEvents={mode === 'play' ? 'auto' : 'none'}
         tabIndex={mode === 'play' ? 0 : -1}

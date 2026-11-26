@@ -2,87 +2,43 @@ import experienceData from 'assets/experience-data.json';
 import postSource from 'assets/npm-library.md?raw';
 import { parseFrontMatter } from 'components/post/frontMatter';
 import { socialLinks } from 'config/site';
+import { projects } from 'data/projects';
+import type { Project } from 'data/projects';
 
 /**
- * Copy and data for the home page. Everything here is either derived from
- * the site's own data (experience JSON, the blog post, socialLinks) or a
- * fact checked against its public source; nothing is invented.
+ * Data for the home page. All of it is read from the site's own sources:
+ * the experience JSON, the blog post, `socialLinks` and the projects page's
+ * data module. The home page keeps no second copy of a fact.
  */
 
-export const sections = [
-  { id: 'about', label: 'ABOUT' },
-  { id: 'work', label: 'SELECTED WORK' },
-  { id: 'experience', label: 'EXPERIENCE' },
-  { id: 'writing', label: 'WRITING' },
-  { id: 'contact', label: 'CONTACT' },
-] as const;
+// ---- hero ----
 
-export type SectionId = (typeof sections)[number]['id'];
+/** Each part stays on one line; narrow screens wrap between parts. */
+export const kicker = ['SOFTWARE ENGINEER', 'GAME DEVELOPER'] as const;
+
+// ---- selected work (data/projects.ts, the projects page's data) ----
+
+/** The projects shown on the home page, in this order. */
+export const SELECTED_WORK = ['hoshi-labs', 'star-survival', 'tactia-pocket', 'game-prototypes'];
+
+const findProject = (slug: string): Project | undefined =>
+  projects.find((project) => project.slug === slug);
+
+/** A slug the data no longer has is skipped, not invented. */
+export const selectedWork: Project[] = SELECTED_WORK.map(findProject).filter(
+  (project): project is Project => project !== undefined,
+);
+
+/** The studio and its released game, for the about section's fact sheet. */
+export const studio = findProject('hoshi-labs');
+export const released = findProject('star-survival');
 
 // ---- experience (src/assets/experience-data.json, newest first) ----
 
 export const roles = experienceData.experiences;
-export const currentRole = roles[0];
 
 /** Roles shown on the home page; the rest live on /experience. */
 export const STRIP_ROLES = 4;
-
-// ---- selected work ----
-
-export interface Project {
-  name: string;
-  tagline: string;
-  description: string;
-  /** Short terminal-style tags: platform, stack. */
-  tags: string[];
-  status: string;
-  href: string;
-  /** Text of the link, naming where it goes. */
-  linkLabel: string;
-}
-
-export const projects: Project[] = [
-  {
-    name: 'HOSHI LABS',
-    tagline: 'one-person indie game studio',
-    description:
-      'The game studio I run in Japan, and the site I built for it: games, studio and contact pages in Japanese and English, with the game pages in Portuguese too.',
-    tags: ['GATSBY', 'REACT', 'TAILWIND'],
-    status: 'LIVE',
-    href: 'https://hoshilabs.jp.net/',
-    linkLabel: 'HOSHILABS.JP.NET',
-  },
-  {
-    name: 'STAR SURVIVAL',
-    tagline: 'roguelike survivor for phones',
-    description:
-      'Move with one finger while your spells fire on their own. Ten spells, twelve tomes, six stages and their bosses. Free on Google Play.',
-    tags: ['ANDROID', 'FREE'],
-    status: 'RELEASED',
-    href: 'https://play.google.com/store/apps/details?id=net.jp.hoshilabs.starsurvival',
-    linkLabel: 'GOOGLE PLAY',
-  },
-  {
-    name: 'TACTIA POCKET',
-    tagline: 'turn-based tactics roguelite',
-    description:
-      'A turn-based roguelite inspired by classic tactics RPGs. Lead a small party of heroes down into a dungeon, one battle at a time, and face the boss waiting on each floor.',
-    tags: ['ANDROID'],
-    status: 'COMING SOON',
-    href: 'https://hoshilabs.jp.net/en/games/tactia-pocket/',
-    linkLabel: 'HOSHILABS.JP.NET',
-  },
-  {
-    name: 'GAME PROTOTYPES',
-    tagline: '20+ browser prototypes on shared kits',
-    description:
-      'A workspace where each prototype is built on reusable kits: a horde survivor, squad tactics, a precision platformer, visual novels, and novels and manga for learning Japanese.',
-    tags: ['BROWSER', 'DESKTOP + MOBILE'],
-    status: 'PROTOTYPES',
-    href: 'https://game-prototypes-omega.vercel.app',
-    linkLabel: 'OPEN THE LAUNCHER',
-  },
-];
 
 // ---- writing (the post rendered at /blog) ----
 
@@ -104,10 +60,3 @@ export const post = {
 // ---- contact (config/site.ts) ----
 
 export const email = socialLinks.email.replace(/^mailto:/, '');
-
-export const contactLinks: Array<{ key: keyof typeof socialLinks; label: string }> = [
-  { key: 'email', label: 'EMAIL' },
-  { key: 'linkedin', label: 'LINKEDIN' },
-  { key: 'github', label: 'GITHUB' },
-  { key: 'twitter', label: 'X' },
-];
