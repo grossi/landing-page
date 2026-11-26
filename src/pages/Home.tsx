@@ -3,6 +3,10 @@ import { Box, Flex, Text } from '@chakra-ui/react';
 import Header from 'components/layout/Header';
 import { createDeepField } from 'components/deepfield/createDeepField';
 import type { DeepFieldHandle, DeepFieldMode } from 'components/deepfield/createDeepField';
+import BuildingStrip from 'components/home/BuildingStrip';
+import HeroActions from 'components/home/HeroActions';
+import { kicker, statement } from 'components/home/content';
+import { useFitDensity } from 'components/home/useFitDensity';
 import { monoFont } from 'config/site';
 
 const mono = {
@@ -12,12 +16,19 @@ const mono = {
 
 // The main page: the shared header on top and the DEEP FIELD wireframe
 // drift filling the rest of the viewport, with the hero layered on top.
-// Overlay content ignores the pointer so the field receives every steer
-// and click; only the PLAY button opts back in.
+// The overlay ignores the pointer so the field receives every steer and
+// click; the action links, PLAY and the "currently building" bar opt back
+// in. They are anchors and buttons, which the field's pointer handler
+// skips, so using them never fires a burn.
 const Home = () => {
   const containerRef = useRef<HTMLDivElement>(null);
   const handleRef = useRef<DeepFieldHandle | null>(null);
   const [mode, setMode] = useState<DeepFieldMode>('title');
+  // The page never scrolls, so the hero sheds detail until it fits.
+  const overlayRef = useRef<HTMLDivElement>(null);
+  const slotRef = useRef<HTMLDivElement>(null);
+  const heroRef = useRef<HTMLDivElement>(null);
+  const density = useFitDensity(overlayRef, slotRef, heroRef);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -33,80 +44,79 @@ const Home = () => {
   const playVisible = mode === 'title';
 
   return (
-    <Flex direction="column" height="100vh" overflow="hidden" bg="black">
+    <Flex direction="column" height="100dvh" overflow="hidden" bg="black">
       <Header />
 
-      <Box position="relative" flex="1" overflow="hidden">
+      <Box position="relative" flex="1" minH={0} overflow="hidden">
         <Box ref={containerRef} position="absolute" inset={0} />
 
+        {/* `inert` while flying: the faded-out hero takes no clicks or focus. */}
         <Flex
+          ref={overlayRef}
           position="absolute"
           inset={0}
           direction="column"
-          justify="center"
           pointerEvents="none"
           userSelect="none"
-          px="34px"
           opacity={heroVisible ? 1 : 0}
           transition="opacity 600ms ease"
+          inert={!heroVisible}
         >
-          <Box maxW="1280px" mx="auto" w="100%">
-            <Flex direction="column" maxW="720px">
-              <Text
-                as="h1"
-                {...mono}
-                fontSize="clamp(34px, 7vw, 72px)"
-                fontWeight="bold"
-                letterSpacing=".14em"
-                lineHeight="1.05"
-                textShadow="0 0 24px rgba(0,0,0,.9)"
-              >
-                GABRIEL
-                <br />
-                ROSSI
-              </Text>
-              <Text {...mono} mt="14px" fontSize="13px" letterSpacing=".34em" opacity={0.6}>
-                SOFTWARE ENGINEER
-              </Text>
-            </Flex>
-          </Box>
-        </Flex>
+          <Flex ref={slotRef} flex="1" minH={0} direction="column" justify="center" px="34px">
+            <Box maxW="1280px" mx="auto" w="100%">
+              <Flex ref={heroRef} direction="column" maxW="760px">
+                <Text
+                  as="h1"
+                  {...mono}
+                  fontSize="clamp(34px, 7vw, 72px)"
+                  fontWeight="bold"
+                  letterSpacing=".14em"
+                  lineHeight="1.05"
+                  textShadow="0 0 24px rgba(0,0,0,.9)"
+                >
+                  GABRIEL{density >= 4 ? ' ' : <br />}ROSSI
+                </Text>
+                <Text
+                  {...mono}
+                  mt="14px"
+                  fontSize={{ base: '11px', md: '13px' }}
+                  letterSpacing={{ base: '.24em', md: '.34em' }}
+                  opacity={0.6}
+                  display={density >= 4 ? 'none' : 'block'}
+                >
+                  {kicker.map((part, i) => (
+                    <Box as="span" key={part} whiteSpace="nowrap">
+                      {i > 0 && '· '}
+                      {part}{' '}
+                    </Box>
+                  ))}
+                </Text>
+                <Text
+                  {...mono}
+                  mt={density >= 1 ? '12px' : { base: '18px', md: '26px' }}
+                  fontSize={{ base: '13px', md: '15px' }}
+                  lineHeight="1.7"
+                  opacity={0.88}
+                  textShadow="0 0 12px rgba(0,0,0,1), 0 0 4px rgba(0,0,0,1)"
+                >
+                  {statement.map((line) => (
+                    <Box as="span" key={line} display={{ base: 'inline', md: 'block' }}>
+                      {line}{' '}
+                    </Box>
+                  ))}
+                </Text>
+                <Box mt={density >= 1 ? '14px' : { base: '22px', md: '30px' }}>
+                  <HeroActions
+                    playEnabled={playVisible}
+                    onPlay={() => handleRef.current?.play()}
+                    density={density}
+                  />
+                </Box>
+              </Flex>
+            </Box>
+          </Flex>
 
-        <Flex
-          position="absolute"
-          bottom="9vh"
-          left={0}
-          right={0}
-          justify="center"
-          pointerEvents="none"
-          opacity={playVisible ? 1 : 0}
-          transition="opacity 600ms ease"
-        >
-          <Box
-            as="button"
-            onClick={(e) => {
-              e.currentTarget.blur();
-              handleRef.current?.play();
-            }}
-            pointerEvents={playVisible ? 'auto' : 'none'}
-            tabIndex={playVisible ? 0 : -1}
-            aria-hidden={!playVisible}
-            {...mono}
-            fontSize="15px"
-            fontWeight="bold"
-            letterSpacing="0.3em"
-            px="40px"
-            py="14px"
-            bg="rgba(0,0,0,.55)"
-            borderWidth="1px"
-            borderColor="#3f3f46"
-            borderRadius={0}
-            cursor="pointer"
-            transition="border-color 0.15s ease, transform 0.15s ease"
-            _hover={{ borderColor: 'white', transform: 'translateY(-2px)' }}
-          >
-            ▶ PLAY
-          </Box>
+          <BuildingStrip density={density} />
         </Flex>
 
         <Box
