@@ -106,14 +106,14 @@ describe('MERIDIAN page', () => {
     expect(input.stick).toEqual({ x: 0, y: 0 });
     expect(input.keys.ArrowRight).toBe(false);
     game.charge = TUNE.CHARGE;
-    ticks(KEYS_HOLD + 1);
+    ticks(2);
     expect(Math.abs(game.vx)).toBeLessThan(1);
     // The cancelled touch is gone: its late move must not steer.
     touch('pointermove', 1, 400, 500);
     expect(input.stick).toEqual({ x: 0, y: 0 });
   });
 
-  it('steers with the mouse, and lets held keys overrule a parked mouse', () => {
+  it('steers with the mouse, and a mouse left lying off-centre never takes the ship from the keys', () => {
     const { game, input } = open();
     send(window, 'pointerdown', { pointerType: 'mouse', clientX: innerWidth / 2, clientY: innerHeight / 2 });
     send(window, 'pointermove', { pointerType: 'mouse', clientX: innerWidth, clientY: innerHeight / 2 });
@@ -125,9 +125,15 @@ describe('MERIDIAN page', () => {
     ticks(0.6);
     expect(game.vx).toBeLessThan(-60);
     send(window, 'keyup', { code: 'KeyA' });
-    ticks(KEYS_HOLD / 2);
-    expect(Math.abs(game.vx)).toBeLessThan(10); // still the keys' turn: no snap back
-    ticks(KEYS_HOLD);
+    // Keys released: the ship levels out and stays level, however long the mouse lies there.
+    for (const seconds of [1, 3, 5]) {
+      game.charge = TUNE.CHARGE;
+      ticks(seconds);
+      expect(Math.abs(game.vx)).toBeLessThan(1);
+    }
+    // Moving the mouse takes the stick back.
+    send(window, 'pointermove', { pointerType: 'mouse', clientX: innerWidth * 0.9, clientY: innerHeight / 2 });
+    ticks(0.6);
     expect(game.vx).toBeGreaterThan(60);
   });
 
@@ -164,6 +170,10 @@ describe('MERIDIAN page', () => {
     expect(values.get(BEST_KEY)).toBe(String(game.best));
     expect(document.getElementById('flash')!.classList.contains('hit')).toBe(true);
 
+    let announced = 0;
+    const sector = document.getElementById('sector')!;
+    const add = sector.classList.add.bind(sector.classList);
+    sector.classList.add = (...names: string[]) => { if (names.includes('announce')) announced++; add(...names); };
     send(window, 'pointerdown', { pointerType: 'mouse' }); // inside the lock
     ticks(TUNE.LOCK / 2);
     expect(game.state).toBe('over');
@@ -174,6 +184,7 @@ describe('MERIDIAN page', () => {
     expect([hidden('over'), hidden('flight')]).toEqual([true, false]);
     expect(text('score')).toMatch(/^SCORE [0-9]$/);
     expect(document.getElementById('flash')!.classList.contains('hit')).toBe(false);
+    expect(announced).toBe(1); // the retry names its first sector again, though the name is the same
 
     // A lower score does not claim a record.
     const best = game.best;
@@ -250,8 +261,6 @@ describe('MERIDIAN page', () => {
   });
 });
 
-const KEYS_HOLD = 1.2;
-
 describe('shared input stick', () => {
   it('maps the mouse by its offset from the centre, with gain, clamped', () => {
     const input = createInput();
@@ -268,7 +277,7 @@ describe('shared input stick', () => {
     input.dispose();
   });
 
-  it('gives one thumb the stick: a second finger neither moves nor releases it', () => {
+  it('gives one thumb the stick: a second finger cannot move it, and takes it over when the thumb lifts', () => {
     const input = createInput();
     touch('pointerdown', 7, 100, 700);
     touch('pointermove', 7, 128, 672);
@@ -281,6 +290,22 @@ describe('shared input stick', () => {
     touch('pointermove', 7, 100 - 400, 700 + 400);
     expect(input.stick).toEqual({ x: -1, y: 1 });
     touch('pointerup', 7, 0, 0);
+    expect(input.stick).toEqual({ x: 0, y: 0 });
+
+    // Swapping thumbs: the finger still down takes the stick over, centred where it is.
+    touch('pointerdown', 1, 100, 500);
+    touch('pointermove', 1, 156, 500);
+    touch('pointerdown', 2, 300, 500);
+    touch('pointermove', 2, 310, 520);
+    expect(input.stick).toEqual({ x: 1, y: 0 });
+    touch('pointerup', 1, 156, 500);
+    expect(input.stick).toEqual({ x: 0, y: 0 });
+    touch('pointermove', 2, 310 - 28, 520);
+    expect(input.stick).toEqual({ x: -0.5, y: 0 });
+    touch('pointerup', 2, 282, 520);
+    expect(input.stick).toEqual({ x: 0, y: 0 });
+    send(window, 'pointercancel');
+    touch('pointermove', 2, 0, 0); // a cancelled touch is forgotten
     expect(input.stick).toEqual({ x: 0, y: 0 });
     input.dispose();
     touch('pointerdown', 9, 100, 100);

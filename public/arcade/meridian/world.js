@@ -39,11 +39,14 @@ function noise(x, z) {
   return a + (b - a) * fx + (c - a) * fz + (a - b - c + d) * fx * fz;
 }
 
+/** Pass as the time to read the sea at the top of its swell, whatever the moment. */
+export const HIGH_TIDE = Infinity;
+
 /** Height of each sector's ground at a point of the track, before blending. */
 const FIELD = [
   (x, d) => noise(x / 44, d / 44) * 17 + noise(x / 100 + 40, d / 100) * 11 - 8,
   () => 0,
-  (x, d, t) => Math.sin(x / 21 + t * 1.1) * 1.6 + Math.sin(d / 34 + t * 0.8) * 2.4 +
+  (x, d, t) => (t === HIGH_TIDE ? 4 : Math.sin(x / 21 + t * 1.1) * 1.6 + Math.sin(d / 34 + t * 0.8) * 2.4) +
     noise(x / 50, d / 50) * 2 - 5,
   (x, d) => { const n = noise(x / 26, d / 26); return (n > 0.62 ? (n - 0.62) * 110 : n * 6) - 5; },
 ];
@@ -147,11 +150,17 @@ export function createWorld(random = Math.random) {
     return out;
   }
 
-  /** Highest ground under a gate-sized disc: a gate stands clear of this. */
-  function crestNear(x, d, t) {
+  /**
+   * Highest the ground ever gets within `radius` across the track at `d`: a gate
+   * stands clear of this. The surface is flat between lattice points, so its
+   * highest point over a span is at one of the lattice points around it; the
+   * sea is read at high tide.
+   */
+  function crestNear(x, d, radius) {
     let top = -Infinity;
-    for (let dx = -CX; dx <= CX; dx += CX)
-      for (let dd = -CZ; dd <= CZ; dd += CZ) top = Math.max(top, surface(x + dx, d + dd, t));
+    for (let i = Math.floor((x - radius) / CX); i <= Math.ceil((x + radius) / CX); i++) {
+      for (let j = Math.floor(d / CZ); j <= Math.ceil(d / CZ); j++) top = Math.max(top, raw(i * CX, j * CZ, HIGH_TIDE));
+    }
     return top;
   }
 

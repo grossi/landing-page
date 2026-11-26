@@ -14,6 +14,8 @@ export function createInput({ onPress, pressKeys } = {}) {
     stick: { x: 0, y: 0 }, dispose,
   };
   const listeners = [];
+  // Touches that are down, by pointer id, and the one the stick is anchored to.
+  const touches = new Map();
   let anchor = null;
   function listen(target, type, handler, options) {
     target.addEventListener(type, handler, options);
@@ -26,6 +28,7 @@ export function createInput({ onPress, pressKeys } = {}) {
     input.touchDirection = 0;
     input.stick.x = input.stick.y = 0;
     anchor = null;
+    touches.clear();
   }
   const unit = value => Math.max(-1, Math.min(1, value));
   function move(x, y) {
@@ -44,23 +47,33 @@ export function createInput({ onPress, pressKeys } = {}) {
     if (e.pointerType !== 'touch') {
       input.stick.x = unit(input.pointer.x * MOUSE_GAIN);
       input.stick.y = unit(input.pointer.y * MOUSE_GAIN);
-    } else if (anchor && anchor.id === e.pointerId) {
-      input.stick.x = unit((e.clientX - anchor.x) / STICK_RADIUS);
-      input.stick.y = unit((e.clientY - anchor.y) / STICK_RADIUS);
+    } else if (touches.has(e.pointerId)) {
+      const point = touches.get(e.pointerId);
+      point.x = e.clientX; point.y = e.clientY;
+      if (anchor.id === e.pointerId) {
+        input.stick.x = unit((e.clientX - anchor.x) / STICK_RADIUS);
+        input.stick.y = unit((e.clientY - anchor.y) / STICK_RADIUS);
+      }
     }
   });
   listen(window, 'pointerdown', e => {
     input.pointerDown = true;
-    if (e.pointerType === 'touch' && !anchor) {
-      anchor = { id: e.pointerId, x: e.clientX, y: e.clientY };
-      input.stick.x = input.stick.y = 0;
+    if (e.pointerType === 'touch') {
+      touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (!anchor) {
+        anchor = { id: e.pointerId, x: e.clientX, y: e.clientY };
+        input.stick.x = input.stick.y = 0;
+      }
     }
     onPress?.();
   });
   listen(window, 'pointerup', e => {
     input.pointerDown = false;
+    touches.delete(e.pointerId);
     if (anchor && anchor.id === e.pointerId) {
-      anchor = null;
+      // The stick centres; a finger still down becomes its new centre where it is.
+      const [next] = touches;
+      anchor = next ? { id: next[0], x: next[1].x, y: next[1].y } : null;
       input.stick.x = input.stick.y = 0;
     }
   });

@@ -15,15 +15,17 @@ export const TUNE = {
   /** The assist reads the ground this many seconds ahead, so gentle slopes are followed. */
   ASSIST_AHEAD: 0.12,
   /** A run opens with the title's glide still holding the ship up, fading over this long. */
-  GRACE: 2.5,
+  GRACE: 5,
   /** Touching the ground or a tower, with this much hull around the ship's centre. */
   HIT: 0.6, HULL: 0.9,
   /** LOW: this close to the ground, distance pays LOW_MULT times. */
   LOW: 8, LOW_MULT: 3,
   /** A gate threaded within PASS_R of its centre pays GATE_POINTS × chain. */
   GATE_R: 5.5, PASS_R: 4.8, GATE_POINTS: 100, CHAIN_CAP: 10,
-  /** Charge: full tank, gain per gate, drain per second on lap 1, per lap, cap. */
-  CHARGE: 100, CHARGE_GATE: 16, DRAIN0: 4, DRAIN_LAP: 0.75, DRAIN_MAX: 7,
+  /** Charge: full tank, gain per gate, drain per second on lap 1, per lap, cap.
+   *  DRAIN_MAX × GATE_GAP_MAX × SEA_GAP must exceed CHARGE_GATE: at the caps even
+   *  the sea's close gates lose charge, so no run can be flown forever. */
+  CHARGE: 100, CHARGE_GATE: 16, DRAIN0: 4, DRAIN_LAP: 0.75, DRAIN_MAX: 9,
   /** Seconds of flight between gates on lap 1, per lap, cap; the sea packs them. */
   GATE_GAP: 2.4, GATE_GAP_LAP: 0.2, GATE_GAP_MAX: 3.2, SEA_GAP: 0.6,
   /** Seconds after a run ends during which a press is ignored. */
@@ -35,10 +37,12 @@ export const TUNE = {
 };
 
 export const BEST_KEY = 'meridian.best';
-/** Gates are placed out to GATE_AHEAD, never closer together than GATE_MIN or farther than GATE_MAX. */
-const GATE_AHEAD = 440, GATE_MIN = 80, GATE_MAX = 300;
-/** How far into the ranges the title glide goes before its origin moves up. */
-const GLIDE_SPAN = SPAN - BLEND - 760;
+/** Gates are placed out to GATE_AHEAD, and never closer together than GATE_MIN.
+ *  There is no upper limit: their spacing is a time, so it grows with speed. */
+const GATE_AHEAD = 440, GATE_MIN = 80;
+/** How far into the ranges the title glide goes before its origin moves up:
+ *  short of the fade into the city by everything placed ahead of the glide. */
+const GLIDE_SPAN = SPAN - BLEND - GATE_AHEAD - TUNE.GLIDE_SPEED * TUNE.GATE_GAP_MAX - 150;
 const clamp = (value, low, high) => Math.max(low, Math.min(high, value));
 
 /**
@@ -133,10 +137,9 @@ export function createGame({ random = Math.random, storage = null } = {}) {
   function glide(h) {
     game.time += h;
     game.dist += TUNE.GLIDE_SPEED * h;
-    // Stay in the open ranges. Ground is drawn and gates are placed up to
-    // GATE_AHEAD + GATE_MAX ahead; wrapping at GLIDE_SPAN keeps all of it short
-    // of the fade into the city, so moving the origin (now, or when the run
-    // starts) changes none of it.
+    // Stay in the open ranges. Ground is drawn and gates are placed well ahead;
+    // wrapping at GLIDE_SPAN keeps all of it short of the fade into the city, so
+    // moving the origin (now, or when the run starts) changes none of it.
     if (game.dist - world.origin > GLIDE_SPAN) world.restartAt(world.origin + GLIDE_SPAN - 100);
     const targetX = Math.sin(game.time * 0.3) * 30;
     game.vx = (targetX - game.x) * 1.5;
@@ -156,7 +159,8 @@ export function createGame({ random = Math.random, storage = null } = {}) {
     // Deck assist: the nearer the ground, the slower the ship may sink.
     const floor = Math.max(world.surface(x0, d0, game.time),
       world.surface(x0, d0 + game.speed * TUNE.ASSIST_AHEAD, game.time));
-    const grace = Math.max(0, 1 - game.runTime / TUNE.GRACE);
+    // The opening grace lets go slowly at first: 1 − (t / GRACE)².
+    const grace = Math.max(0, 1 - (game.runTime / TUNE.GRACE) ** 2);
     const skim = TUNE.SKIM + (TUNE.GLIDE_HEIGHT - TUNE.SKIM) * grace;
     game.vy = Math.max(game.vy,
       Math.min(-(y0 - floor - skim) * TUNE.ASSIST, TUNE.ASSIST_CLIMB + grace * TUNE.VY));
@@ -216,7 +220,7 @@ export function createGame({ random = Math.random, storage = null } = {}) {
       const sea = world.sectorAt(from).index === SEA;
       const seconds = Math.min(TUNE.GATE_GAP_MAX, TUNE.GATE_GAP + TUNE.GATE_GAP_LAP * (lap - 1)) *
         (sea ? TUNE.SEA_GAP : 1);
-      lastGate = placeGate(from + clamp(game.speed * seconds, GATE_MIN, GATE_MAX));
+      lastGate = placeGate(from + Math.max(GATE_MIN, game.speed * seconds));
       from = lastGate.d;
     }
   }
@@ -233,22 +237,24 @@ export function createGame({ random = Math.random, storage = null } = {}) {
       : null;
     if (row && Math.abs(row.d - d) <= ROW_D / 2) {
       d = row.d; x = laneX(row.corridor); y = 6 + random() * 2;
-    } else if (row && info.blend === 0) {
-      x = laneX(row.corridor); y = TUNE.GATE_R + 0.8 + random() * 1.5;
-    } else if (info.index === SEA && info.blend === 0) {
-      // Over the water: a slalom, clear of the tallest swell.
-      seaSide = -seaSide;
-      x = clamp(previous + seaSide * (22 + random() * 24), -limit, limit);
-      y = 6.5;
     } else {
-      // Over ground: the lowest of a few spots within reach of the last gate.
-      let crest = Infinity;
-      for (let i = 0; i < 6; i++) {
-        const candidate = clamp(previous + (random() * 2 - 1) * 46, -limit, limit);
-        const top = world.crestNear(candidate, d, game.time);
-        if (top < crest) { crest = top; x = candidate; }
+      if (row && info.blend === 0) {
+        x = laneX(row.corridor);
+      } else if (info.index === SEA && info.blend === 0) {
+        // Over the water: a slalom.
+        seaSide = -seaSide;
+        x = clamp(previous + seaSide * (22 + random() * 24), -limit, limit);
+      } else {
+        // Over ground: the lowest of a few spots within reach of the last gate.
+        let crest = Infinity;
+        for (let i = 0; i < 6; i++) {
+          const candidate = clamp(previous + (random() * 2 - 1) * 46, -limit, limit);
+          const top = world.crestNear(candidate, d, TUNE.GATE_R);
+          if (top < crest) { crest = top; x = candidate; }
+        }
       }
-      y = crest + TUNE.GATE_R + 0.8 + random() * 1.5 + (world.animated(d) ? 3 : 0);
+      // The whole ring stands above the highest the ground under it ever gets.
+      y = world.crestNear(x, d, TUNE.GATE_R) + TUNE.GATE_R + 0.8 + random() * 1.5;
     }
     const gate = { id: gateId++, d, x, y, state: 0, at: 0 };
     game.gates.push(gate);

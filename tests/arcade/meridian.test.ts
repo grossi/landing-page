@@ -46,6 +46,19 @@ const gateAt = (game: ReturnType<typeof createGame>, ahead: number, x = game.x, 
   return gate;
 };
 
+/** Least height of a gate's ring above the drawn surface, around the ring and through the swell. */
+function ringClearance(game: ReturnType<typeof createGame>, gate: { x: number, y: number, d: number }) {
+  let least = Infinity;
+  for (let t = 0; t < 12; t += 0.25) {
+    for (let k = 0; k < 64; k++) {
+      const angle = k / 64 * Math.PI * 2;
+      const x = gate.x + Math.cos(angle) * TUNE.GATE_R;
+      least = Math.min(least, gate.y + Math.sin(angle) * TUNE.GATE_R - game.world.surface(x, gate.d, t));
+    }
+  }
+  return least;
+}
+
 describe('a run from start to game over to retry', () => {
   it('glides on the title screen without ever ending', () => {
     const game = createGame({ random: mulberry32(4) });
@@ -104,16 +117,21 @@ describe('a run from start to game over to retry', () => {
       game.press();
       for (const gate of ahead) {
         expect(game.world.sectorAt(gate.d)).toMatchObject({ index: 0, blend: 0 });
-        expect(gate.y - TUNE.GATE_R, `after ${seconds} s`).toBeGreaterThan(game.world.crestNear(gate.x, gate.d, 0));
+        expect(ringClearance(game, gate), `after ${seconds} s`).toBeGreaterThan(0.5);
       }
     }
   });
 
-  it('opens with a grace that carries a hands-off ship over the first ridge', () => {
-    for (let seed = 1; seed <= 20; seed++) {
-      const game = running(seed);
-      fly(game, TUNE.GRACE, CENTRE);
-      expect(game.state, `seed ${seed}`).toBe('play');
+  it('opens with a grace: no run ends in its first seconds, hands off or diving', () => {
+    // "FLY LOW" invites a dive from the first frame; that must not be a trap.
+    for (let seed = 1; seed <= 60; seed++) {
+      for (const stick of [CENTRE, DOWN, { x: 0.3, y: 1 }]) {
+        const game = createGame({ random: mulberry32(seed) });
+        for (let i = 0; i < 5 + (seed % 7) * 40; i++) game.step(1 / 60, CENTRE); // any moment of the title glide
+        game.press();
+        fly(game, 4.5, stick);
+        expect(game.state, `seed ${seed}, stick ${stick.y}`).toBe('play');
+      }
     }
   });
 });
@@ -230,6 +248,28 @@ describe('charge and escalation', () => {
         expect(game.runTime).toBeLessThan(45);
       }
     }
+  });
+
+  it('ends even a run that threads every gate: the charge cannot be held forever', () => {
+    // At the ceiling nothing can be hit. Credit every gate as it passes, as a
+    // perfect pilot would earn it, and the drain must still win in the end.
+    for (const seed of [3, 4, 5]) {
+      const game = running(seed);
+      const credited = new Set<number>();
+      for (let i = 0; i < 60 * 30 * 30 && game.state === 'play'; i++) {
+        game.step(1 / 30, UP);
+        for (const gate of game.gates) {
+          if (gate.state === 0 || credited.has(gate.id)) continue;
+          credited.add(gate.id);
+          if (game.state === 'play') game.charge = Math.min(TUNE.CHARGE, game.charge + TUNE.CHARGE_GATE);
+        }
+      }
+      expect(game, `seed ${seed}`).toMatchObject({ state: 'over', cause: 'SIGNAL LOST' });
+      expect(game.lap).toBeGreaterThan(4); // not before the late laps: gates do sustain a good run
+      expect(game.lap).toBeLessThan(12);
+    }
+    // The invariant behind it: at the caps, even the sea's close gates lose charge.
+    expect(TUNE.DRAIN_MAX * TUNE.GATE_GAP_MAX * TUNE.SEA_GAP).toBeGreaterThan(TUNE.CHARGE_GATE);
   });
 
   it('raises the speed cap and the drain each lap, up to their limits', () => {
@@ -388,10 +428,7 @@ describe('the world', () => {
           expect(Math.abs(gate.x)).toBeLessThanOrEqual(HALF - 12);
           expect(gate.y).toBeLessThan(TUNE.CEILING);
           // The whole ring is above the ground it stands on, through a full swell.
-          for (let t = 0; t < 8; t += 0.5) {
-            expect(gate.y - TUNE.GATE_R, `${SECTORS[info.index]} at ${gate.d}`)
-              .toBeGreaterThan(game.world.crestNear(gate.x, gate.d, t));
-          }
+          expect(ringClearance(game, gate), `${SECTORS[info.index]} at ${gate.d}`).toBeGreaterThan(0.5);
           if (info.index === CITY && info.blend === 0) {
             // In the city the gates mark the way through: each stands on the free
             // lane of the nearest row, also just before the first and after the last.
@@ -434,11 +471,19 @@ describe('the view', () => {
     const terrain = view.scene.children.find((child: any) => child.isMesh && child.material.wireframe) as any;
     /** Largest gap between the drawn grid and the surface the ship collides with. */
     const terrainError = () => {
-      const position = terrain.geometry.attributes.position;
+      const position = terrain.geometry.attributes.position, index = terrain.geometry.index;
+      const surface = (x: number, z: number) => game.world.surface(x, game.dist - (terrain.position.z + z), game.time);
       let error = 0;
       for (let i = 0; i < position.count; i++) {
-        const d = game.dist - (terrain.position.z + position.getZ(i));
-        error = Math.max(error, Math.abs(position.getY(i) - game.world.surface(position.getX(i), d, game.time)));
+        error = Math.max(error, Math.abs(position.getY(i) - surface(position.getX(i), position.getZ(i))));
+      }
+      // Inside the drawn triangles too: the cells must be split on the collision surface's diagonal.
+      for (let face = 0; face < index.count; face += 3 * 7) {
+        const [a, b, c] = [0, 1, 2].map(k => index.getX(face + k));
+        for (const [wa, wb, wc] of [[1 / 3, 1 / 3, 1 / 3], [0.45, 0.45, 0.1], [0.1, 0.45, 0.45], [0.45, 0.1, 0.45]]) {
+          const at = (get: 'getX' | 'getY' | 'getZ') => position[get](a) * wa + position[get](b) * wb + position[get](c) * wc;
+          error = Math.max(error, Math.abs(at('getY') - surface(at('getX'), at('getZ'))));
+        }
       }
       return error;
     };

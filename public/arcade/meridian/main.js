@@ -3,8 +3,6 @@ import { createInput, startLoop, setText } from '../shared/runtime.js';
 import { TUNE, createGame, sectorName } from './game.js';
 import { createView } from './view.js';
 
-/** Seconds the pointer is ignored after a steering key, so a parked mouse cannot fight the keys. */
-const KEYS_HOLD = 1.2;
 const CHARGE_CELLS = 20;
 
 function safeStorage() {
@@ -36,15 +34,25 @@ export function mount({ THREE, createShipBody, storage = safeStorage(), random =
 
   const input = createInput({ onPress: () => { game.press(); } });
   const stick = { x: 0, y: 0 };
-  let keysHold = 0;
+  // The stick belongs to whoever acted last. Once a steering key is pressed the
+  // keys keep it, released or not, until the pointer moves again: a mouse left
+  // lying off-centre must not take the ship from a keyboard player. `parked` is
+  // where the pointer was then (its position, not the stick, which is clamped).
+  let keysSteer = false;
+  const parked = { x: 0, y: 0 };
 
-  function readStick(dt) {
+  function readStick() {
     const { keys } = input;
     const kx = (keys.ArrowRight || keys.KeyD ? 1 : 0) - (keys.ArrowLeft || keys.KeyA ? 1 : 0);
     const ky = (keys.ArrowDown || keys.KeyS ? 1 : 0) - (keys.ArrowUp || keys.KeyW ? 1 : 0);
-    keysHold = kx || ky ? KEYS_HOLD : Math.max(0, keysHold - dt);
-    stick.x = keysHold > 0 ? kx : input.stick.x;
-    stick.y = keysHold > 0 ? ky : input.stick.y;
+    if (kx || ky) {
+      keysSteer = true;
+      parked.x = input.pointer.x; parked.y = input.pointer.y;
+    } else if (keysSteer && (input.pointer.x !== parked.x || input.pointer.y !== parked.y)) {
+      keysSteer = false;
+    }
+    stick.x = keysSteer ? kx : input.stick.x;
+    stick.y = keysSteer ? ky : input.stick.y;
     return stick;
   }
 
@@ -53,6 +61,7 @@ export function mount({ THREE, createShipBody, storage = safeStorage(), random =
     if (state === shown) return;
     shown = state;
     hudClock = 1; // a new run must not show the last run's score, even for a frame
+    if (state === 'play') sector = ''; // and announces its first sector again
     hud.menu.classList.toggle('hidden', state !== 'menu');
     hud.over.classList.toggle('hidden', state !== 'over');
     hud.flight.classList.toggle('hidden', state === 'menu');
@@ -91,7 +100,7 @@ export function mount({ THREE, createShipBody, storage = safeStorage(), random =
   }
 
   function tick(dt) {
-    game.step(dt, readStick(dt));
+    game.step(dt, readStick());
     view.render(renderer, dt);
     paint(dt);
   }
