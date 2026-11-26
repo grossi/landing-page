@@ -102,6 +102,16 @@ export function createFlightInput(container: HTMLElement, options: FlightInputOp
     touchSteers = false;
   };
 
+  const listeners = createListenerGroup();
+  // On blur the key tracker clears its map before it calls `release`, which
+  // would then find nothing held to suppress. This listener is registered
+  // first and notes what was down, so a key still held when the window
+  // comes back does not steer or burn on its auto-repeat either.
+  listeners.add(window, 'blur', () => {
+    for (const code in keys) {
+      if (keys[code]) suppressed.add(code);
+    }
+  });
   // blur clears the key map inside the tracker; the rest is dropped here
   const keyTracker = createKeyTracker(window, release);
   const { keys } = keyTracker;
@@ -120,6 +130,9 @@ export function createFlightInput(container: HTMLElement, options: FlightInputOp
   };
 
   const onPointerDown = (e: PointerEvent) => {
+    // Only the primary button plays. A right-click opens the browser's menu,
+    // which takes the matching button-up: a burn begun there would never end.
+    if (e.pointerType !== 'touch' && e.button !== 0) return;
     const spent = onPress?.() ?? false;
     if (e.pointerType !== 'touch') {
       if (!spent) mouseDown = true;
@@ -197,18 +210,25 @@ export function createFlightInput(container: HTMLElement, options: FlightInputOp
     suppressed.delete(e.code);
   };
 
+  // Ctrl-click on a Mac is a primary press that opens the menu all the same:
+  // the menu ends the mouse burn. (Thumbs are left alone: a thumb resting on
+  // BURN is a long press, and a phone may send this event for one.)
+  const onContextMenu = () => {
+    mouseDown = false;
+  };
+
   const onVisibilityChange = () => {
     if (document.hidden) release();
   };
 
   // registered after the key tracker's own keydown, so a press that starts a
   // run (and releases everything) also drops the key that made it
-  const listeners = createListenerGroup();
   listeners.add(window, 'keydown', onKeyDown);
   listeners.add(window, 'keyup', onKeyUp);
   listeners.add(container, 'pointerdown', onPointerDown);
   listeners.add(container, 'pointermove', onPointerMove);
   listeners.add(window, 'pointerup', onPointerUp);
+  listeners.add(container, 'contextmenu', onContextMenu);
   listeners.add(window, 'pointercancel', release);
   listeners.add(window, 'touchcancel', release);
   listeners.add(document, 'visibilitychange', onVisibilityChange);

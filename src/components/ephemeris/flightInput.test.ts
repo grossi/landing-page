@@ -265,6 +265,35 @@ describe('release', () => {
     expect(read().x).toBe(KEY_STEER);
   });
 
+  it('a key held across a blur or a hidden page does not come back on auto-repeat', () => {
+    const hide = () => {
+      const hidden = vi.spyOn(document, 'hidden', 'get').mockReturnValue(true);
+      document.dispatchEvent(new Event('visibilitychange'));
+      hidden.mockRestore();
+    };
+    for (const leave of [() => window.dispatchEvent(new Event('blur')), hide]) {
+      key('keydown', 'Space');
+      key('keydown', 'KeyD');
+      leave();
+      // back in the window, the keys still physically down
+      for (let i = 0; i < 5; i++) {
+        key('keydown', 'Space', { repeat: true });
+        key('keydown', 'KeyD', { repeat: true });
+      }
+      expect(input.burnHeld()).toBe(false);
+      expect(read()).toEqual({ x: 0, y: 0 });
+      // lifted and pressed again, they count
+      key('keyup', 'Space');
+      key('keyup', 'KeyD');
+      key('keydown', 'Space');
+      key('keydown', 'KeyD');
+      expect(input.burnHeld()).toBe(true);
+      expect(read().x).toBe(KEY_STEER);
+      key('keyup', 'Space');
+      key('keyup', 'KeyD');
+    }
+  });
+
   it('on dispose, and nothing reaches the input afterwards', () => {
     holdEverything();
     input.dispose();
@@ -299,6 +328,26 @@ describe('mouse and keys', () => {
     expect(input.burnHeld()).toBe(true);
     key('keyup', 'Space');
     expect(input.burnHeld()).toBe(false);
+  });
+
+  it('only the primary mouse button burns or presses; the browser\'s menu ends a mouse burn', () => {
+    let presses = 0;
+    input.dispose();
+    input = createFlightInput(container, { burnZone, onPress: () => { presses++; return false; } });
+    for (const button of [1, 2]) {
+      container.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button, pointerId: 9, pointerType: 'mouse' }));
+      expect(input.burnHeld(), `button ${button}`).toBe(false);
+    }
+    expect(presses).toBe(0);
+    // ctrl-click on a Mac: a primary press, then the menu, and no button-up
+    mouse('pointerdown', 200, 400);
+    expect(input.burnHeld()).toBe(true);
+    container.dispatchEvent(new Event('contextmenu', { bubbles: true }));
+    expect(input.burnHeld()).toBe(false);
+    // a thumb held still on BURN is a long press: the same event does not drop it
+    touchDown(330, 690, 2);
+    container.dispatchEvent(new Event('contextmenu', { bubbles: true }));
+    expect(input.burnHeld()).toBe(true);
   });
 
   it('WASD and the arrows steer at the key deflection', () => {
