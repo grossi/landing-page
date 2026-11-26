@@ -7,6 +7,7 @@ import { createStage, type Stage } from 'engine/render/stage';
 import { createGovernorState, qualityForLevel } from 'engine/core/governor';
 import { createResourceTracker } from 'engine/render/resourceTracker';
 import { ICO_LOW } from 'engine/render/assets';
+import { createHud } from './ephemerisHarness';
 
 vi.mock('engine/render/stage', async importOriginal => ({
   ...await importOriginal<typeof import('engine/render/stage')>(), createStage: vi.fn(),
@@ -74,11 +75,11 @@ it('deep field reverses transitions without resetting the camera and settles bac
 
 it('ephemeris survives a distant warp and remount, cleaning its debug handle and owned resources', async () => {
   const container = host();
-  const hud = Object.fromEntries(['body', 'dist', 'speed', 'sector', 'contacts', 'ping'].map(key => [key, document.createElement('div')])) as Parameters<typeof createEphemeris>[1];
+  const hud = createHud();
   const sharedDispose = vi.spyOn(ICO_LOW, 'dispose');
   const geometryDispose = vi.spyOn(THREE.BufferGeometry.prototype, 'dispose');
   const windowDebug = window as unknown as { __EPHEMERIS?: { warp(x: number, y: number, z: number): void; shipAbs(): { x: number; y: number; z: number } } };
-  const dispose = createEphemeris(container, hud);
+  const { dispose } = createEphemeris(container, hud);
   await advance(3);
   expect(hud.sector.textContent).toBeTruthy();
   windowDebug.__EPHEMERIS!.warp(1_000_000, -500_000, 300_000);
@@ -95,5 +96,5 @@ it('ephemeris survives a distant warp and remount, cleaning its debug handle and
   const again = createEphemeris(container, hud);
   await advance(2);
   expect(windowDebug.__EPHEMERIS).toBeDefined();
-  again();
+  again.dispose();
 });

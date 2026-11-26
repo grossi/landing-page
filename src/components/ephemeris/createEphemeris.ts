@@ -1,15 +1,36 @@
 import * as THREE from 'three';
+import { contactKind, isHomeContact } from 'components/ephemeris/contacts';
+import { createFlightInput } from 'components/ephemeris/flightInput';
+import { formatDistance, placeMarker, type MarkerPlacement } from 'components/ephemeris/marker';
 import {
-  burnKeysDown,
+  discoveryRange,
+  canBurn,
+  CONTACT_KINDS,
+  contactValue,
+  createSurvey,
+  formatClock,
+  prefersCandidate,
+  rarestContact,
+  readBests,
+  recordScore,
+  resetSurvey,
+  scanRange,
+  stepSurvey,
+  TUNE,
+  type ContactKind,
+  type RecordedScore,
+  type StorageLike,
+  type SurveyCandidate,
+  type SurveySeed,
+} from 'components/ephemeris/survey';
+import {
   CRUISE_FOV,
   easeUpVector,
   FORWARD,
-  resolveSteer,
   speedResponseRate,
+  WORLD_UP,
 } from 'engine/core/flight';
 import { computeRebase } from 'engine/core/floatingOrigin';
-import { createKeyTracker } from 'engine/core/keyTracker';
-import { createListenerGroup } from 'engine/core/listenerGroup';
 import {
   BOOST_LIMIT_FACTOR,
   diffuseDrag,
@@ -18,7 +39,6 @@ import {
   envelopeCap,
   speedLimit,
 } from 'engine/core/motion';
-import { pointerToNdc } from 'engine/core/pointerNdc';
 import { mulberry32 } from 'engine/core/rng';
 import { KIND_PRESETS } from 'engine/lod/displacement';
 import { createLodManager, type LodBeacon, type LodBodyHandle } from 'engine/lod/lodManager';
@@ -52,10 +72,69 @@ export interface EphemerisHudElements {
   speed: HTMLElement;
   /** Current sector, e.g. "KHEVEL EXPANSE · 2.0.-1". */
   sector: HTMLElement;
-  /** Running discovery tally, e.g. "5 CONTACTS LOGGED". */
+  /** "SCORE 450" in a survey; in FREE DRIFT the discovery tally, e.g. "5 CONTACTS LOGGED". */
   contacts: HTMLElement;
   /** Transient "NEW CONTACT" banner; the sim drives its opacity. */
   ping: HTMLElement;
+  /** Best in this system, e.g. "BEST 1200". */
+  best: HTMLElement;
+  /** Survey clock, e.g. "3:42". */
+  clock: HTMLElement;
+  /** Fuel bar fill; the sim drives its width. */
+  fuelFill: HTMLElement;
+  /** Line under the fuel bar: "FUEL", or what an empty tank means. */
+  fuelLabel: HTMLElement;
+  /** The scan ring's wrapper at screen centre; the sim drives its opacity. */
+  scan: HTMLElement;
+  /** The ring's progress arc: any element whose `stroke-dashoffset` runs 100 (empty) to 0 (full). */
+  scanArc: HTMLElement | SVGElement;
+  /** Line under the ring: what is being scanned, or why it is not filling. */
+  scanLabel: HTMLElement;
+  /** Target marker; the sim drives its transform and opacity. */
+  marker: HTMLElement;
+  /** The marker's glyph: a bracket on the target, an arrow on the edge. */
+  markerGlyph: HTMLElement;
+  /** The marker's kind and distance on two lines, e.g. "PLANET" over "1420 km". */
+  markerLabel: HTMLElement;
+}
+
+/**
+ * - `title`: the world drifts behind the title screen; any press starts a survey.
+ * - `survey`: the timed window.
+ * - `closed`: the window has closed; any press after the lock retries.
+ * - `drift`: FREE DRIFT, the experience as it was before the survey: no
+ *   clock, no fuel, contacts logged on first approach.
+ */
+export type EphemerisPhase = 'title' | 'survey' | 'closed' | 'drift';
+
+/** What the end screen shows. */
+export interface SurveyResult {
+  score: number;
+  /** Contacts scanned in the window. */
+  contacts: number;
+  /** The most valuable contact scanned, e.g. "PULSAR KHEVEL". */
+  rarest: { name: string; kind: string } | null;
+  bests: RecordedScore;
+}
+
+export interface EphemerisOptions {
+  /** The system to fly. Default: a new random one per mount. */
+  seed?: SurveySeed;
+  /** Where bests are kept. Default: none kept. */
+  storage?: StorageLike | null;
+  /** The BURN zone for the second thumb on a phone (see createFlightInput). */
+  burnZone?: HTMLElement | null;
+  /** Phase changes, with the result when a window closes. Not called per frame. */
+  onPhase?: (phase: EphemerisPhase, result: SurveyResult | null) => void;
+}
+
+export interface EphemerisGame {
+  /** Starts a survey (from the same start, every time) or FREE DRIFT (from where the ship is). */
+  start(mode: 'survey' | 'drift'): void;
+  /** Back to the title screen. A survey in flight is abandoned and not scored. */
+  menu(): void;
+  /** Stops the loop, removes listeners and frees all GPU resources. */
+  dispose(): void;
 }
 
 /**
@@ -104,21 +183,33 @@ const BEACON_RANGE = 2;
  */
 const CRUISE_SPEED = 100;
 const BOOST_FACTOR = 40;
-/**
- * First close approach inside this surface distance logs a POI. The cap
- * binds for the sprawling diffuse volumes — nebulae reach 2,940, clusters
- * 2,598, swarms 2,400 — which would otherwise log from most of a cell
- * away; the biggest solid bodies stay under it (rogue 960 → 1,152, home
- * sun 800 → 960), and a future authored giant caps at 1,200 too.
- */
-const discoveryRange = (radius: number) => Math.max(150, Math.min(radius * 1.2, 1200));
 /** The HUD flags "APPROACH" inside this surface distance. */
 const approachRange = (radius: number) => Math.max(60, radius * 0.5);
+/** Points in the home comet's trail (engine/world/sectorContent builds it). */
+const COMET_TRAIL = 70;
+/** The fuel bar is drawn in this many steps, so its width changes a few times a second at most. */
+const FUEL_CELLS = 20;
+/** The clock blinks through its last seconds. */
+const CLOCK_WARN_SECONDS = 20;
+/** The fuel bar blinks under this share of a tank. */
+const FUEL_WARN = 0.25;
+/**
+ * The target marker stays this many CSS pixels inside the game area, so its
+ * two-line label is never cut off and it keeps clear of the control hint.
+ * On a phone the vertical margin grows to clear the BURN zone as well.
+ */
+const MARKER_MARGIN_X = 84;
+const MARKER_MARGIN_Y = 110;
 
 /**
  * Mounts the EPHEMERIS solar-system simulation into `container` and starts
- * its render loop. Returns a dispose function that stops the loop, removes
- * listeners and frees all GPU resources.
+ * its render loop. The world opens drifting behind a title screen; the
+ * returned handle starts a survey or FREE DRIFT and disposes the mount.
+ *
+ * The survey's rules (clock, fuel, scan progress, values, bests) live in
+ * components/ephemeris/survey and know nothing of this file. Here they are
+ * fed from the nearest-body pass: which unscanned body is in range, how
+ * fast the ship is going and whether a burn is firing.
  *
  * Space is truly unbounded: ship physics run in JS doubles as absolute
  * position = floating origin + render-local position, and the whole scene is
@@ -142,7 +233,11 @@ const approachRange = (radius: number) => Math.max(60, radius * 0.5);
  * The sim owns its canvas; HUD text is written into the provided elements so
  * the caller controls layout/styling without re-rendering per frame.
  */
-export function createEphemeris(container: HTMLElement, hud: EphemerisHudElements): () => void {
+export function createEphemeris(
+  container: HTMLElement,
+  hud: EphemerisHudElements,
+  options: EphemerisOptions = {},
+): EphemerisGame {
   // log depth: near 0.5 / far 60,000 spans five distance decades with nested
   // nested LOD + skim-band shells — a linear z-buffer would z-fight them.
   // far covers the beacon-dot shell (BEACON_RANGE sectors on the diagonal).
@@ -162,7 +257,12 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
   });
   const { scene, camera, tracker } = stage;
 
-  const worldSeed = Math.floor(Math.random() * 2 ** 31);
+  // One system per seed: the page passes the UTC day (or `?seed=`), so a
+  // best score is a best in a system that can be flown again.
+  const randomSeed = Math.floor(Math.random() * 2 ** 31);
+  const { seed: worldSeed, label: seedLabel } =
+    options.seed ?? { seed: randomSeed, label: String(randomSeed) };
+  const storage = options.storage ?? null;
 
   // ---- LOD ladder for planets/stars (screen-space rungs, cross-dissolve) ----
   // surfaceHaze: skimming a body fades its far limb; surfaceShells: skim-band
@@ -263,35 +363,41 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
   // spawn just outside the home system: past the outermost planet's deepest
   // moon reach, with the same ~2,400-unit clearance the pre-scale layout
   // had (extent 9,591 → spawn 12,000; at home ×2, extent ~11,037 → ~13,437)
-  ship.position.set(0, 340 * WORLD_SCALE.home, HOME_LAYOUT.maxExtent + 2400);
+  const SPAWN = new THREE.Vector3(0, 340 * WORLD_SCALE.home, HOME_LAYOUT.maxExtent + 2400);
+  // slight spawn tilt: the pitch −0.04 forward direction
+  const SPAWN_HEADING = new THREE.Vector3(0, -Math.sin(0.04), -Math.cos(0.04));
+  ship.position.copy(SPAWN);
   scene.add(ship);
 
-  // ---- input ----
-  // last pointer position in standard GL NDC (y up); resolveSteer flips it
-  // to the screen-down steer sense at the consumption site
-  const pointer = { x: 0, y: 0 };
-  let pointerDown = false;
-  // blur also drops the pointer hold — pointerup never arrives for a button
-  // held across a focus loss, which would leave the ship burning forever
-  const keyTracker = createKeyTracker(window, () => { pointerDown = false; });
-  const { keys } = keyTracker;
+  // ---- phase ----
+  let phase: EphemerisPhase = 'title';
+  // seconds of the end screen's input lock still to run
+  let lockTimer = 0;
+  // Clock of the world's own motion (orbits, the comet). The stage's clock
+  // only ever runs forward; this one goes back to zero with every survey,
+  // so each attempt at a system finds its bodies where the last one did.
+  let worldTime = 0;
+  const survey = createSurvey();
+  let bests = readBests(storage, seedLabel);
 
-  // pointerToNdc mutates the stable `pointer` — pointermove fires every
-  // frame while steering, and a fresh object per event is per-frame garbage
-  const onPointerMove = (e: PointerEvent) => { pointerToNdc(pointer, e.clientX, e.clientY, container); };
-  const onPointerDown = () => { pointerDown = true; };
-  const onPointerUp = () => { pointerDown = false; };
-  const onTouchMove = (e: TouchEvent) => {
-    pointerToNdc(pointer, e.touches[0].clientX, e.touches[0].clientY, container);
-  };
-  const listeners = createListenerGroup();
-  listeners.add(container, 'pointermove', onPointerMove);
-  listeners.add(container, 'pointerdown', onPointerDown);
-  listeners.add(window, 'pointerup', onPointerUp);
-  // a browser-canceled touch (scroll takeover, system gesture) never sends
-  // pointerup — without this the ship burns forever
-  listeners.add(window, 'pointercancel', onPointerUp);
-  listeners.add(container, 'touchmove', onTouchMove, { passive: true });
+  // ---- input (components/ephemeris/flightInput) ----
+  const input = createFlightInput(container, {
+    burnZone: options.burnZone,
+    onPress: () => {
+      if (phase === 'title') {
+        start('survey');
+        return true;
+      }
+      if (phase === 'closed') {
+        // presses during the lock are swallowed: the hand that was burning
+        // when the window closed must not skip the result
+        if (lockTimer <= 0) start('survey');
+        return true;
+      }
+      return false;
+    },
+    onEscape: () => menu(),
+  });
 
   // ---- HUD (write only on change; per-frame DOM writes cause layout churn) ----
   const hudCache = new Map<HTMLElement, string>();
@@ -300,6 +406,21 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
       hudCache.set(el, text);
       el.textContent = text;
     }
+  };
+  // The same rule for the inline styles the sim drives. One cached property
+  // per element (opacity, width, the arc's offset); the marker's transform
+  // changes every frame it is shown and is written directly.
+  const styleCache = new Map<Element, string>();
+  const setHudStyle = (el: HTMLElement | SVGElement, property: string, value: string) => {
+    if (styleCache.get(el) !== value) {
+      styleCache.set(el, value);
+      el.style.setProperty(property, value);
+    }
+  };
+  // blinking is CSS, switched by an attribute the page styles
+  const setHudWarn = (el: HTMLElement, warn: boolean) => {
+    const value = warn ? 'on' : 'off';
+    if (el.dataset.warn !== value) el.dataset.warn = value;
   };
 
   // ---- discovery ----
@@ -311,6 +432,43 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
   // frame are steady garbage, and a 60 Hz distance readout is unreadable
   let hudTimer = 0;
   setHudText(hud.contacts, '0 CONTACTS LOGGED');
+
+  // ---- survey ----
+  // The in-range, unscanned body of this frame's POI pass (the scan), and
+  // the nearest unscanned one whatever its range (the marker).
+  let pickPoi: Poi | null = null;
+  let pickDist = Infinity;
+  const pickCenter = new THREE.Vector3();
+  // Where the body being scanned was a frame ago, in absolute coordinates
+  // (a rebase must not read as motion): its velocity is what the ship's
+  // speed is measured against. Almost every body is at rest next to a
+  // ship; the home comet is not.
+  const scanPrev = new THREE.Vector3();
+  let scanPrevId = '';
+  const bodyVelocity = new THREE.Vector3();
+  // POI kinds, by id: ids are stable across sector rebuilds, and classifying
+  // reads names and decorations, which is not per-frame work
+  const kinds = new Map<string, ContactKind>();
+  const kindOf = (poi: Poi): ContactKind => {
+    const id = poi.id ?? poi.name;
+    let kind = kinds.get(id);
+    if (!kind) {
+      kind = contactKind(poi);
+      kinds.set(id, kind);
+    }
+    return kind;
+  };
+  let targetPoi: Poi | null = null;
+  let targetDist = Infinity;
+  const targetCenter = new THREE.Vector3();
+  // handed to the rules; reused, and refilled only when the body changes
+  const candidate: SurveyCandidate = { id: '', name: '', kind: 'anomaly', home: true };
+  const marker: MarkerPlacement = { x: 0, y: 0, onScreen: false, angle: 0 };
+  // the marker's target as of the last 10 Hz pass: its label is on the HUD
+  let markerDist = Infinity;
+  const cameraInverse = new THREE.Quaternion();
+  const markerPos = new THREE.Vector3();
+  let markerMarginY = MARKER_MARGIN_Y;
 
   // Nearest bodies of the last completed HUD pass (one frame stale —
   // <50 units at max speed). `nearest` spans BOTH kinds and drives the HUD;
@@ -371,12 +529,238 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
       // inside a diffuse volume — the deepest overlapping one sets the drag
       dragFactor = Math.min(dragFactor, diffuseDrag(d, poi.radius));
     }
-    if (d < discoveryRange(poi.radius) && poi.id && !discoveredIds.has(poi.id)) {
-      discoveredIds.add(poi.id);
-      pingTimer = 4;
-      setHudText(hud.ping, `NEW CONTACT · ${poi.name}`);
-      setHudText(hud.contacts, `${discoveredIds.size} CONTACT${discoveredIds.size === 1 ? '' : 'S'} LOGGED`);
+    if (!poi.id) return;
+    if (phase === 'drift') {
+      // FREE DRIFT: the first close approach logs the contact, as it always did
+      if (d < discoveryRange(poi.radius) && !discoveredIds.has(poi.id)) {
+        discoveredIds.add(poi.id);
+        pingTimer = 4;
+        setHudText(hud.ping, `NEW CONTACT · ${poi.name}`);
+        setHudText(hud.contacts, `${discoveredIds.size} CONTACT${discoveredIds.size === 1 ? '' : 'S'} LOGGED`);
+      }
+    } else if (phase === 'survey' && !survey.scannedIds.has(poi.id)) {
+      if (d < targetDist) {
+        targetDist = d;
+        targetPoi = poi;
+        targetCenter.copy(poiPos);
+      }
+      if (
+        d < scanRange(poi.radius, kindOf(poi), poi.solid && (poi.envelope ?? true)) &&
+        prefersCandidate(survey.scanId, pickPoi?.id ?? null, pickDist, poi.id, d)
+      ) {
+        pickPoi = poi;
+        pickDist = d;
+        pickCenter.copy(poiPos);
+      }
     }
+  };
+
+  // ---- phase changes ----
+  const setPhase = (next: EphemerisPhase, result: SurveyResult | null = null) => {
+    phase = next;
+    // whatever was held belongs to the phase that just ended
+    input.release();
+    hudTimer = 0; // the readouts of the new phase show on its first frame
+    pingTimer = 0;
+    hud.ping.style.opacity = '0';
+    setHudStyle(hud.scan, 'opacity', '0');
+    setHudStyle(hud.marker, 'opacity', '0');
+    options.onPhase?.(next, result);
+  };
+
+  // Puts the ship at ABSOLUTE coordinates: re-anchors the floating origin at
+  // the containing cell corner, keeps the ship at the render-local remainder
+  // and shifts every render-local root. With a look target the chase pose is
+  // re-seeded, converged, so there is no swoop.
+  const placeShip = (x: number, y: number, z: number, look?: THREE.Vector3) => {
+    rebase.set(
+      Math.floor(x / SECTOR) * SECTOR - origin.x,
+      Math.floor(y / SECTOR) * SECTOR - origin.y,
+      Math.floor(z / SECTOR) * SECTOR - origin.z,
+    );
+    if (rebase.lengthSq() > 0) {
+      // keep the chase pose — no cross-sector swoop. The rig shifts the
+      // virtual pose (ship.position is rewritten just below anyway); the
+      // real camera shifts too so it stays the pose's mirror mid-warp.
+      rig.applyRebase(rebase);
+      camera.position.sub(rebase);
+      home.group.position.sub(rebase);
+      home.group.updateMatrixWorld(true);
+      field.applyOriginShift(rebase);
+      beaconCellKey = '';
+    }
+    ship.position.set(x - origin.x, y - origin.y, z - origin.z);
+    velocity.set(0, 0, 0);
+    envelopeAnnounced.clear(); // a jump is not an approach — start re-armed
+    if (look) {
+      rig.seed(scratch.copy(look).sub(scratch2.set(x, y, z)).normalize());
+      camera.position.copy(rig.pose.position);
+      camera.quaternion.copy(rig.pose.quaternion);
+    }
+    field.sync(shipAbs.copy(ship.position).add(origin), true);
+  };
+
+  function start(mode: 'survey' | 'drift') {
+    if (disposed) return;
+    discoveredIds.clear();
+    if (mode === 'survey') {
+      // The same start every time: the ship at the spawn point on the spawn
+      // heading, level, at rest, and the world's clock at zero, so the
+      // bodies are where they were on the last attempt.
+      resetSurvey(survey);
+      markerDist = Infinity;
+      worldTime = 0;
+      rig.levelUp.copy(WORLD_UP);
+      rig.shipBody.rotation.z = 0;
+      placeShip(SPAWN.x, SPAWN.y, SPAWN.z, scratch3.copy(SPAWN).add(SPAWN_HEADING));
+      // the orbiters read the clock, so move them now: the first frame's
+      // nearest-body pass must not see the last run's positions
+      // (the comet drags a trail of its last COMET_TRAIL positions; that
+      // many steps lay the whole trail back on the comet, as on a fresh
+      // mount, so no line is drawn across the system to where it was)
+      for (let i = 0; i < COMET_TRAIL; i++) home.update?.(0, 0);
+      field.updateContents(0, 0);
+      scene.updateMatrixWorld(true);
+      bests = readBests(storage, seedLabel);
+      setHudText(hud.contacts, 'SCORE 0');
+      setHudText(hud.best, `BEST ${bests.seed}`);
+    } else {
+      setHudText(hud.contacts, '0 CONTACTS LOGGED');
+    }
+    setPhase(mode);
+  }
+
+  function menu() {
+    if (disposed || phase === 'title') return;
+    setPhase('title');
+  }
+
+  const closeSurvey = () => {
+    const recorded = recordScore(storage, seedLabel, survey.score);
+    bests = recorded;
+    const rarest = rarestContact(survey.scanned);
+    lockTimer = TUNE.RETRY_LOCK_SECONDS;
+    setHudText(hud.clock, formatClock(0));
+    setPhase('closed', {
+      score: survey.score,
+      contacts: survey.scanned.length,
+      rarest: rarest && { name: rarest.name, kind: CONTACT_KINDS[rarest.kind].label },
+      bests: recorded,
+    });
+  };
+
+  // ---- survey frame ----
+  // Hands the rules this frame's facts and puts what they decide on the HUD.
+  const stepSurveyFrame = (dt: number, burning: boolean) => {
+    const pick: Poi | null = pickPoi;
+    if (pick && pick.id !== candidate.id) {
+      candidate.id = pick.id ?? '';
+      candidate.name = pick.name;
+      candidate.kind = kindOf(pick);
+      candidate.home = isHomeContact(candidate.id);
+    }
+    // the body's own velocity, from where it was a frame ago
+    bodyVelocity.set(0, 0, 0);
+    if (pick) {
+      scratch.copy(pickCenter).add(origin);
+      if (scanPrevId === candidate.id && dt > 0) bodyVelocity.copy(scratch).sub(scanPrev).divideScalar(dt);
+      scanPrev.copy(scratch);
+      scanPrevId = candidate.id;
+    } else {
+      scanPrevId = '';
+    }
+    bodyMoving = bodyVelocity.lengthSq() > TUNE.SCAN_MAX_SPEED ** 2;
+    const logged = stepSurvey(survey, dt, {
+      burning,
+      speed: scratch.copy(velocity).sub(bodyVelocity).length(),
+      candidate: pick ? candidate : null,
+    });
+    if (logged) {
+      pingTimer = 4;
+      setHudText(hud.ping, `LOGGED · ${logged.name} · ${CONTACT_KINDS[logged.kind].label} +${logged.value}`);
+      setHudText(hud.contacts, `SCORE ${survey.score}`);
+      // the body just logged is still this frame's marker target
+      if (targetPoi === pick) targetPoi = null;
+    }
+    if (survey.closed) {
+      closeSurvey();
+      return;
+    }
+    // the ring: shown while a body is in range, filling at scan speed
+    if (survey.scanId) {
+      setHudStyle(hud.scan, 'opacity', '1');
+      setHudStyle(hud.scanArc, 'stroke-dashoffset', (100 - survey.scanProgress * 100).toFixed(1));
+      setHudText(
+        hud.scanLabel,
+        survey.tooFast
+          ? bodyMoving
+            ? 'TOO FAST · KEEP PACE WITH IT'
+            : `TOO FAST · SLOW BELOW ${TUNE.SCAN_MAX_SPEED} km/s`
+          : `SCANNING · ${candidate.name} · +${contactValue(candidate.kind, candidate.home)}`,
+      );
+    } else {
+      setHudStyle(hud.scan, 'opacity', '0');
+    }
+  };
+
+  // The 10 Hz readouts of a survey: clock, fuel and what the marker says.
+  const writeSurveyReadouts = () => {
+    setHudText(hud.clock, formatClock(survey.timeLeft));
+    setHudWarn(hud.clock, survey.timeLeft <= CLOCK_WARN_SECONDS);
+    const cells = Math.ceil(survey.fuel * FUEL_CELLS - 1e-9);
+    setHudStyle(hud.fuelFill, 'width', `${(cells / FUEL_CELLS) * 100}%`);
+    setHudText(hud.fuelLabel, survey.fuel > 0 ? 'FUEL' : 'FUEL OUT · SCAN TO REFUEL');
+    setHudWarn(hud.fuelLabel, survey.fuel < FUEL_WARN);
+
+    // keep the marker above the BURN zone while that is on screen
+    const zone = options.burnZone?.getBoundingClientRect();
+    markerMarginY = Math.max(
+      MARKER_MARGIN_Y,
+      zone && zone.height > 0 ? container.getBoundingClientRect().bottom - zone.top + 28 : 0,
+    );
+
+    // what the marker says: the nearest unscanned body in the streamed
+    // window (27 sectors around the ship, so there is always one)
+    const target: Poi | null = targetPoi;
+    markerDist = target ? targetDist : Infinity;
+    if (target) {
+      setHudText(hud.markerLabel, `${CONTACT_KINDS[kindOf(target)].label}\n${formatDistance(targetDist)}`);
+    }
+  };
+
+  // Per frame: where the marker sits. Bodies orbit and the camera turns,
+  // so the position is this frame's; only the label waits for the 10 Hz pass.
+  const drawMarker = () => {
+    // nothing to point at, or the target is the body under the scan ring,
+    // which already names it at screen centre
+    const target: Poi | null = targetPoi;
+    if (!target || markerDist === Infinity || target.id === survey.scanId) {
+      setHudStyle(hud.marker, 'opacity', '0');
+      return;
+    }
+    markerPos
+      .copy(targetCenter)
+      .sub(camera.position)
+      .applyQuaternion(cameraInverse.copy(camera.quaternion).invert());
+    const width = container.clientWidth;
+    const height = container.clientHeight;
+    placeMarker(
+      marker,
+      markerPos.x,
+      markerPos.y,
+      markerPos.z,
+      Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2),
+      width / Math.max(1, height),
+      Math.max(0.1, 1 - (2 * MARKER_MARGIN_X) / Math.max(1, width)),
+      Math.max(0.1, 1 - (2 * markerMarginY) / Math.max(1, height)),
+    );
+    setHudStyle(hud.marker, 'opacity', '1');
+    hud.marker.style.transform =
+      `translate(${((marker.x * 0.5 + 0.5) * width).toFixed(1)}px, ${((0.5 - marker.y * 0.5) * height).toFixed(1)}px)`;
+    // a bracket on the target itself, an arrow toward it on the edge
+    // (CSS rotation is clockwise and screen y runs down: hence the minus)
+    setHudText(hud.markerGlyph, marker.onScreen ? '◇' : '▶');
+    hud.markerGlyph.style.transform = marker.onScreen ? '' : `rotate(${(-marker.angle).toFixed(3)}rad)`;
   };
 
   // ---- simulation loop ----
@@ -384,27 +768,41 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
   const steer = { x: 0, y: 0 };
   const forward = new THREE.Vector3();
   const scratch = new THREE.Vector3();
+  const scratch2 = new THREE.Vector3();
+  const scratch3 = new THREE.Vector3();
   const shipAbs = new THREE.Vector3();
+  let disposed = false;
+  // the body being scanned is itself moving too fast to scan from rest
+  let bodyMoving = false;
+  // the burn that fired last frame, for the debug handle
+  let lastBoost = false;
   const rebase = new THREE.Vector3();
   // floor scratch: the radial direction in the body's local frame
   const floorDir = new THREE.Vector3();
   const floorQuat = new THREE.Quaternion();
 
   // start the camera in the chase pose — at the new world scale a swoop-in
-  // from the scene origin would cross the whole home system. Slight spawn
-  // tilt: seed with the pitch −0.04 forward direction.
-  rig.seed(scratch.set(0, -Math.sin(0.04), -Math.cos(0.04)));
+  // from the scene origin would cross the whole home system
+  rig.seed(SPAWN_HEADING);
   camera.position.copy(rig.pose.position);
   camera.quaternion.copy(rig.pose.quaternion);
 
   field.sync(shipAbs.copy(ship.position).add(origin), true);
 
-  stage.start((dt, t) => {
-    // steering — resolveSteer also clamps to ±1, which the raw pointer read
-    // never did: a captured pointer dragged past the canvas edge used to
-    // command super-unit deflection
-    resolveSteer(steer, pointer.x, pointer.y, keys);
-    const boost = pointerDown || burnKeysDown(keys);
+  stage.start((dt) => {
+    worldTime += dt;
+    if (lockTimer > 0) lockTimer -= dt;
+    // Behind the title and the end screen the ship holds its heading at
+    // cruise: the world keeps moving, and no hand is on the controls.
+    const flying = phase === 'survey' || phase === 'drift';
+    if (flying) {
+      input.readSteer(steer);
+    } else {
+      steer.x = steer.y = 0;
+    }
+    // an empty tank cruises until the next scan refuels it
+    const boost = flying && input.burnHeld() && (phase === 'drift' || canBurn(survey));
+    lastBoost = boost;
     rig.steer(steer.x, steer.y, dt);
 
     // distance-proportional speed law: time-to-contact stays roughly
@@ -449,10 +847,10 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
     }
 
     // world updates
-    home.update?.(dt, t);
+    home.update?.(dt, worldTime);
     field.sync(shipAbs.copy(ship.position).add(origin));
     refreshBeacons();
-    field.updateContents(dt, t);
+    field.updateContents(dt, worldTime);
 
     // adaptive quality: under sustained load the governor sheds dust and
     // LOD rungs alongside pixels
@@ -476,8 +874,15 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
     nearestSolid.lod = null as Poi['lod'] | null;
     nearestSolid.anchor = null as THREE.Object3D | null;
     dragFactor = 1;
+    pickPoi = null;
+    pickDist = Infinity;
+    targetPoi = null;
+    targetDist = Infinity;
     for (const poi of home.pois) considerPoi(poi);
     field.forEachPoi(considerPoi);
+
+    // the survey: one step of the rules, fed from the pass above
+    if (phase === 'survey') stepSurveyFrame(dt, boost);
 
     // surface-horizon leveling: inside an enveloped body's ring-cue band the
     // roll leveler's reference up eases onto the local surface normal, so a
@@ -523,12 +928,8 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
         else envelopeAnnounced.set(id, Infinity);
       }
       setHudText(hud.body, nearest.name);
-      const surface = Math.max(0, nearest.dist);
       const approach = nearest.dist < approachRange(nearest.radius) ? ' · APPROACH' : '';
-      setHudText(
-        hud.dist,
-        surface >= 10000 ? `${(surface / 1000).toFixed(2)} Mm${approach}` : `${Math.floor(surface)} km${approach}`,
-      );
+      setHudText(hud.dist, `${formatDistance(nearest.dist)}${approach}`);
       setHudText(hud.speed, `${Math.floor(velocity.length())} km/s`);
       const cell = field.currentCell();
       setHudText(
@@ -537,6 +938,7 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
           ? 'HOME SYSTEM'
           : `${cell.content ? `${cell.content.name} · ` : ''}${cell.x}.${cell.y}.${cell.z}`,
       );
+      if (phase === 'survey') writeSurveyReadouts();
     }
 
     // terrain-following soft altitude floor: probing below FLOOR_PROBE_RADII
@@ -589,6 +991,9 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
       camera.updateProjectionMatrix();
     }
 
+    // the marker rides the settled camera, so it never trails its target
+    if (phase === 'survey') drawMarker();
+
     // LOD after the camera settles: rung selection, dissolves, budgeted jobs
     lod.update(camera, container.clientHeight, dt);
   });
@@ -598,49 +1003,50 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
     /** Teleport to ABSOLUTE coordinates (the origin re-anchors under you). */
     warp: (x: number, y: number, z: number, lookX?: number, lookY?: number, lookZ?: number) => void;
     /** POIs of the home system + active sectors, in absolute coordinates. */
-    pois: () => Array<{ name: string; x: number; y: number; z: number; radius: number }>;
+    pois: () => Array<{ name: string; x: number; y: number; z: number; radius: number; id: string; kind: ContactKind; solid: boolean; envelope: boolean }>;
+    /**
+     * The game as a player sees it, for scripted play: the phase, the
+     * survey's numbers, the speed, and the marker (NDC, y up) with its
+     * target's distance.
+     */
+    state: () => {
+      phase: EphemerisPhase;
+      timeLeft: number;
+      fuel: number;
+      score: number;
+      scanned: string[];
+      scanId: string | null;
+      scanProgress: number;
+      tooFast: boolean;
+      speed: number;
+      burning: boolean;
+      marker: { x: number; y: number; onScreen: boolean; dist: number } | null;
+    };
     /** Current floating-origin offset (absolute doubles). */
     origin: () => { x: number; y: number; z: number };
     /** The ship's absolute position (origin + render-local). */
     shipAbs: () => { x: number; y: number; z: number };
-    /** Camera attitude + the roll leveler's current reference up. */
+    /** Camera attitude and lens + the roll leveler's current reference up. */
     attitude: () => {
       quaternion: { x: number; y: number; z: number; w: number };
       levelUp: { x: number; y: number; z: number };
+      fov: number;
+      aspect: number;
     };
   }
   const debugHandle: EphemerisDebug = {
     warp: (x, y, z, lookX, lookY, lookZ) => {
-      // re-anchor the origin at the containing cell corner, keep the ship at
-      // the render-local remainder, and shift every render-local root
-      rebase.set(
-        Math.floor(x / SECTOR) * SECTOR - origin.x,
-        Math.floor(y / SECTOR) * SECTOR - origin.y,
-        Math.floor(z / SECTOR) * SECTOR - origin.z,
+      placeShip(
+        x,
+        y,
+        z,
+        lookX !== undefined && lookY !== undefined && lookZ !== undefined
+          ? scratch3.set(lookX, lookY, lookZ)
+          : undefined,
       );
-      if (rebase.lengthSq() > 0) {
-        // keep the chase pose — no cross-sector swoop. The rig shifts the
-        // virtual pose (ship.position is rewritten just below anyway); the
-        // real camera shifts too so it stays the pose's mirror mid-warp.
-        rig.applyRebase(rebase);
-        camera.position.sub(rebase);
-        home.group.position.sub(rebase);
-        home.group.updateMatrixWorld(true);
-        field.applyOriginShift(rebase);
-        beaconCellKey = '';
-      }
-      ship.position.set(x - origin.x, y - origin.y, z - origin.z);
-      velocity.set(0, 0, 0);
-      envelopeAnnounced.clear(); // a warp is not an approach — start re-armed
-      if (lookX !== undefined && lookY !== undefined && lookZ !== undefined) {
-        rig.seed(scratch.set(lookX - x, lookY - y, lookZ - z).normalize());
-        camera.position.copy(rig.pose.position);
-        camera.quaternion.copy(rig.pose.quaternion);
-      }
-      field.sync(shipAbs.copy(ship.position).add(origin), true);
     },
     pois: () => {
-      const all: Array<{ name: string; x: number; y: number; z: number; radius: number }> = [];
+      const all: ReturnType<EphemerisDebug['pois']> = [];
       const collect = (poi: Poi) => {
         poi.object.getWorldPosition(poiPos);
         all.push({
@@ -649,6 +1055,10 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
           y: poiPos.y + origin.y,
           z: poiPos.z + origin.z,
           radius: poi.radius,
+          id: poi.id ?? '',
+          kind: kindOf(poi),
+          solid: poi.solid,
+          envelope: poi.solid && (poi.envelope ?? true),
         });
       };
       home.pois.forEach(collect);
@@ -656,6 +1066,22 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
       return all;
     },
     origin: () => ({ x: origin.x, y: origin.y, z: origin.z }),
+    state: () => ({
+      phase,
+      timeLeft: survey.timeLeft,
+      fuel: survey.fuel,
+      score: survey.score,
+      scanned: survey.scanned.map((contact) => contact.id),
+      scanId: survey.scanId,
+      scanProgress: survey.scanProgress,
+      tooFast: survey.tooFast,
+      speed: velocity.length(),
+      burning: lastBoost,
+      marker:
+        phase === 'survey' && targetPoi && markerDist < Infinity
+          ? { x: marker.x, y: marker.y, onScreen: marker.onScreen, dist: markerDist }
+          : null,
+    }),
     attitude: () => ({
       quaternion: {
         x: camera.quaternion.x,
@@ -664,6 +1090,8 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
         w: camera.quaternion.w,
       },
       levelUp: { x: rig.levelUp.x, y: rig.levelUp.y, z: rig.levelUp.z },
+      fov: camera.fov,
+      aspect: camera.aspect,
     }),
     shipAbs: () => ({
       x: ship.position.x + origin.x,
@@ -674,10 +1102,12 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
   const globalHost = window as unknown as { __EPHEMERIS?: EphemerisDebug };
   globalHost.__EPHEMERIS = debugHandle;
 
-  return () => {
+  const dispose = () => {
+    if (disposed) return;
+    disposed = true;
     if (globalHost.__EPHEMERIS === debugHandle) delete globalHost.__EPHEMERIS;
-    keyTracker.dispose();
-    listeners.dispose();
+    // first: no key, button or thumb may reach a sim that is being torn down
+    input.dispose();
     field.dispose(); // unregisters sector LOD bodies via onContentRemoved
     home.dispose();
     lod.dispose();
@@ -687,4 +1117,6 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
     // Home ↔ EPHEMERIS no longer forces GPU re-uploads of shared geometry.
     stage.dispose();
   };
+
+  return { start, menu, dispose };
 }
