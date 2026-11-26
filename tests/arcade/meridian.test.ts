@@ -619,7 +619,7 @@ describe('the view', () => {
     expect(game.state).toBe('play');
     expect(widest).toBeGreaterThan(0.15); // it does lag: the turn reads on screen
     expect(widest).toBeLessThan(0.7);
-    expect(tallest).toBeLessThan(0.8);
+    expect(tallest).toBeLessThan(0.7); // 0.78 without the vertical limit
   });
 
   it('widens the view on an upright phone', () => {
