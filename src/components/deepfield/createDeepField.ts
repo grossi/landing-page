@@ -116,9 +116,21 @@ export interface DeepFieldHandle {
  */
 export function createDeepField(
   container: HTMLElement,
-  opts?: { onMode?: (mode: DeepFieldMode) => void },
+  opts?: {
+    onMode?: (mode: DeepFieldMode) => void;
+    /**
+     * Where the pointer steers and burns from. 'window' (the default) is the
+     * full-page backdrop: the cursor steers and a press burns wherever it
+     * lands. 'container' is for a field embedded as a panel beside other
+     * content: only pointer input over the container counts, and the cursor
+     * leaving it reads like the cursor leaving the page. Releases are always
+     * caught on the window, so a burn started in the panel can never stick.
+     */
+    inputScope?: 'window' | 'container';
+  },
 ): DeepFieldHandle {
   const onMode = opts?.onMode;
+  const scoped = opts?.inputScope === 'container';
   // far 20,000 gives the giants a deep corridor; nothing nests, so a
   // standard depth buffer at 4e4 far:near is comfortable (near raised to 0.5).
   // maxPixelRatio 2: full retina crispness for the 1px wireframes at quality
@@ -353,9 +365,12 @@ export function createDeepField(
     if (e.code === 'Escape') exit();
   };
   const listeners = createListenerGroup();
-  listeners.add(window, 'mousemove', onMouseMove);
-  listeners.add(document, 'mouseleave', onMouseLeave);
-  listeners.add(window, 'pointerdown', onPointerDown);
+  // scoped input registers on the container itself, so the same handlers
+  // simply never hear the rest of the page; mouseleave does not bubble, so
+  // on the container it fires exactly when the cursor exits the panel
+  listeners.add(scoped ? container : window, 'mousemove', onMouseMove);
+  listeners.add(scoped ? container : document, 'mouseleave', onMouseLeave);
+  listeners.add(scoped ? container : window, 'pointerdown', onPointerDown);
   listeners.add(window, 'pointerup', onPointerUp);
   listeners.add(window, 'pointercancel', onPointerUp);
   listeners.add(window, 'keydown', onKeyDown);
