@@ -74,8 +74,9 @@ export const projectSections: ProjectSection[] = [
         name: 'Star Survival',
         tagline: 'roguelike survivor for Android',
         description:
-          'Little Witch Adventures: move with one finger while your spells fire on their own. Ten spells and twelve tomes combine into builds that have to outlast six stages and their bosses. Free on Google Play, built in Unity, with a Rust port on wgpu in testing.',
-        tech: ['Unity', 'Rust', 'wgpu', 'Android'],
+          'Little Witch Adventures: move with one finger while your spells fire on their own. Ten spells and twelve tomes combine into builds that have to outlast six stages and their bosses. Free on Google Play, built in Unity, and being ported to Rust on wgpu.',
+        // The released build's stack. The Rust port is not out, so it stays in the text.
+        tech: ['Unity', 'Android'],
         status: 'released',
         links: [
           {

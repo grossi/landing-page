@@ -52,7 +52,7 @@ const ProjectCard = ({ project }: { project: Project }) => {
       <Text mt={3} fontSize="sm" flex="1" lineHeight="1.5">
         {project.description}
       </Text>
-      <Text mt={4} fontSize="xs" fontFamily={mono} letterSpacing="0.08em" color={grey.dim}>
+      <Text mt={4} fontSize="xs" fontFamily={mono} letterSpacing="0.08em" color={grey.text}>
         {project.tech.join(' · ')}
       </Text>
       <Flex
@@ -67,7 +67,7 @@ const ProjectCard = ({ project }: { project: Project }) => {
         fontSize="xs"
       >
         {project.links.length === 0 ? (
-          <Text py={1} color={grey.dim} letterSpacing="0.2em">
+          <Text py={1} color={grey.text} letterSpacing="0.2em">
             NO PUBLIC LINK
           </Text>
         ) : (
@@ -84,8 +84,14 @@ const ProjectCard = ({ project }: { project: Project }) => {
               _hover={{ borderBottomColor: 'white' }}
               _focusVisible={{ outline: '1px solid white', outlineOffset: '3px' }}
             >
-              <a href={link.href} target="_blank" rel="noopener noreferrer">
-                {link.label} ↗
+              {/* Several cards share a label ("GAME PAGE"), so the name adds the project. */}
+              <a
+                href={link.href}
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label={`${link.label}: ${project.name} (opens in a new tab)`}
+              >
+                {link.label} <span aria-hidden="true">↗</span>
               </a>
             </Box>
           ))

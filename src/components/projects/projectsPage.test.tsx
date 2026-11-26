@@ -2,7 +2,7 @@
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { ChakraProvider } from '@chakra-ui/react';
-import { afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import App from '../../App';
 import theme from '../../theme';
 import { demoHref, demos } from 'data/demos';
@@ -11,8 +11,14 @@ import { projectSections, projects, statusLabels } from 'data/projects';
 let root: Root | undefined;
 let host: HTMLElement | undefined;
 
-beforeAll(() => {
+// happy-dom has no layout, so the scroll is observed, not performed.
+const scrollIntoView = vi.fn();
+
+beforeAll(async () => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  Element.prototype.scrollIntoView = scrollIntoView;
+  // Load the page's lazy chunk up front, so a render never waits on the import.
+  await import('pages/Arcade');
 });
 
 afterEach(() => {
@@ -20,6 +26,7 @@ afterEach(() => {
   host?.remove();
   root = undefined;
   host = undefined;
+  scrollIntoView.mockClear();
 });
 
 /** Mounts the whole app on a fresh navigation to `path`, as a deep link would. */
@@ -36,8 +43,9 @@ async function openApp(path: string): Promise<HTMLElement> {
       </ChakraProvider>,
     );
   });
-  // The page is a lazy chunk: wait until it has replaced the Suspense fallback.
-  for (let i = 0; i < 50 && !host.querySelector('h1'); i++) {
+  // The page is lazy: let it replace the Suspense fallback. The chunk is already
+  // loaded, so this normally takes one pass; the bound only stops a broken render.
+  for (let i = 0; i < 500 && !host.querySelector('h1'); i++) {
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 10));
     });
@@ -102,6 +110,49 @@ describe('the projects page', () => {
     });
     expect(sections[3].querySelectorAll('[data-demo]').length).toBe(demos.length);
     expect(sections[3].querySelectorAll('[data-project]').length).toBe(0);
+  });
+
+  it('scrolls to the section named in the address on a fresh load', async () => {
+    for (const [path, id] of [
+      ['/projects#tools', 'tools'],
+      ['/arcade#experiments', 'experiments'],
+    ]) {
+      const page = await openApp(path);
+      const section = page.querySelector(`section#${id}`);
+      expect(section, path).not.toBeNull();
+      expect(scrollIntoView.mock.contexts.at(-1), path).toBe(section);
+      act(() => root?.unmount());
+      host?.remove();
+      scrollIntoView.mockClear();
+    }
+  });
+
+  it('stays at the top without a section in the address, or with an unknown one', async () => {
+    for (const path of ['/projects', '/projects#nowhere']) {
+      await openApp(path);
+      expect(scrollIntoView, path).not.toHaveBeenCalled();
+      act(() => root?.unmount());
+      host?.remove();
+    }
+  });
+
+  it('names each project link by its project and says it opens a new tab', async () => {
+    const page = await openApp('/projects');
+    const names = [...page.querySelectorAll('[data-project] a')].map((a) => a.getAttribute('aria-label'));
+    expect(new Set(names).size).toBe(names.length);
+    for (const project of projects) {
+      for (const a of card(page, project.slug).querySelectorAll('a')) {
+        const name = a.getAttribute('aria-label') ?? '';
+        expect(name, project.slug).toContain(project.name);
+        expect(name, project.slug).toContain('opens in a new tab');
+        // The accessible name starts with the words a sighted visitor reads.
+        const visible = a.querySelector('[aria-hidden="true"]')
+          ? (a.textContent ?? '').replace(a.querySelector('[aria-hidden="true"]')?.textContent ?? '', '').trim()
+          : '';
+        expect(visible, project.slug).not.toBe('');
+        expect(name.startsWith(visible), project.slug).toBe(true);
+      }
+    }
   });
 
   it('puts name, tagline, description, tech, status and links on every project card', async () => {

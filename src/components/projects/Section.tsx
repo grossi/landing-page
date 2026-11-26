@@ -34,7 +34,7 @@ const Section = ({ id, title, blurb, count, children }: SectionProps) => (
       >
         {title}
       </Heading>
-      <Text fontSize="xs" fontFamily={mono} letterSpacing="0.1em" color={grey.dim} flexShrink={0}>
+      <Text fontSize="xs" fontFamily={mono} letterSpacing="0.1em" color={grey.text} flexShrink={0}>
         {String(count).padStart(2, '0')}
       </Text>
     </Flex>
