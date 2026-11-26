@@ -1,141 +1,115 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useLayoutEffect, useRef, useState } from 'react';
+import type { CSSProperties } from 'react';
 import { Box, Flex, Text } from '@chakra-ui/react';
+import { motion, useScroll } from 'framer-motion';
 import Header from 'components/layout/Header';
-import { createDeepField } from 'components/deepfield/createDeepField';
-import type { DeepFieldHandle, DeepFieldMode } from 'components/deepfield/createDeepField';
-import { monoFont } from 'config/site';
+import DescentHero from 'components/home/DescentHero';
+import { focusRing, label, tone } from 'components/home/Section';
+import { About, Contact, ExperienceStrip, SelectedWork, Writing } from 'components/home/sections';
 
-const mono = {
-  fontFamily: monoFont,
-  color: 'white',
-} as const;
+const prefersReducedMotion = () =>
+  typeof window.matchMedia === 'function' &&
+  window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-// The main page: the shared header on top and the DEEP FIELD wireframe
-// drift filling the rest of the viewport, with the hero layered on top.
-// Overlay content ignores the pointer so the field receives every steer
-// and click; only the PLAY button opts back in.
+const scrollBehavior = (): ScrollBehavior => (prefersReducedMotion() ? 'auto' : 'smooth');
+
+// The main page, mock B "Descent": the DEEP FIELD hero is the first screen
+// of a page that scrolls on through about, selected work, experience,
+// writing and contact. The window itself scrolls (as in PageLayout) and the
+// header stays stuck on top.
 const Home = () => {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const handleRef = useRef<DeepFieldHandle | null>(null);
-  const [mode, setMode] = useState<DeepFieldMode>('title');
+  const headerRef = useRef<HTMLDivElement>(null);
+  // the header is taller on a phone (its menu button); the hero and the
+  // section anchors are sized against the real thing
+  const [headerHeight, setHeaderHeight] = useState(61);
+  const { scrollYProgress } = useScroll();
+  // while the hero is a game the rest of the page is inert, so focus (Tab)
+  // cannot scroll the locked page out from under it
+  const [inFlight, setInFlight] = useState(false);
+  const descend = useCallback(
+    () => document.getElementById('about')?.scrollIntoView({ behavior: scrollBehavior() }),
+    [],
+  );
 
-  useEffect(() => {
-    if (!containerRef.current) return;
-    const handle = createDeepField(containerRef.current, { onMode: setMode });
-    handleRef.current = handle;
-    return () => {
-      handleRef.current = null;
-      handle.dispose();
-    };
+  useLayoutEffect(() => {
+    const header = headerRef.current;
+    if (!header) return;
+    const measure = () => setHeaderHeight(header.offsetHeight);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(header);
+    return () => observer.disconnect();
   }, []);
 
-  const heroVisible = mode === 'title' || mode === 'disengage';
-  const playVisible = mode === 'title';
+  // The router keeps the scroll position across routes; the other pages
+  // expect to open at their top, so leave Home there.
+  useLayoutEffect(() => () => window.scrollTo(0, 0), []);
 
   return (
-    <Flex direction="column" height="100vh" overflow="hidden" bg="black">
-      <Header />
+    <Box
+      bg="black"
+      color="white"
+      minH="100vh"
+      style={{ '--home-header-h': `${headerHeight}px` } as CSSProperties}
+    >
+      {/* Header is sticky inside its parent, so this wrapper is what sticks
+          for the whole page; it also carries the scroll progress line. */}
+      <Box ref={headerRef} position="sticky" top={0} zIndex={1100}>
+        <Header />
+        <motion.div
+          aria-hidden
+          style={{
+            position: 'absolute',
+            left: 0,
+            right: 0,
+            bottom: 0,
+            height: 1,
+            background: 'white',
+            transformOrigin: 'left',
+            // above Header's own sticky bar, over its bottom border
+            zIndex: 1101,
+            scaleX: scrollYProgress,
+          }}
+        />
+      </Box>
 
-      <Box position="relative" flex="1" overflow="hidden">
-        <Box ref={containerRef} position="absolute" inset={0} />
+      <main>
+        <DescentHero
+          headerHeight={headerHeight}
+          onDescend={descend}
+          onFlightChange={setInFlight}
+        />
+        <Box inert={inFlight}>
+          <About />
+          <SelectedWork />
+          <ExperienceStrip />
+          <Writing />
+          <Contact />
+        </Box>
+      </main>
 
-        <Flex
-          position="absolute"
-          inset={0}
-          direction="column"
-          justify="center"
-          pointerEvents="none"
-          userSelect="none"
-          px="34px"
-          opacity={heroVisible ? 1 : 0}
-          transition="opacity 600ms ease"
-        >
-          <Box maxW="1280px" mx="auto" w="100%">
-            <Flex direction="column" maxW="720px">
-              <Text
-                as="h1"
-                {...mono}
-                fontSize="clamp(34px, 7vw, 72px)"
-                fontWeight="bold"
-                letterSpacing=".14em"
-                lineHeight="1.05"
-                textShadow="0 0 24px rgba(0,0,0,.9)"
-              >
-                GABRIEL
-                <br />
-                ROSSI
-              </Text>
-              <Text {...mono} mt="14px" fontSize="13px" letterSpacing=".34em" opacity={0.6}>
-                SOFTWARE ENGINEER
-              </Text>
-            </Flex>
-          </Box>
-        </Flex>
-
-        <Flex
-          position="absolute"
-          bottom="9vh"
-          left={0}
-          right={0}
-          justify="center"
-          pointerEvents="none"
-          opacity={playVisible ? 1 : 0}
-          transition="opacity 600ms ease"
-        >
+      <Box as="footer" inert={inFlight} borderTop={`1px solid ${tone.line}`} px="34px">
+        <Flex maxW="1280px" mx="auto" py="28px" align="center" justify="space-between" gap={4}>
+          <Text {...label} fontSize="11px" color={tone.dim}>
+            © {new Date().getFullYear()} Gabriel Rossi
+          </Text>
           <Box
             as="button"
-            onClick={(e) => {
-              e.currentTarget.blur();
-              handleRef.current?.play();
-            }}
-            pointerEvents={playVisible ? 'auto' : 'none'}
-            tabIndex={playVisible ? 0 : -1}
-            aria-hidden={!playVisible}
-            {...mono}
-            fontSize="15px"
-            fontWeight="bold"
-            letterSpacing="0.3em"
-            px="40px"
-            py="14px"
-            bg="rgba(0,0,0,.55)"
-            borderWidth="1px"
-            borderColor="#3f3f46"
-            borderRadius={0}
+            onClick={() => window.scrollTo({ top: 0, behavior: scrollBehavior() })}
+            {...label}
+            fontSize="11px"
+            color={tone.soft}
+            bg="transparent"
             cursor="pointer"
-            transition="border-color 0.15s ease, transform 0.15s ease"
-            _hover={{ borderColor: 'white', transform: 'translateY(-2px)' }}
+            transition="color 0.15s ease"
+            _hover={{ color: 'white' }}
+            _focusVisible={focusRing}
           >
-            ▶ PLAY
+            Back to top ↑
           </Box>
         </Flex>
-
-        <Box
-          as="button"
-          onClick={(e) => {
-            e.currentTarget.blur();
-            handleRef.current?.exit();
-          }}
-          aria-label="Exit to title"
-          position="absolute"
-          bottom="16px"
-          right="22px"
-          fontFamily={monoFont}
-          fontSize="12px"
-          letterSpacing="0.25em"
-          color="#71717a"
-          bg="transparent"
-          pointerEvents={mode === 'play' ? 'auto' : 'none'}
-          tabIndex={mode === 'play' ? 0 : -1}
-          aria-hidden={mode !== 'play'}
-          cursor="pointer"
-          userSelect="none"
-          opacity={mode === 'play' ? 1 : 0}
-          transition="opacity 600ms ease"
-        >
-          EXIT — ESC
-        </Box>
       </Box>
-    </Flex>
+    </Box>
   );
 };
 
