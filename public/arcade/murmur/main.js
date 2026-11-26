@@ -10,8 +10,12 @@ export const ZONE = { SIZE: 96, GAP: 20, SLACK: 16 };
  *  is a nudge; let go and it centres in 1 / KEY_RELEASE. */
 export const KEY_RAMP = 2.5, KEY_RELEASE = 6;
 const STEER_KEYS = ['ArrowRight', 'KeyD', 'ArrowLeft', 'KeyA', 'ArrowDown', 'ArrowUp'];
-/** Markers stay this far inside the screen's edge, and this far clear of the BOOST square. */
-const INSET = 38, ZONE_CLEAR = 22;
+/** Markers stay this far inside the screen's edge. */
+const INSET = 38;
+/** A marker's centre keeps this far from the BOOST square, sideways and upward.
+ *  A marker is a sign with its distance under or over it: about 30 px wide and
+ *  39 tall, hung up to 9 px off its centre. Upward needs room for all of that. */
+export const ZONE_CLEAR = { x: 22, y: 36 };
 /** A phone slower than this many frames a second flies the smaller flock from its next run. */
 const SLOW_FPS = 34;
 
@@ -122,7 +126,7 @@ export function mount({ THREE, createShipBody, storage = safeStorage(), random =
     if (thumbs) {
       // Never under the BOOST thumb: a marker that lands on the square moves
       // up the right edge, or along the bottom edge, to just clear of it.
-      const left = innerWidth - ZONE.GAP - ZONE.SIZE - ZONE_CLEAR, top = innerHeight - ZONE.GAP - ZONE.SIZE - ZONE_CLEAR;
+      const left = innerWidth - ZONE.GAP - ZONE.SIZE - ZONE_CLEAR.x, top = innerHeight - ZONE.GAP - ZONE.SIZE - ZONE_CLEAR.y;
       if (spot.x > left && spot.y > top) {
         if (innerWidth - spot.x <= innerHeight - spot.y) spot.y = top; else spot.x = left;
       }

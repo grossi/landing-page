@@ -8,7 +8,7 @@ import { createInput } from '../../public/arcade/shared/runtime.js';
 import { mulberry32 } from '../../public/arcade/meridian/world.js';
 import { WAKE } from '../../public/arcade/murmur/flock.js';
 import { BEST_KEY, TUNE } from '../../public/arcade/murmur/game.js';
-import { KEY_RAMP, ZONE, inBoostZone, mount } from '../../public/arcade/murmur/main.js';
+import { KEY_RAMP, ZONE, ZONE_CLEAR, inBoostZone, mount } from '../../public/arcade/murmur/main.js';
 
 // happy-dom replaces the global URL; file paths need node's.
 const read = (path: string) => readFileSync(new NodeURL(`../../public/arcade/${path}`, import.meta.url), 'utf8');
@@ -209,6 +209,28 @@ describe('MURMUR page', () => {
     expect(input.hold).toBe(true);
     send(window, 'pointerup', { pointerType: 'mouse', pointerId: 1, button: 0 });
     expect(input.hold).toBe(false);
+    // A chord as a browser reports it: left down, right down and left up arrive as
+    // moves with the buttons that are down, and the last release names the right button.
+    const chord = (type: string, button: number | undefined, buttons: number) =>
+      send(window, type, { pointerType: 'mouse', pointerId: 1, button, buttons, clientX: 500, clientY: 400 });
+    chord('pointerdown', 0, 1);
+    expect(input.hold).toBe(true);
+    chord('pointermove', -1, 3);
+    expect(input.hold).toBe(true); // the left button is still down
+    chord('pointermove', -1, 2);
+    expect(input.hold).toBe(false);
+    chord('pointerup', 2, 0);
+    expect(input.hold).toBe(false);
+    // And the other way round: right first, then left, then right released.
+    chord('pointerdown', 2, 2);
+    chord('pointermove', -1, 3);
+    expect(input.hold).toBe(true);
+    chord('pointermove', -1, 1);
+    expect(input.hold).toBe(true);
+    chord('pointerup', 0, 0);
+    expect(input.hold).toBe(false);
+    ticks(2);
+    expect(game.ship.boost).toBe(false);
     // After dispose the page leaves the menu alone again.
     page!.dispose(); page = undefined;
     const later = new Event('contextmenu', { cancelable: true });
@@ -236,9 +258,12 @@ describe('MURMUR page', () => {
           game.flock.wake = 0;
           ticks(1 / 600);
           const [x, y] = at('gateMark');
-          expect(x > left && y > top, `bearing ${degrees}, ${drop} below: ${x}, ${y}`).toBe(false);
+          // The whole marker, not only its centre: the sign and its distance are
+          // about 30 px wide and reach 29 px below the centre (see index.html).
+          const overlaps = x + 15 > left && y + 29 > top;
+          expect(overlaps, `bearing ${degrees}, ${drop} below: ${x}, ${y}`).toBe(false);
           expect(x).toBeLessThanOrEqual(390); expect(y).toBeLessThanOrEqual(844);
-          if (Math.abs(x - (left - 22)) < 0.2 || Math.abs(y - (top - 22)) < 0.2) moved++;
+          if (Math.abs(x - (left - ZONE_CLEAR.x)) < 0.2 || Math.abs(y - (top - ZONE_CLEAR.y)) < 0.2) moved++;
         }
       }
       expect(moved).toBeGreaterThan(3); // some of them would have landed on it

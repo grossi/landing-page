@@ -42,6 +42,15 @@ export function createInput({ onPress, pressKeys, holdZone } = {}) {
     mouseHeld = input.hold = false;
   }
   const unit = value => Math.max(-1, Math.min(1, value));
+  // Only the primary mouse button holds. The browser says which buttons are
+  // down on every mouse event (`buttons`), and that is the truth: in a chord
+  // the buttons change on pointermove, and the last release names another
+  // button. `down` is the fallback for an event that does not carry `buttons`.
+  function mouseButtons(e, down) {
+    if (typeof e.buttons === 'number') mouseHeld = (e.buttons & 1) === 1;
+    else if (down !== undefined && !e.button) mouseHeld = down;
+    input.hold = mouseHeld || holds.size > 0;
+  }
   function move(x, y) {
     input.pointer.x = Math.max(-1, Math.min(1, x / innerWidth * 2 - 1));
     input.pointer.y = Math.max(-1, Math.min(1, y / innerHeight * 2 - 1));
@@ -58,6 +67,7 @@ export function createInput({ onPress, pressKeys, holdZone } = {}) {
     if (e.pointerType !== 'touch') {
       input.stick.x = unit(input.pointer.x * MOUSE_GAIN);
       input.stick.y = unit(input.pointer.y * MOUSE_GAIN);
+      mouseButtons(e);
     } else if (touches.has(e.pointerId)) {
       const point = touches.get(e.pointerId);
       point.x = e.clientX; point.y = e.clientY;
@@ -70,9 +80,7 @@ export function createInput({ onPress, pressKeys, holdZone } = {}) {
   listen(window, 'pointerdown', e => {
     input.pointerDown = true;
     if (e.pointerType !== 'touch') {
-      // Only the primary button holds: a right click opens a menu that may
-      // swallow its own release, and the hold would stick.
-      if (!e.button) mouseHeld = true;
+      mouseButtons(e, true);
     } else if (holdZone?.(e.clientX, e.clientY)) {
       // It stays a hold wherever it slides to, and is never the stick.
       holds.add(e.pointerId);
@@ -89,7 +97,7 @@ export function createInput({ onPress, pressKeys, holdZone } = {}) {
   listen(window, 'pointerup', e => {
     input.pointerDown = false;
     touches.delete(e.pointerId);
-    if (e.pointerType !== 'touch' && !e.button) mouseHeld = false;
+    if (e.pointerType !== 'touch') mouseButtons(e, false);
     holds.delete(e.pointerId);
     input.hold = mouseHeld || holds.size > 0;
     if (anchor && anchor.id === e.pointerId) {
