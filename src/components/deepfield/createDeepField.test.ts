@@ -90,6 +90,8 @@ function drift(frames = 30) {
 const press = (target: EventTarget) =>
   target.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
 const release = () => window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
+const touch = (type: string, target: EventTarget) =>
+  target.dispatchEvent(new PointerEvent(type, { bubbles: true, pointerType: 'touch' }));
 const moveTo = (target: EventTarget, clientX: number, clientY: number) =>
   target.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX, clientY }));
 
@@ -151,6 +153,56 @@ it('with an input scope, the cursor steers inside it and not outside it', () => 
   moveTo(section, 1200, 360);
   advance(60 * 60);
   expect(Math.abs(drift(30).x)).toBeLessThan(1);
+});
+
+it('with an input scope, a finger that turns into a scroll does not touch the drift', () => {
+  const { hero } = scopedPage();
+  // the browser takes the gesture over as a scroll: pointercancel, no pointerup
+  touch('pointerdown', hero);
+  expect(drift().speed).toBeCloseTo(CRUISE, 0);
+  touch('pointercancel', window);
+  expect(drift().speed).toBeCloseTo(CRUISE, 0);
+  // and a finger resting on the hero is not a burn either
+  touch('pointerdown', hero);
+  expect(drift(120).speed).toBeCloseTo(CRUISE, 0);
+  touch('pointercancel', window);
+});
+
+it('with an input scope, a tap kicks the drift when the finger lifts', () => {
+  const { hero } = scopedPage();
+  touch('pointerdown', hero);
+  touch('pointerup', window);
+  expect(drift(10).speed).toBeGreaterThan(CRUISE * 2.5);
+  // a kick, not a held burn: it coasts back to cruise
+  advance(60 * 8);
+  expect(drift().speed).toBeCloseTo(CRUISE, 0);
+});
+
+it('with an input scope, a finger still burns for as long as it is held once in play', () => {
+  const { hero, modes, field } = scopedPage();
+  field.play();
+  advance(200);
+  expect(modes.at(-1)).toBe('play');
+  touch('pointerdown', hero);
+  expect(drift(60).speed).toBeGreaterThan(CRUISE * 2.5);
+  touch('pointerup', window);
+});
+
+it('without an input scope, a finger kicks and burns from the moment it lands, as before', () => {
+  const container = element();
+  field = createDeepField(container);
+  advance(2);
+  touch('pointerdown', container);
+  expect(drift().speed).toBeGreaterThan(CRUISE * 2.5);
+});
+
+it('forgets a finger that was down when the field was paused', () => {
+  const { hero, field } = scopedPage();
+  touch('pointerdown', hero);
+  field.setPaused(true);
+  touch('pointerup', window);
+  field.setPaused(false);
+  expect(drift().speed).toBeCloseTo(CRUISE, 0);
 });
 
 it('gives the whole window back to the game from the first engage frame', () => {

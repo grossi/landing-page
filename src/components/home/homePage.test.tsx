@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { act } from 'react';
+import { act, StrictMode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { ChakraProvider } from '@chakra-ui/react';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -185,6 +185,21 @@ describe('the header on the home page', () => {
     }
   });
 
+  it('moves keyboard focus to the section heading, so Tab continues from the section', async () => {
+    const page = await openApp('/');
+    for (const item of navSections) {
+      const link = entry(page, item.nav);
+      link.focus();
+      await click(link);
+      expect(document.activeElement, item.id).toBe(section(page, item.id).querySelector('h2'));
+    }
+    // the hero's actions do the same
+    const action = [...hero(page).querySelectorAll<HTMLAnchorElement>('a')].find((a) => a.textContent === 'WORK')!;
+    action.focus();
+    await click(action);
+    expect(document.activeElement).toBe(section(page, 'work').querySelector('h2'));
+  });
+
   it('scrolls again when the same entry is pressed again', async () => {
     const page = await openApp('/');
     await click(entry(page, 'WORK'));
@@ -244,9 +259,37 @@ describe('a link to a section', () => {
     }
   });
 
+  it('jumps both times when StrictMode runs the arrival twice', async () => {
+    window.history.replaceState({}, '', '/#work');
+    host = document.createElement('div');
+    document.body.appendChild(host);
+    const mounted = createRoot(host);
+    root = mounted;
+    await act(async () => {
+      mounted.render(
+        <StrictMode>
+          <ChakraProvider value={theme}>
+            <App />
+          </ChakraProvider>
+        </StrictMode>,
+      );
+    });
+    for (let i = 0; i < 500 && !host.querySelector('section#work'); i++) await settle(10);
+    await settle();
+    const behaviors = scrollIntoView.mock.calls.map((call) => (call[0] as ScrollIntoViewOptions).behavior);
+    expect(behaviors.length).toBeGreaterThan(1);
+    expect(new Set(behaviors)).toEqual(new Set(['auto']));
+    expect(lastScroll().target).toBe(host.querySelector('section#work'));
+  });
+
   it('reads a percent-encoded fragment as a browser does', async () => {
     const page = await openApp('/#%63ontact');
     expect(lastScroll().target).toBe(section(page, 'contact'));
+  });
+
+  it('starts keyboard focus at the section, as a native fragment link would', async () => {
+    const page = await openApp('/#experience');
+    expect(document.activeElement).toBe(section(page, 'experience').querySelector('h2'));
   });
 
   it('stays put without a fragment, or with an unknown or malformed one', async () => {
@@ -337,6 +380,8 @@ describe('the phone menu', () => {
     expect(toggle(page).getAttribute('aria-expanded')).toBe('false');
     for (let i = 0; i < 100 && menu(page); i++) await settle(20);
     expect(menu(page)).toBeNull();
+    // the tapped link is gone with the menu; focus is on the section, not lost
+    expect(document.activeElement).toBe(section(page, 'writing').querySelector('h2'));
   });
 
   it('from another page, opens the home page on the section and is closed there', async () => {
@@ -521,6 +566,36 @@ describe('the field under the hero', () => {
     await setMode('disengage');
     await setMode('title');
     expect(scrollTo).toHaveBeenLastCalledWith({ top: 0, behavior: 'smooth' });
+  });
+
+  it('drops the queued scroll if the visitor goes Back while the game is still exiting', async () => {
+    const page = await openApp('/');
+    await setMode('engage');
+    await setMode('play');
+    await click(entry(page, 'WORK'));
+    expect(window.location.hash).toBe('#work');
+    await setMode('disengage');
+    // Back: the address is `/` again, which asks for no scroll
+    await act(async () => {
+      window.history.replaceState({}, '', '/');
+      window.dispatchEvent(new PopStateEvent('popstate'));
+    });
+    await setMode('title');
+    expect(scrollIntoView).not.toHaveBeenCalled();
+    expect(scrollTo).not.toHaveBeenCalled();
+    expect(document.activeElement).not.toBe(section(page, 'work').querySelector('h2'));
+  });
+
+  it('follows the latest link when another is pressed while the game is still exiting', async () => {
+    const page = await openApp('/');
+    await setMode('engage');
+    await setMode('play');
+    await click(entry(page, 'WORK'));
+    await setMode('disengage');
+    await click(entry(page, 'CONTACT'));
+    await setMode('title');
+    expect(scrollIntoView).toHaveBeenCalledTimes(1);
+    expect(lastScroll().target).toBe(section(page, 'contact'));
   });
 
   it('drops the queued scroll if PLAY is pressed again while the exit fades in', async () => {

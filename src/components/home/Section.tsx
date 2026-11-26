@@ -109,7 +109,8 @@ const Section = ({ id, fill = false, children }: SectionProps) => {
           position={{ base: 'static', lg: 'sticky' }}
           top={`calc(${headerHeightVar} + 40px)`}
         >
-          <Text as="h2" id={headingId} {...label} color="white">
+          {/* Focusable by script only: a jump to the section moves focus here. */}
+          <Text as="h2" id={headingId} tabIndex={-1} {...label} color="white" _focus={{ outline: 'none' }}>
             <Box as="span" color={tone.soft}>
               {String(index + 1).padStart(2, '0')} /{' '}
             </Box>

@@ -16,12 +16,24 @@ const prefersReducedMotion = () =>
   typeof window.matchMedia === 'function' &&
   window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-/** Scrolls to a section or the top: glides when `smooth`, unless the visitor asked for less motion. */
+/**
+ * Goes to a section or the top: glides when `smooth`, unless the visitor
+ * asked for less motion. Keyboard focus goes with it to the section's
+ * heading, as it would on a native fragment link: the next Tab continues
+ * from the section, not from the link that was pressed (which, in the phone
+ * menu, is gone by then).
+ */
 function scrollToTarget(target: ScrollTarget, smooth: boolean) {
   const behavior: ScrollBehavior = smooth && !prefersReducedMotion() ? 'smooth' : 'auto';
-  if (target === 'top') window.scrollTo({ top: 0, behavior });
+  if (target === 'top') {
+    window.scrollTo({ top: 0, behavior });
+    return;
+  }
+  const section = document.getElementById(target);
+  if (!section) return;
   // each section's scroll-margin-top keeps its heading clear of the sticky header
-  else document.getElementById(target)?.scrollIntoView({ behavior, block: 'start' });
+  section.scrollIntoView({ behavior, block: 'start' });
+  section.querySelector<HTMLElement>('h2')?.focus({ preventScroll: true });
 }
 
 /** How far down the space under the header a section's top must be to count as "in view". */
@@ -71,19 +83,27 @@ const Home = () => {
   // followed while already here glides.
   const location = useLocation();
   const navigationType = useNavigationType();
-  const arrived = useRef(false);
+  // the navigation that brought the visitor to this page
+  const arrivalKey = useRef<string | null>(null);
   const inFlightRef = useRef(false);
   const pending = useRef<ScrollTarget | null>(null);
 
   useEffect(() => {
-    const arriving = !arrived.current;
-    arrived.current = true;
+    // Arriving is judged by the navigation, not by this effect's first run:
+    // StrictMode runs it twice for the same arrival, and both must jump.
+    arrivalKey.current ??= location.key;
+    const arriving = arrivalKey.current === location.key;
     const section = sectionFromHash(location.hash);
     // No fragment: a link to the page is a link to its top. A reload or
     // back/forward (POP) is left to the browser's own scroll restoration.
     const target: ScrollTarget | null =
       section ?? (location.hash === '' && navigationType !== 'POP' ? 'top' : null);
-    if (!target) return;
+    if (!target) {
+      // This navigation asks for no scroll (Back to `/`, say), so it also
+      // withdraws one an earlier navigation left queued behind an exit.
+      pending.current = null;
+      return;
+    }
     if (inFlightRef.current) {
       // The hero is a game and the page is locked under it: leave the game
       // first, and go once the title screen is back (below).
