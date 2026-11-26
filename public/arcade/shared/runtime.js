@@ -3,20 +3,29 @@ const STICK_RADIUS = 56;
 /** A mouse reaches full deflection at 1 / MOUSE_GAIN of the way to the screen edge. */
 const MOUSE_GAIN = 1.5;
 
-/** Input shared by the standalone games. State is stable for the whole mount. */
-export function createInput({ onPress, pressKeys } = {}) {
+/**
+ * Input shared by the standalone games. State is stable for the whole mount.
+ * `holdZone(x, y)` marks a part of the screen as a hold button for touch: a
+ * finger that lands there holds, and never steers.
+ */
+export function createInput({ onPress, pressKeys, holdZone } = {}) {
   const input = {
     keys: {}, pointer: { x: 0, y: 0 }, pointerActive: false,
     pointerDown: false, touchDirection: 0,
     // One stick for every pointer: a mouse deflects it by its offset from the
     // screen centre; a touch deflects it by its drag from where it landed, so
     // the thumb never has to cover the ship. Lifting the thumb centres it.
-    stick: { x: 0, y: 0 }, dispose,
+    stick: { x: 0, y: 0 },
+    // The one hold action: a mouse button down, or a finger down in the hold zone.
+    hold: false, dispose,
   };
   const listeners = [];
   // Touches that are down, by pointer id, and the one the stick is anchored to.
   const touches = new Map();
   let anchor = null;
+  // Fingers down in the hold zone, by pointer id, and whether a mouse button is down.
+  const holds = new Set();
+  let mouseHeld = false;
   function listen(target, type, handler, options) {
     target.addEventListener(type, handler, options);
     listeners.push(() => target.removeEventListener(type, handler, options));
@@ -29,6 +38,8 @@ export function createInput({ onPress, pressKeys } = {}) {
     input.stick.x = input.stick.y = 0;
     anchor = null;
     touches.clear();
+    holds.clear();
+    mouseHeld = input.hold = false;
   }
   const unit = value => Math.max(-1, Math.min(1, value));
   function move(x, y) {
@@ -58,18 +69,27 @@ export function createInput({ onPress, pressKeys } = {}) {
   });
   listen(window, 'pointerdown', e => {
     input.pointerDown = true;
-    if (e.pointerType === 'touch') {
+    if (e.pointerType !== 'touch') {
+      mouseHeld = true;
+    } else if (holdZone?.(e.clientX, e.clientY)) {
+      // It stays a hold wherever it slides to, and is never the stick.
+      holds.add(e.pointerId);
+    } else {
       touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
       if (!anchor) {
         anchor = { id: e.pointerId, x: e.clientX, y: e.clientY };
         input.stick.x = input.stick.y = 0;
       }
     }
+    input.hold = mouseHeld || holds.size > 0;
     onPress?.();
   });
   listen(window, 'pointerup', e => {
     input.pointerDown = false;
     touches.delete(e.pointerId);
+    if (e.pointerType !== 'touch') mouseHeld = false;
+    holds.delete(e.pointerId);
+    input.hold = mouseHeld || holds.size > 0;
     if (anchor && anchor.id === e.pointerId) {
       // The stick centres; a finger still down becomes its new centre where it is.
       const [next] = touches;

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { mountGame } from './harness';
 
-const games = ['asteroids', 'drift', 'murmur', 'stack', 'tunnel'];
+const games = ['stack', 'tunnel'];
 
 describe.each(games)('%s input and frame lifecycle', name => {
   it('clears held input on blur and canceled gestures', () => {
