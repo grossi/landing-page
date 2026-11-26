@@ -412,35 +412,52 @@ describe('steering', () => {
     for (let s = 0.05; s < 1; s += 0.05) expect(curve(s)).toBeLessThan(s);
   });
 
+  /**
+   * Fly one city on the arrow keys alone, as a person would: they see a free
+   * lane, decide, and their fingers act 150 ms later. `early` players aim at the
+   * lane after the row they are entering; the others aim at the row itself,
+   * which is where the gates stand. Returns the game at the end.
+   */
+  function flyCity(lap: number, seed: number, early: boolean) {
+    const REACTION = 9; // frames at 60 Hz
+    const game = running(seed);
+    game.gates.length = 0;
+    const ordinal = (lap - 1) * SECTORS.length + CITY;
+    game.world.restartAt(game.dist - ordinal * SPAN - 10); // the city of that lap starts here
+    const rows = game.world.cityRows(ordinal);
+    game.x = laneX(rows[0].corridor); game.y = 4; game.vx = game.vy = 0;
+    game.runTime = TUNE.GRACE; game.speed = TUNE.CAP_MAX; // capped to the lap's top speed
+    const keys = createKeyAxis(), decided: number[] = [];
+    while (game.state === 'play' && game.dist < rows[rows.length - 1].d + 20) {
+      const next = rows.find((row: any) => row.d - 12 > game.dist);
+      const aim = !next ? rows[rows.length - 1] : early ? rows[Math.min(rows.length - 1, next.k + next.k % 2)] : next;
+      const gap = laneX(aim.corridor) - (game.x + game.vx * 0.3);
+      decided.push(Math.abs(gap) > 3 ? Math.sign(gap) : 0);
+      const held = decided.length > REACTION ? decided[decided.length - 1 - REACTION] : 0;
+      game.charge = TUNE.CHARGE; // watch the steering, not the clock
+      game.step(1 / 60, { x: keys.step(1 / 60, held), y: 0.3 });
+    }
+    return { game, row: rows.find((row: any) => row.d + 12 > game.dist)?.k };
+  }
+
   it.each([[1, 'wide'], [3, 'narrow'], [9, 'narrow, top speed, heaviest drain']])(
     'a player on the keys can follow the free lane through the lap %i city (%s)', lap => {
-      // Arrow keys only, pressed as a person would: they see the next free lane,
-      // decide, and their fingers act 150 ms later. No look at anything else.
-      const REACTION = 9; // frames at 60 Hz
       for (let seed = 1; seed <= 40; seed++) {
-        const game = running(seed);
-        game.gates.length = 0;
-        const ordinal = (lap - 1) * SECTORS.length + CITY;
-        game.world.restartAt(game.dist - ordinal * SPAN - 10); // the city of that lap starts here
-        const rows = game.world.cityRows(ordinal);
-        game.x = laneX(rows[0].corridor); game.y = 4; game.vx = game.vy = 0;
-        game.runTime = TUNE.GRACE; game.speed = TUNE.CAP_MAX; // capped to the lap's top speed
-        const keys = createKeyAxis(), decided: number[] = [];
-        while (game.state === 'play' && game.dist < rows[rows.length - 1].d + 20) {
-          // The free lane changes at most every second row; aim for the one after the row being entered.
-          const next = rows.find((row: any) => row.d - 12 > game.dist);
-          const aim = next ? rows[Math.min(rows.length - 1, next.k + next.k % 2)] : rows[rows.length - 1];
-          const gap = laneX(aim.corridor) - (game.x + game.vx * 0.3);
-          decided.push(Math.abs(gap) > 3 ? Math.sign(gap) : 0);
-          const held = decided.length > REACTION ? decided[decided.length - 1 - REACTION] : 0;
-          game.charge = TUNE.CHARGE; // watch the steering, not the clock
-          game.step(1 / 60, { x: keys.step(1 / 60, held), y: 0.3 });
-        }
-        expect(game.state, `lap ${lap}, seed ${seed}, row ${rows.find((row: any) => row.d + 12 > game.dist)?.k}`).toBe('play');
+        const { game, row } = flyCity(lap, seed, true);
+        expect(game.state, `lap ${lap}, seed ${seed}, row ${row}`).toBe('play');
         expect(game.lap).toBe(lap);
         expect(game.low).toBe(true); // between the towers, not over them
       }
     });
+
+  it.each([1, 2])('on lap %i the city forgives a player who only moves when the gates do', lap => {
+    // The first cities are three lanes wide for this: the lane the gates just
+    // marked is still open in the next row, so a late turn is not a crash.
+    for (let seed = 1; seed <= 300; seed++) {
+      const { game, row } = flyCity(lap, seed, false);
+      expect(game.state, `lap ${lap}, seed ${seed}, row ${row}`).toBe('play');
+    }
+  });
 });
 
 describe('the world', () => {
@@ -469,6 +486,8 @@ describe('the world', () => {
             // Precisely: this row's free lane is also open in the row before it, one step away at most.
             expect(freeLanes(rows[k - 1])).toContain(row.corridor);
             expect(Math.abs(row.corridor - rows[k - 1].corridor)).toBeLessThanOrEqual(k % 2 ? 0 : 1);
+            // On the wide laps the lane just left is still open too: a late turn is forgiven.
+            if (lap < 3) expect(freeLanes(row)).toContain(rows[k - 1].corridor);
           }
           if (k >= 2) { free += freeLanes(row).length; count++; }
         });

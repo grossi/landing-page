@@ -110,9 +110,17 @@ export function createWorld(random = Math.random) {
   function cityRows(ordinal) {
     let rows = cities.get(ordinal);
     if (rows) return rows;
-    rows = [];
     const lap = Math.floor(ordinal / SECTORS.length) + 1;
     const rng = mulberry32(world.seed ^ Math.imul(ordinal + 1, 0x9e3779b1));
+    // About 3 wide cities in 100 have a walk that leaves some lane no gentle row
+    // for its wall; those are drawn again. The last draw is kept whatever it is.
+    for (let draw = 1; !(rows = layCity(ordinal, lap, rng, draw === 12)); draw++);
+    cities.set(ordinal, rows);
+    return rows;
+  }
+
+  function layCity(ordinal, lap, rng, keep) {
+    const rows = [];
     const freeChance = Math.max(0.1, 0.35 - 0.08 * (lap - 1));
     const wide = lap < 3;
     let corridor = Math.floor(LANES / 2), partner = corridor + 1;
@@ -141,21 +149,28 @@ export function createWorld(random = Math.random) {
       }
       rows.push({ d: world.origin + ordinal * SPAN + CITY_IN + k * ROW_D, k, ordinal, corridor, towers });
     }
-    // Wall each lane once. A row may wall any lane but its own free lane and the
-    // next row's, which is the lane the two rows share: the way through stays.
+
+    // Wall each lane once. A row never walls its own free lane or the next
+    // row's, which is the lane the two rows share: the way through stays.
+    const walls = [];
     for (let lane = 0; lane < LANES; lane++) {
       const allowed = rows.filter((row, k) =>
         lane !== row.corridor && lane !== rows[Math.min(k + 1, rows.length - 1)].corridor);
-      // Past the open entrance if possible, and off the free lane's neighbours.
+      // Past the open entrance, and off the lane the row before it used: the
+      // gates have just marked that lane, and a late turn must not be a crash.
       const inside = allowed.filter(row => row.k >= 2);
-      const clear = inside.filter(row => Math.abs(lane - row.corridor) > 1);
-      const from = clear.length ? clear : inside.length ? inside : allowed;
-      const row = from[Math.floor(rng() * from.length)];
+      const gentle = inside.filter(row => lane !== rows[row.k - 1].corridor);
+      // Better still, off the free lane's neighbours, so the wide laps stay wide.
+      const clear = gentle.filter(row => Math.abs(lane - row.corridor) > 1);
+      if (wide && !gentle.length && !keep) return null;
+      const from = clear.length ? clear : gentle.length ? gentle : inside.length ? inside : allowed;
+      walls.push(from[Math.floor(rng() * from.length)]);
+    }
+    walls.forEach((row, lane) => {
       let tower = row.towers.find(candidate => candidate.lane === lane);
       if (!tower) row.towers.push(tower = { lane, x: 0, w: 0, depth: 10 + rng() * 9, h: 8 + rng() * 34 });
       tower.x = laneX(lane); tower.w = LANE_W;
-    }
-    cities.set(ordinal, rows);
+    });
     return rows;
   }
 
