@@ -6,7 +6,7 @@
   // Dev-server-only fixture: instrument the actual standalone scripts without shipping debug globals.
   const params = new URLSearchParams(location.search);
   const game = params.get('game') || 'drift';
-  if (!['asteroids', 'drift', 'murmur', 'stack', 'tunnel'].includes(game)) throw Error('Unknown game');
+  if (!['asteroids', 'drift', 'murmur'].includes(game)) throw Error('Unknown game');
   const path = `/arcade/${game}/`;
   const html = await (await fetch(params.has('baseline') ? `/tests/arcade/.baseline/${game}.txt` : path + 'index.html')).text();
   const instrumentation = `

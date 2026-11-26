@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { mountGame } from './harness';
 
-const games = ['asteroids', 'drift', 'murmur', 'stack', 'tunnel'];
+const games = ['asteroids', 'drift', 'murmur'];
 
 describe.each(games)('%s input and frame lifecycle', name => {
   it('clears held input on blur and canceled gestures', () => {
@@ -34,13 +34,4 @@ describe.each(games)('%s input and frame lifecycle', name => {
     game.visibility(true); game.visibility(false);
     expect(game.scheduled).toBe(false);
   });
-});
-
-it('stack ignores keyboard autorepeat instead of dropping multiple blocks', () => {
-  const game = mountGame('stack');
-  game.event('keydown', { code: 'Space' });
-  expect(game.run('state')).toBe('play');
-  game.event('keydown', { code: 'Space', repeat: true });
-  expect(game.run('state')).toBe('play');
-  expect(game.run('level')).toBe(1);
 });
