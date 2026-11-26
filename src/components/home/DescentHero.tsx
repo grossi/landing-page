@@ -15,6 +15,9 @@ const mono = {
   color: 'white',
 } as const;
 
+/** Room for the name, the actions and the scroll cue, in px. */
+const HERO_MIN_HEIGHT = 480;
+
 export interface DescentHeroHandle {
   /** Leaves play for the title screen; a no-op on the title screen. */
   exit(): void;
@@ -103,12 +106,16 @@ const DescentHero = ({ ref, headerHeight, onFlightChange, onPlay }: DescentHeroP
       overflow="hidden"
       bg="black"
       touchAction={inFlight ? 'none' : 'auto'}
+      // On a short screen (a phone on its side) the hero is taller than the
+      // screen so its actions fit, and the page scrolls. The game cannot
+      // scroll: it gets exactly the screen, so EXIT at its bottom edge stays
+      // in reach.
+      style={{ minHeight: inFlight ? 0 : HERO_MIN_HEIGHT }}
       css={{
         height: `calc(100vh - ${headerHeightVar})`,
         // the small viewport height keeps the canvas from resizing as a
         // phone's address bar collapses on scroll
         '@supports (height: 100svh)': { height: `calc(100svh - ${headerHeightVar})` },
-        minHeight: '480px',
       }}
     >
       <motion.div style={{ position: 'absolute', inset: 0, opacity: fieldOpacity }}>

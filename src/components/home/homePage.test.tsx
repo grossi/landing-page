@@ -554,6 +554,20 @@ describe('the field under the hero', () => {
     expect(locked()).toEqual(['', false, false]);
   });
 
+  it('gives up its minimum height while it is a game, so EXIT stays on a short screen', async () => {
+    const page = await openApp('/');
+    const minHeight = () => parseFloat(hero(page).style.minHeight);
+    // on the title screen the hero may be taller than a short screen: the page scrolls
+    expect(minHeight()).toBeGreaterThan(400);
+    for (const mode of ['engage', 'play', 'disengage'] as const) {
+      await setMode(mode);
+      // the page is locked now, so the hero must be exactly the screen
+      expect(minHeight(), mode).toBe(0);
+    }
+    await setMode('title');
+    expect(minHeight()).toBeGreaterThan(400);
+  });
+
   it('leaves play first when a header entry is pressed, and scrolls once the title screen is back', async () => {
     const page = await openApp('/');
     await setMode('engage');
