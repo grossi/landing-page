@@ -118,7 +118,8 @@ export function createWorld(random = Math.random) {
     let corridor = Math.floor(LANES / 2), partner = corridor + 1;
     for (let k = 0; k < CITY_ROWS; k++) {
       if (k > 0 && k % 2 === 0) {
-        if (wide) corridor = clamp(corridor + Math.floor(rng() * 3) - 1, 1, LANES - 2);
+        // Always a step, never straight on: a ship that does not steer meets a tower.
+        if (wide) corridor = clamp(corridor + (rng() < 0.5 ? -1 : 1), 1, LANES - 2);
         else {
           // Step onto one of the previous row's two free lanes, then open a neighbour.
           if (rng() < 0.5) corridor = partner;

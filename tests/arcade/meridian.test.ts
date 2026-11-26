@@ -246,8 +246,7 @@ describe('charge and escalation', () => {
         const game = running(seed);
         fly(game, 120, stick);
         expect(game.state).toBe('over');
-        // A straight line can thread a few gates by luck (49 s was the longest of 400 seeds).
-        expect(game.runTime).toBeLessThan(60);
+        expect(game.runTime).toBeLessThan(45);
       }
     }
   });
@@ -385,25 +384,30 @@ describe('flight and collision', () => {
 
 describe('steering', () => {
   it('ramps a key from a nudge to full stick, lets go quickly, and restarts on a reversal', () => {
-    const axis = createKeyAxis();
+    const axis = createKeyAxis({ negative: CONTROL.KEY_CLIMB });
     expect(axis.step(1 / 60, 0)).toBe(0);
-    expect(axis.step(1 / 60, 1)).toBe(CONTROL.KEY_START);
-    let value = 0, seconds = 0;
-    while ((value = axis.step(1 / 240, 1)) < 1) seconds += 1 / 240;
-    expect(seconds).toBeCloseTo(CONTROL.KEY_RAMP, 1);
+    expect(axis.step(1 / 60, 1)).toBe(CONTROL.KEY.start);
+    expect(axis.step(0, 1)).toBe(CONTROL.KEY.start); // a frame of no time changes nothing
+    let seconds = 0;
+    while (axis.step(1 / 240, 1) < 1) seconds += 1 / 240;
+    expect(seconds).toBeCloseTo(CONTROL.KEY.ramp, 1);
     expect(axis.step(1, 1)).toBe(1); // never past full, however long the frame
     seconds = 0;
     while (axis.step(1 / 240, 0) > 0) seconds += 1 / 240;
     expect(seconds).toBeCloseTo(CONTROL.KEY_RELEASE, 1);
     for (let i = 0; i < 30; i++) axis.step(1 / 60, 1);
-    expect(axis.step(1 / 60, -1)).toBe(-CONTROL.KEY_START); // no carry-over through a reversal
+    // No carry-over through a reversal, and each direction keeps its own ramp.
+    expect(axis.step(1 / 60, -1)).toBe(-CONTROL.KEY_CLIMB.start);
+    seconds = 0;
+    while (axis.step(1 / 240, -1) > -1) seconds += 1 / 240;
+    expect(seconds).toBeCloseTo(CONTROL.KEY_CLIMB.ramp, 1);
     axis.reset();
     expect(axis.step(0, 0)).toBe(0);
   });
 
   it('softens a pointer stick near the centre and keeps its ends', () => {
     expect([curve(0), curve(1), curve(-1)]).toEqual([0, 1, -1]);
-    expect(curve(0.25)).toBeCloseTo(0.125, 6);
+    expect(curve(0.5)).toBeCloseTo(0.5 ** CONTROL.POINTER_CURVE, 12);
     expect(curve(-0.5)).toBeCloseTo(-curve(0.5), 12);
     for (let s = 0.05; s < 1; s += 0.05) expect(curve(s)).toBeLessThan(s);
   });

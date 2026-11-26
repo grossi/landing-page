@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import * as THREE from '../../public/arcade/vendor/three.module.min.js';
 import { createShipBody } from '../../public/arcade/shared/ship.js';
 import { createInput } from '../../public/arcade/shared/runtime.js';
+import { CONTROL } from '../../public/arcade/meridian/controls.js';
 import { BEST_KEY, TUNE } from '../../public/arcade/meridian/game.js';
 import { mount } from '../../public/arcade/meridian/main.js';
 import { HALF, LANE_W, SEA, SPAN, mulberry32 } from '../../public/arcade/meridian/world.js';
@@ -87,7 +88,7 @@ describe('MERIDIAN page', () => {
     touch('pointermove', 2, 12, 200);
     expect(input.stick.x).toBe(-0.5);
     ticks(0.5);
-    expect(game.vx).toBeLessThan(-TUNE.VX * 0.25); // half a stick, softened by the pointer curve
+    expect(game.vx).toBeLessThan(-TUNE.VX * 0.35); // half a stick, softened by the pointer curve
   });
 
   it.each(['pointercancel', 'touchcancel', 'blur', 'hidden'])('lets go of the stick and the keys on %s', how => {
@@ -105,6 +106,16 @@ describe('MERIDIAN page', () => {
     } else send(window, how);
     expect(input.stick).toEqual({ x: 0, y: 0 });
     expect(input.keys.ArrowRight).toBe(false);
+    // The key's ramp is let go with the key. The very next frame steers nothing
+    // (a hidden tab resumes here, however long it was away)...
+    game.vx = 0;
+    page!.tick(1 / 60);
+    expect(game.vx).toBe(0);
+    // ...and a fresh press starts from the first nudge again, not from a full stick.
+    send(window, 'keydown', { code: 'ArrowRight' });
+    page!.tick(1 / 60);
+    expect(game.vx).toBeCloseTo(TUNE.VX * CONTROL.KEY.start * TUNE.RESPONSE_X / 60, 6);
+    send(window, 'keyup', { code: 'ArrowRight' });
     game.charge = TUNE.CHARGE;
     ticks(2);
     expect(Math.abs(game.vx)).toBeLessThan(1);
@@ -325,13 +336,38 @@ describe('how the steering feels, in numbers', () => {
     expect(HALF * 2 / TUNE.VX).toBeGreaterThan(2.2);
   });
 
-  it('up and down taps are nudges too: 0.8 to 3 units for 100 ms, 4 to 10 for 300 ms', () => {
-    const tap = press('ArrowUp', 0.1, y), hold = press('ArrowUp', 0.3, y);
-    expect(tap).toBeGreaterThan(0.8);
-    expect(tap).toBeLessThan(3);
-    expect(hold).toBeGreaterThan(4);
-    expect(hold).toBeLessThan(10);
-    expect(press('KeyS', 0.1, y)).toBeCloseTo(-tap, 6);
+  it('a dive tap is a nudge (0.8 to 3 units for 100 ms); a climb tap bites sooner (2 to 4)', () => {
+    const dive = -press('ArrowDown', 0.1, y), climb = press('ArrowUp', 0.1, y);
+    expect(dive).toBeGreaterThan(0.8);
+    expect(dive).toBeLessThan(3);
+    expect(climb).toBeGreaterThan(2);
+    expect(climb).toBeLessThan(4);
+    expect(press('KeyW', 0.1, y)).toBeCloseTo(climb, 6);
+    expect(-press('KeyS', 0.1, y)).toBeCloseTo(dive, 6);
+  });
+
+  it('pulling up is still quick: 5 units within 0.32 s of the key going down, 10 within 0.46 s', () => {
+    const { game } = calm();
+    const from = game.y;
+    send(window, 'keydown', { code: 'ArrowUp' });
+    let seconds = 0, five = 0;
+    while (game.y - from < 10 && seconds < 2) {
+      page!.tick(DT); seconds += DT;
+      if (!five && game.y - from >= 5) five = seconds;
+    }
+    expect(five).toBeLessThan(0.32);
+    expect(seconds).toBeLessThan(0.46);
+  });
+
+  it('half a mouse or thumb stick is a gentle 35 to 50% of full speed, and the rim is all of it', () => {
+    for (const [share, low, high] of [[0.5, 0.35, 0.5], [1, 0.97, 1]]) {
+      const { game } = calm();
+      touch('pointerdown', 3, 200, 600);
+      touch('pointermove', 3, 200 + 56 * share, 600);
+      ticks(0.6, DT);
+      expect(game.vx / TUNE.VX).toBeGreaterThan(low);
+      expect(game.vx / TUNE.VX).toBeLessThanOrEqual(high);
+    }
   });
 });
 

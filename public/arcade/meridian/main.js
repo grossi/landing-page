@@ -1,6 +1,6 @@
 // Wires the rules and the picture to the page: input in, HUD out.
 import { createInput, startLoop, setText } from '../shared/runtime.js';
-import { createKeyAxis, curve } from './controls.js';
+import { CONTROL, createKeyAxis, curve } from './controls.js';
 import { TUNE, createGame, sectorName } from './game.js';
 import { createView } from './view.js';
 
@@ -41,7 +41,8 @@ export function mount({ THREE, createShipBody, storage = safeStorage(), random =
   // where the pointer was then (its position, not the stick, which is clamped).
   let keysSteer = false;
   const parked = { x: 0, y: 0 };
-  const keyX = createKeyAxis(), keyY = createKeyAxis();
+  // Stick y points down: the climb keys are the negative direction.
+  const keyX = createKeyAxis(), keyY = createKeyAxis({ negative: CONTROL.KEY_CLIMB });
 
   function readStick(dt) {
     const { keys } = input;
@@ -114,12 +115,21 @@ export function mount({ THREE, createShipBody, storage = safeStorage(), random =
     view.resize(innerWidth, innerHeight);
   };
   addEventListener('resize', resize);
+  // Whatever makes the runtime let go of held keys also lets go of their ramps:
+  // a tab that was hidden must not come back still steering, and the next press
+  // must start from the first nudge.
+  const release = () => { keyX.reset(); keyY.reset(); };
+  const RELEASES = ['blur', 'pointercancel', 'touchcancel', 'pagehide'];
+  for (const type of RELEASES) addEventListener(type, release);
+  document.addEventListener('visibilitychange', release);
   const loop = startLoop(tick);
 
   function dispose() {
     loop.dispose();
     input.dispose();
     removeEventListener('resize', resize);
+    for (const type of RELEASES) removeEventListener(type, release);
+    document.removeEventListener('visibilitychange', release);
     view.dispose();
     renderer.dispose();
     renderer.domElement.remove();
