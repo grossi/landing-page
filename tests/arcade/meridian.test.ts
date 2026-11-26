@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import * as THREE from '../../public/arcade/vendor/three.module.min.js';
 import { createShipBody } from '../../public/arcade/shared/ship.js';
+import { CONTROL, createKeyAxis, curve } from '../../public/arcade/meridian/controls.js';
 import { BEST_KEY, TUNE, createGame } from '../../public/arcade/meridian/game.js';
 import { createView } from '../../public/arcade/meridian/view.js';
 import {
@@ -245,7 +246,8 @@ describe('charge and escalation', () => {
         const game = running(seed);
         fly(game, 120, stick);
         expect(game.state).toBe('over');
-        expect(game.runTime).toBeLessThan(45);
+        // A straight line can thread a few gates by luck (49 s was the longest of 400 seeds).
+        expect(game.runTime).toBeLessThan(60);
       }
     }
   });
@@ -364,21 +366,77 @@ describe('flight and collision', () => {
   });
 
   it('decides a gate where the ship crossed it, even inside one slow frame', () => {
-    // Sliding sideways at full speed, both gates are crossed early in the frame.
+    // Sliding sideways at full speed, both gates are crossed early in a 100 ms frame.
     const game = flat(running());
     game.x = 0; game.y = 30; game.vx = TUNE.VX; game.speed = TUNE.CAP0;
-    const end = TUNE.VX * 0.05;
+    const end = TUNE.VX * 0.1;
     // Inside this ring at the crossing, outside it by the frame's end.
     const threaded = gateAt(game, 0.5, 0.4, 30);
     // Outside this ring at the crossing, at its centre by the frame's end.
     const missed = gateAt(game, 0.6, end + 0.1, 30);
-    game.step(0.05, { x: 1, y: 0 });
+    game.step(0.1, { x: 1, y: 0 });
     expect(game.x).toBeCloseTo(end, 5);
     expect(Math.abs(game.x - threaded.x)).toBeGreaterThan(TUNE.PASS_R);
     expect(Math.abs(game.x - missed.x)).toBeLessThan(TUNE.PASS_R);
     expect([threaded.state, missed.state]).toEqual([1, 2]);
     expect(game).toMatchObject({ chain: 0, threaded: 1 });
   });
+});
+
+describe('steering', () => {
+  it('ramps a key from a nudge to full stick, lets go quickly, and restarts on a reversal', () => {
+    const axis = createKeyAxis();
+    expect(axis.step(1 / 60, 0)).toBe(0);
+    expect(axis.step(1 / 60, 1)).toBe(CONTROL.KEY_START);
+    let value = 0, seconds = 0;
+    while ((value = axis.step(1 / 240, 1)) < 1) seconds += 1 / 240;
+    expect(seconds).toBeCloseTo(CONTROL.KEY_RAMP, 1);
+    expect(axis.step(1, 1)).toBe(1); // never past full, however long the frame
+    seconds = 0;
+    while (axis.step(1 / 240, 0) > 0) seconds += 1 / 240;
+    expect(seconds).toBeCloseTo(CONTROL.KEY_RELEASE, 1);
+    for (let i = 0; i < 30; i++) axis.step(1 / 60, 1);
+    expect(axis.step(1 / 60, -1)).toBe(-CONTROL.KEY_START); // no carry-over through a reversal
+    axis.reset();
+    expect(axis.step(0, 0)).toBe(0);
+  });
+
+  it('softens a pointer stick near the centre and keeps its ends', () => {
+    expect([curve(0), curve(1), curve(-1)]).toEqual([0, 1, -1]);
+    expect(curve(0.25)).toBeCloseTo(0.125, 6);
+    expect(curve(-0.5)).toBeCloseTo(-curve(0.5), 12);
+    for (let s = 0.05; s < 1; s += 0.05) expect(curve(s)).toBeLessThan(s);
+  });
+
+  it.each([[1, 'wide'], [3, 'narrow'], [9, 'narrow, top speed, heaviest drain']])(
+    'a player on the keys can follow the free lane through the lap %i city (%s)', lap => {
+      // Arrow keys only, pressed as a person would: they see the next free lane,
+      // decide, and their fingers act 150 ms later. No look at anything else.
+      const REACTION = 9; // frames at 60 Hz
+      for (let seed = 1; seed <= 40; seed++) {
+        const game = running(seed);
+        game.gates.length = 0;
+        const ordinal = (lap - 1) * SECTORS.length + CITY;
+        game.world.restartAt(game.dist - ordinal * SPAN - 10); // the city of that lap starts here
+        const rows = game.world.cityRows(ordinal);
+        game.x = laneX(rows[0].corridor); game.y = 4; game.vx = game.vy = 0;
+        game.runTime = TUNE.GRACE; game.speed = TUNE.CAP_MAX; // capped to the lap's top speed
+        const keys = createKeyAxis(), decided: number[] = [];
+        while (game.state === 'play' && game.dist < rows[rows.length - 1].d + 20) {
+          // The free lane changes at most every second row; aim for the one after the row being entered.
+          const next = rows.find((row: any) => row.d - 12 > game.dist);
+          const aim = next ? rows[Math.min(rows.length - 1, next.k + next.k % 2)] : rows[rows.length - 1];
+          const gap = laneX(aim.corridor) - (game.x + game.vx * 0.3);
+          decided.push(Math.abs(gap) > 3 ? Math.sign(gap) : 0);
+          const held = decided.length > REACTION ? decided[decided.length - 1 - REACTION] : 0;
+          game.charge = TUNE.CHARGE; // watch the steering, not the clock
+          game.step(1 / 60, { x: keys.step(1 / 60, held), y: 0.3 });
+        }
+        expect(game.state, `lap ${lap}, seed ${seed}, row ${rows.find((row: any) => row.d + 12 > game.dist)?.k}`).toBe('play');
+        expect(game.lap).toBe(lap);
+        expect(game.low).toBe(true); // between the towers, not over them
+      }
+    });
 });
 
 describe('the world', () => {

@@ -102,8 +102,10 @@ export function createWorld(random = Math.random) {
 
   /**
    * The towers of the city in sector `ordinal`. One lane walk guarantees a way
-   * through: consecutive rows always share a free lane. Later laps leave fewer
-   * free lanes beside it.
+   * through: consecutive rows always share a free lane, and the walk moves at
+   * most one lane every second row, so following it never asks for more than
+   * 20 units sideways per 80 of travel. Later laps leave fewer free lanes
+   * beside it.
    */
   function cityRows(ordinal) {
     let rows = cities.get(ordinal);
@@ -115,7 +117,7 @@ export function createWorld(random = Math.random) {
     const wide = lap < 3;
     let corridor = Math.floor(LANES / 2), partner = corridor + 1;
     for (let k = 0; k < CITY_ROWS; k++) {
-      if (k > 0) {
+      if (k > 0 && k % 2 === 0) {
         if (wide) corridor = clamp(corridor + Math.floor(rng() * 3) - 1, 1, LANES - 2);
         else {
           // Step onto one of the previous row's two free lanes, then open a neighbour.

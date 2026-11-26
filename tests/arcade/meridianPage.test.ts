@@ -7,7 +7,7 @@ import { createShipBody } from '../../public/arcade/shared/ship.js';
 import { createInput } from '../../public/arcade/shared/runtime.js';
 import { BEST_KEY, TUNE } from '../../public/arcade/meridian/game.js';
 import { mount } from '../../public/arcade/meridian/main.js';
-import { SEA, SPAN, mulberry32 } from '../../public/arcade/meridian/world.js';
+import { HALF, LANE_W, SEA, SPAN, mulberry32 } from '../../public/arcade/meridian/world.js';
 
 // happy-dom replaces the global URL; file paths need node's.
 const read = (path: string) => readFileSync(new NodeURL(`../../public/arcade/${path}`, import.meta.url), 'utf8');
@@ -75,7 +75,7 @@ describe('MERIDIAN page', () => {
     touch('pointermove', 1, 300 + 56, 600);
     expect(input.stick.x).toBe(1);
     ticks(0.5);
-    expect(game.vx).toBeGreaterThan(80);
+    expect(game.vx).toBeGreaterThan(TUNE.VX * 0.9);
     expect(game.x).toBeGreaterThan(10);
 
     touch('pointerup', 1, 356, 600);
@@ -87,7 +87,7 @@ describe('MERIDIAN page', () => {
     touch('pointermove', 2, 12, 200);
     expect(input.stick.x).toBe(-0.5);
     ticks(0.5);
-    expect(game.vx).toBeLessThan(-30);
+    expect(game.vx).toBeLessThan(-TUNE.VX * 0.25); // half a stick, softened by the pointer curve
   });
 
   it.each(['pointercancel', 'touchcancel', 'blur', 'hidden'])('lets go of the stick and the keys on %s', how => {
@@ -96,7 +96,7 @@ describe('MERIDIAN page', () => {
     touch('pointermove', 1, 256, 556);
     send(window, 'keydown', { code: 'ArrowRight' });
     ticks(0.4);
-    expect(game.vx).toBeGreaterThan(60);
+    expect(game.vx).toBeGreaterThan(TUNE.VX * 0.6);
 
     if (how === 'hidden') {
       Object.defineProperty(document, 'hidden', { configurable: true, get: () => true });
@@ -119,11 +119,11 @@ describe('MERIDIAN page', () => {
     send(window, 'pointermove', { pointerType: 'mouse', clientX: innerWidth, clientY: innerHeight / 2 });
     expect(input.stick).toEqual({ x: 1, y: 0 });
     ticks(0.4);
-    expect(game.vx).toBeGreaterThan(60);
+    expect(game.vx).toBeGreaterThan(TUNE.VX * 0.9);
 
     send(window, 'keydown', { code: 'KeyA' });
     ticks(0.6);
-    expect(game.vx).toBeLessThan(-60);
+    expect(game.vx).toBeLessThan(-TUNE.VX * 0.9);
     send(window, 'keyup', { code: 'KeyA' });
     // Keys released: the ship levels out and stays level, however long the mouse lies there.
     for (const seconds of [1, 3, 5]) {
@@ -134,7 +134,7 @@ describe('MERIDIAN page', () => {
     // Moving the mouse takes the stick back.
     send(window, 'pointermove', { pointerType: 'mouse', clientX: innerWidth * 0.9, clientY: innerHeight / 2 });
     ticks(0.6);
-    expect(game.vx).toBeGreaterThan(60);
+    expect(game.vx).toBeGreaterThan(TUNE.VX * 0.9);
   });
 
   it('climbs with the mouse above centre or the up key, dives with the opposite', () => {
@@ -149,7 +149,7 @@ describe('MERIDIAN page', () => {
     ticks(0.3);
     expect(game.vy).toBeLessThan(-20);
     send(window, 'keydown', { code: 'ArrowUp' });
-    ticks(0.3);
+    ticks(0.6); // the key builds up from a nudge
     expect(game.vy).toBeGreaterThan(20);
   });
 
@@ -258,6 +258,80 @@ describe('MERIDIAN page', () => {
       page = undefined;
       resolve();
     }, 60));
+  });
+});
+
+describe('how the steering feels, in numbers', () => {
+  /** A run over flat, empty ground with the opening grace over and the ship at rest. */
+  function calm() {
+    const page = open();
+    send(window, 'keydown', { code: 'Enter' });
+    send(window, 'keyup', { code: 'Enter' });
+    const { game } = page;
+    game.world.surface = () => 0;
+    game.world.rowsNear = (_d: number, _reach: number, out: unknown[] = []) => { out.length = 0; return out; };
+    game.runTime = TUNE.GRACE;
+    game.x = 0; game.y = 25; game.vx = 0; game.vy = 0;
+    return page;
+  }
+  const DT = 1 / 120;
+  /** Hold a key for `seconds`, then let the ship come to rest. Returns where it ended up. */
+  function press(code: string, seconds: number, read: (game: any) => number) {
+    const { game } = calm();
+    const from = read(game);
+    send(window, 'keydown', { code });
+    ticks(seconds, DT);
+    send(window, 'keyup', { code });
+    for (let i = 0; i < 20; i++) { game.charge = TUNE.CHARGE; ticks(0.1, DT); }
+    expect(game.state).toBe('play');
+    return read(game) - from;
+  }
+  const x = (game: any) => game.x, y = (game: any) => game.y;
+
+  it('a 100 ms tap sideways is a nudge: 1.5 to 5 units of a 20-unit lane', () => {
+    const right = press('ArrowRight', 0.1, x);
+    expect(right).toBeGreaterThan(1.5);
+    expect(right).toBeLessThan(5);
+    expect(press('KeyA', 0.1, x)).toBeCloseTo(-right, 6);
+  });
+
+  it('a 300 ms hold sideways stays inside the next lane: 8 to 16 units', () => {
+    const right = press('ArrowRight', 0.3, x);
+    expect(right).toBeGreaterThan(8);
+    expect(right).toBeLessThan(16);
+    expect(press('ArrowLeft', 0.3, x)).toBeCloseTo(-right, 6);
+  });
+
+  it('crossing one lane takes 0.40 to 0.65 s of holding, and letting go there does not carry into the lane beyond', () => {
+    const { game } = calm();
+    send(window, 'keydown', { code: 'ArrowRight' });
+    let seconds = 0;
+    while (game.x < LANE_W && seconds < 3) { page!.tick(DT); seconds += DT; }
+    send(window, 'keyup', { code: 'ArrowRight' });
+    for (let i = 0; i < 20; i++) { game.charge = TUNE.CHARGE; ticks(0.1, DT); }
+    expect(seconds).toBeGreaterThan(0.40);
+    expect(seconds).toBeLessThan(0.65);
+    // The lane beyond starts 1.5 lanes from where the ship set off.
+    expect(game.x).toBeLessThan(LANE_W * 1.5);
+  });
+
+  it('a held key still reaches full speed, and no more', () => {
+    const { game } = calm();
+    send(window, 'keydown', { code: 'ArrowRight' });
+    ticks(1, DT);
+    expect(game.vx).toBeGreaterThan(TUNE.VX * 0.97);
+    expect(game.vx).toBeLessThanOrEqual(TUNE.VX);
+    // Crossing the whole track is a deliberate act, not a twitch.
+    expect(HALF * 2 / TUNE.VX).toBeGreaterThan(2.2);
+  });
+
+  it('up and down taps are nudges too: 0.8 to 3 units for 100 ms, 4 to 10 for 300 ms', () => {
+    const tap = press('ArrowUp', 0.1, y), hold = press('ArrowUp', 0.3, y);
+    expect(tap).toBeGreaterThan(0.8);
+    expect(tap).toBeLessThan(3);
+    expect(hold).toBeGreaterThan(4);
+    expect(hold).toBeLessThan(10);
+    expect(press('KeyS', 0.1, y)).toBeCloseTo(-tap, 6);
   });
 });
 

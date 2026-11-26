@@ -207,7 +207,7 @@ export function createView({ THREE, createShipBody, game, aspect }) {
     updateTowers();
     updateGates();
     ship.position.set(game.x, game.y, 0);
-    ship.rotation.z = -game.vx * 0.0065;
+    ship.rotation.z = -game.vx * 0.0105;
     ship.rotation.x = game.vy * 0.006;
     const ease = rate => Math.min(1, dt * rate);
     camera.position.x += (game.x - camera.position.x) * ease(5);

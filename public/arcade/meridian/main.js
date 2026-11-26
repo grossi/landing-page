@@ -1,5 +1,6 @@
 // Wires the rules and the picture to the page: input in, HUD out.
 import { createInput, startLoop, setText } from '../shared/runtime.js';
+import { createKeyAxis, curve } from './controls.js';
 import { TUNE, createGame, sectorName } from './game.js';
 import { createView } from './view.js';
 
@@ -40,8 +41,9 @@ export function mount({ THREE, createShipBody, storage = safeStorage(), random =
   // where the pointer was then (its position, not the stick, which is clamped).
   let keysSteer = false;
   const parked = { x: 0, y: 0 };
+  const keyX = createKeyAxis(), keyY = createKeyAxis();
 
-  function readStick() {
+  function readStick(dt) {
     const { keys } = input;
     const kx = (keys.ArrowRight || keys.KeyD ? 1 : 0) - (keys.ArrowLeft || keys.KeyA ? 1 : 0);
     const ky = (keys.ArrowDown || keys.KeyS ? 1 : 0) - (keys.ArrowUp || keys.KeyW ? 1 : 0);
@@ -51,8 +53,10 @@ export function mount({ THREE, createShipBody, storage = safeStorage(), random =
     } else if (keysSteer && (input.pointer.x !== parked.x || input.pointer.y !== parked.y)) {
       keysSteer = false;
     }
-    stick.x = keysSteer ? kx : input.stick.x;
-    stick.y = keysSteer ? ky : input.stick.y;
+    // The key axes always run, so a key let go eases out even as the pointer takes over.
+    const x = keyX.step(dt, kx), y = keyY.step(dt, ky);
+    stick.x = keysSteer ? x : curve(input.stick.x);
+    stick.y = keysSteer ? y : curve(input.stick.y);
     return stick;
   }
 
@@ -100,7 +104,7 @@ export function mount({ THREE, createShipBody, storage = safeStorage(), random =
   }
 
   function tick(dt) {
-    game.step(dt, readStick());
+    game.step(dt, readStick(dt));
     view.render(renderer, dt);
     paint(dt);
   }

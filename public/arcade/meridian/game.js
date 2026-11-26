@@ -4,8 +4,12 @@ import { BLEND, CITY, HALF, ROW_D, SEA, SECTORS, SPAN, createWorld, laneX } from
 export const TUNE = {
   /** Forward speed: start, gain per second, cap on lap 1, cap gained per lap, hard cap. */
   SPEED0: 46, ACCEL: 1.1, CAP0: 92, CAP_LAP: 9, CAP_MAX: 128,
-  /** Lateral and vertical speed at full stick, and how fast the ship reaches them. */
-  VX: 110, VY: 42, RESPONSE_X: 5, RESPONSE_Y: 6,
+  /** Lateral and vertical speed at full stick, and how fast the ship reaches them.
+   *  VX is set by what the track asks, not by what feels fast: the hardest city
+   *  moves its free lane 20 units per 80 of travel (32 a second at top speed),
+   *  and the sea's slalom asks about as much. Twice that leaves room to recover
+   *  and still takes 2.6 s to cross the track. */
+  VX: 64, VY: 42, RESPONSE_X: 10, RESPONSE_Y: 6,
   CEILING: 60,
   /** Deck assist: within SKIM of the ground the ship cannot be pushed lower,
    *  and its dive rate shrinks with height as ASSIST × (height − SKIM). Below
@@ -243,7 +247,7 @@ export function createGame({ random = Math.random, storage = null } = {}) {
       } else if (info.index === SEA && info.blend === 0) {
         // Over the water: a slalom.
         seaSide = -seaSide;
-        x = clamp(previous + seaSide * (22 + random() * 24), -limit, limit);
+        x = clamp(previous + seaSide * (18 + random() * 20), -limit, limit);
       } else {
         // Over ground: the lowest of a few spots within reach of the last gate.
         let crest = Infinity;
