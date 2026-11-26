@@ -88,10 +88,11 @@ function drift(frames = 30) {
 }
 
 const press = (target: EventTarget) =>
-  target.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
-const release = () => window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
-const touch = (type: string, target: EventTarget) =>
-  target.dispatchEvent(new PointerEvent(type, { bubbles: true, pointerType: 'touch' }));
+  target.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerType: 'mouse' }));
+const release = () =>
+  window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerType: 'mouse' }));
+const touch = (type: string, target: EventTarget, pointerType = 'touch') =>
+  target.dispatchEvent(new PointerEvent(type, { bubbles: true, pointerType }));
 const moveTo = (target: EventTarget, clientX: number, clientY: number) =>
   target.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX, clientY }));
 
@@ -168,6 +169,17 @@ it('with an input scope, a finger that turns into a scroll does not touch the dr
   touch('pointercancel', window);
 });
 
+it('with an input scope, a pen that pans the page is treated like a finger', () => {
+  const { hero } = scopedPage();
+  touch('pointerdown', hero, 'pen');
+  expect(drift().speed).toBeCloseTo(CRUISE, 0);
+  touch('pointercancel', window, 'pen');
+  expect(drift().speed).toBeCloseTo(CRUISE, 0);
+  touch('pointerdown', hero, 'pen');
+  touch('pointerup', window, 'pen');
+  expect(drift(10).speed).toBeGreaterThan(CRUISE * 2.5);
+});
+
 it('with an input scope, a tap kicks the drift when the finger lifts', () => {
   const { hero } = scopedPage();
   touch('pointerdown', hero);
@@ -198,10 +210,12 @@ it('without an input scope, a finger kicks and burns from the moment it lands, a
 
 it('forgets a finger that was down when the field was paused', () => {
   const { hero, field } = scopedPage();
+  // down, scrolled away (paused), scrolled back, and only then lifted: the
+  // tap began before the pause, so it is not a tap on the field any more
   touch('pointerdown', hero);
   field.setPaused(true);
-  touch('pointerup', window);
   field.setPaused(false);
+  touch('pointerup', window);
   expect(drift().speed).toBeCloseTo(CRUISE, 0);
 });
 

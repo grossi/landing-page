@@ -282,6 +282,19 @@ describe('a link to a section', () => {
     expect(lastScroll().target).toBe(host.querySelector('section#work'));
   });
 
+  it('glides when Back returns to the entry the visitor arrived on', async () => {
+    const page = await openApp('/#work');
+    expect(lastScroll().behavior).toBe('auto');
+    await click(entry(page, 'CONTACT'));
+    expect(lastScroll()).toEqual({ target: section(page, 'contact'), behavior: 'smooth' });
+    // Back: the first entry again, which carries the same key as the arrival
+    await act(async () => {
+      window.history.replaceState({}, '', '/#work');
+      window.dispatchEvent(new PopStateEvent('popstate'));
+    });
+    expect(lastScroll()).toEqual({ target: section(page, 'work'), behavior: 'smooth' });
+  });
+
   it('reads a percent-encoded fragment as a browser does', async () => {
     const page = await openApp('/#%63ontact');
     expect(lastScroll().target).toBe(section(page, 'contact'));

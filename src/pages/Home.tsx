@@ -83,16 +83,20 @@ const Home = () => {
   // followed while already here glides.
   const location = useLocation();
   const navigationType = useNavigationType();
-  // the navigation that brought the visitor to this page
+  // the navigation that brought the visitor to this page, until they follow
+  // another one
   const arrivalKey = useRef<string | null>(null);
+  const movedOn = useRef(false);
   const inFlightRef = useRef(false);
   const pending = useRef<ScrollTarget | null>(null);
 
   useEffect(() => {
     // Arriving is judged by the navigation, not by this effect's first run:
     // StrictMode runs it twice for the same arrival, and both must jump.
+    // Coming Back to that first entry later (same key) is not arriving.
     arrivalKey.current ??= location.key;
-    const arriving = arrivalKey.current === location.key;
+    if (location.key !== arrivalKey.current) movedOn.current = true;
+    const arriving = !movedOn.current;
     const section = sectionFromHash(location.hash);
     // No fragment: a link to the page is a link to its top. A reload or
     // back/forward (POP) is left to the browser's own scroll restoration.

@@ -108,10 +108,10 @@ export interface DeepFieldOptions {
    * the window reaches the field in every mode.
    *
    * A scope also means there is a page to scroll, so on the title screen a
-   * finger is treated as a possible scroll: a touch kicks the drift when it
-   * lifts as a tap, and does nothing if the browser takes it over as a
-   * scroll (pointercancel). Without a scope a touch kicks and burns from
-   * the moment it lands, as before.
+   * finger or a pen is treated as a possible scroll: it kicks the drift
+   * when it lifts as a tap, and does nothing if the browser takes it over
+   * as a scroll (pointercancel). A mouse is unchanged. Without a scope a
+   * finger or pen kicks and burns from the moment it lands, as before.
    */
   inputScope?: HTMLElement;
 }
@@ -345,7 +345,7 @@ export function createDeepField(
   let boost = 1;
   // host-requested pause (setPaused): gates every input handler below
   let paused = false;
-  // a finger down on a scoped title screen, not yet known to be a tap
+  // a finger or pen down on a scoped title screen, not yet known to be a tap
   let tapPending = false;
 
   // inputScope only narrows the title screen (blend 0, nothing engaging):
@@ -382,7 +382,8 @@ export function createDeepField(
     if (paused || outOfScope(e)) return;
     // Links and buttons layered over the backdrop keep their normal clicks.
     if (e.target instanceof Element && e.target.closest('a,button')) return;
-    if (inputScope !== undefined && e.pointerType === 'touch' && blend === 0 && target === 0) {
+    // every pointer that can pan the page: a finger, and a pen as well
+    if (inputScope !== undefined && e.pointerType !== 'mouse' && blend === 0 && target === 0) {
       // on a page that scrolls, this may be the start of a swipe: wait and see
       tapPending = true;
       return;
