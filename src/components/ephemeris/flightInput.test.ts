@@ -230,6 +230,41 @@ describe('release', () => {
     expect(read().x).toBe(0);
   });
 
+  it('centres the mouse stick too, until the mouse moves again', () => {
+    for (const drop of [
+      () => window.dispatchEvent(new Event('blur')),
+      () => pointer(window, 'pointercancel', 0, 0, 9, 'mouse'),
+      () => input.release(),
+    ]) {
+      mouse('pointermove', 400, 400);
+      expect(read().x).toBe(1);
+      drop();
+      expect(read()).toEqual({ x: 0, y: 0 });
+      mouse('pointermove', 300, 400);
+      expect(read().x).toBe(0.5);
+    }
+  });
+
+  it('a key held through a release does not come back on auto-repeat', () => {
+    key('keydown', 'Space');
+    key('keydown', 'KeyD');
+    input.release();
+    for (let i = 0; i < 5; i++) {
+      key('keydown', 'Space', { repeat: true });
+      key('keydown', 'KeyD', { repeat: true });
+    }
+    expect(input.burnHeld()).toBe(false);
+    expect(read()).toEqual({ x: 0, y: 0 });
+    // lifted and pressed again, it counts, and so do its repeats
+    key('keyup', 'Space');
+    key('keydown', 'Space');
+    key('keydown', 'Space', { repeat: true });
+    expect(input.burnHeld()).toBe(true);
+    // so does a fresh press whose key-up was never seen (lifted while the window was blurred)
+    key('keydown', 'KeyD');
+    expect(read().x).toBe(KEY_STEER);
+  });
+
   it('on dispose, and nothing reaches the input afterwards', () => {
     holdEverything();
     input.dispose();
@@ -345,6 +380,38 @@ describe('presses', () => {
     touchUp(2);
     touchDown(330, 690, 3);
     expect(input.burnHeld()).toBe(true);
+  });
+
+  it('a tap that starts a run does not take the stick, even where the BURN zone is about to appear', () => {
+    // as on the title screen: the zone is not shown, and starting releases everything
+    burnZone.getBoundingClientRect = () => rect(0, 0, 0, 0);
+    input.dispose();
+    let started = false;
+    input = createFlightInput(container, {
+      burnZone,
+      onPress: () => {
+        if (started) return false;
+        started = true;
+        input.release();
+        return true;
+      },
+    });
+    // the right thumb starts the run and stays down, where BURN now appears
+    touchDown(330, 690, 1);
+    burnZone.getBoundingClientRect = () => rect(284, 640, 96, 96);
+    touchMove(300, 600, 1);
+    expect(read()).toEqual({ x: 0, y: 0 });
+    expect(input.burnHeld()).toBe(false);
+    // the left thumb gets the stick
+    touchDown(80, 600, 2);
+    touchMove(80 + 56, 600, 2);
+    expect(read()).toEqual({ x: 1, y: 0 });
+    // lifting the first thumb changes nothing; put down again on the zone, it burns
+    touchUp(1);
+    expect(read()).toEqual({ x: 1, y: 0 });
+    touchDown(330, 690, 3);
+    expect(input.burnHeld()).toBe(true);
+    expect(read()).toEqual({ x: 1, y: 0 });
   });
 
   it('held keys, modifiers and browser shortcuts are not presses', () => {

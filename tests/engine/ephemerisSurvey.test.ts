@@ -141,6 +141,24 @@ describe('title', () => {
     expect(state().burning).toBe(true);
   });
 
+  it('a key held down to start does not turn into a burn when the keyboard repeats it', async () => {
+    mount();
+    await fake.advance(2);
+    key('keydown', 'Space');
+    expect(state().phase).toBe('survey');
+    for (let i = 0; i < 30; i++) {
+      key('keydown', 'Space', { repeat: true });
+      await fake.advance(2);
+    }
+    expect(state().burning).toBe(false);
+    expect(state().fuel).toBe(1);
+    // lifted and pressed again, it burns
+    key('keyup', 'Space');
+    key('keydown', 'Space');
+    await fake.advance(seconds(0.5));
+    expect(state().burning).toBe(true);
+  });
+
   it('starts every survey from the same place with the world in the same state', async () => {
     mount();
     await fake.advance(seconds(7));
@@ -263,6 +281,24 @@ describe('scanning in the sim', () => {
     expect(state().scanned).toEqual([]);
   });
 
+  it('measures the comet\'s own speed the same on uneven frames', async () => {
+    const comet = debug().pois().find((p) => p.kind === 'comet')!;
+    // inside its range, off its path, looking at it
+    debug().warp(comet.x, comet.y + comet.radius + 300, comet.z, comet.x, comet.y, comet.z);
+    await fake.advance(2);
+    const speeds: number[] = [];
+    // frames of 1/60 and 1/30 s in turn, as a browser dropping every other frame
+    for (let i = 0; i < 16 && state().scanId === comet.id; i++) {
+      await fake.advance(1, i % 2 ? 1 / 30 : 1 / 60);
+      speeds.push(state().bodySpeed);
+    }
+    expect(speeds.length).toBeGreaterThan(8);
+    // the comet runs its orbit at 190 to 440 km/s, and does not change speed frame to frame
+    expect(Math.min(...speeds)).toBeGreaterThan(150);
+    expect(Math.max(...speeds)).toBeLessThan(500);
+    expect(Math.max(...speeds) / Math.min(...speeds)).toBeLessThan(1.05);
+  });
+
   it('keeps the ring on one body where two ranges overlap', async () => {
     // the innermost planet orbits inside the sun's scan range
     const sun = poi('home:0');
@@ -298,6 +334,28 @@ describe('scanning in the sim', () => {
     expect(state().marker).not.toBeNull();
     expect(state().marker!.dist).toBeGreaterThan(200);
     expect(hud.markerLabel.textContent).not.toBe(before);
+  });
+
+  it('never shows the last target\'s label on the next target', async () => {
+    // the label is rewritten ten times a second: try every phase of that against the log
+    for (let offset = 0; offset < 6; offset++) {
+      game.start('survey');
+      await fake.advance(1 + offset);
+      park(PLANET, 100);
+      let shownAfterLog = 0;
+      // frame by frame through the scan and the frames after it
+      for (let i = 0; i < seconds(TUNE.SCAN_SECONDS + 0.5); i++) {
+        await fake.advance(1);
+        if (state().scanned.length === 0 || hud.marker.style.opacity !== '1') continue;
+        shownAfterLog++;
+        // whenever the marker is up again it is about a body far from here,
+        // not the planet 100 km below that was just logged
+        const [, distance] = hud.markerLabel.textContent!.split('\n');
+        expect(distance.endsWith('Mm') || parseInt(distance, 10) > 500, `offset ${offset}: ${distance}`).toBe(true);
+      }
+      expect(state().scanned).toEqual([PLANET]);
+      expect(shownAfterLog).toBeGreaterThan(10);
+    }
   });
 
   it('keeps the marker on the side a body really is when it is behind the ship', async () => {
@@ -627,9 +685,35 @@ describe('FREE DRIFT', () => {
     expect(hud.sector.textContent).toBe('HOME SYSTEM');
   });
 
-  it('starts from where the ship is, and Escape returns to the title', async () => {
+  it('Escape returns to the title', async () => {
     key('keydown', 'Escape');
     expect(phases.at(-1)).toEqual(['title', null]);
+  });
+
+  it('starts at the spawn point as the page always did, however long the title was up, with the world still turning', async () => {
+    game.dispose();
+    document.body.replaceChildren();
+    mount();
+    await fake.advance(1);
+    const spawn = debug().shipAbs();
+    const cometAt = () => debug().pois().find((p) => p.kind === 'comet')!;
+    const cometAtMount = cometAt();
+    // a minute behind the title: the ship has cruised 6,000 km on
+    for (let i = 0; i < 6; i++) await fake.advance(seconds(10), 1 / 20);
+    expect(distanceFromSpawn(spawn)).toBeGreaterThan(5000);
+    const cometBefore = cometAt();
+
+    game.start('drift');
+    // (`spawn` was read one frame after mounting: a few metres on)
+    expect(distanceFromSpawn(spawn)).toBeLessThan(1);
+    await fake.advance(1);
+    expect(state().speed).toBeLessThan(10);
+    expect(debug().attitude().levelUp).toEqual({ x: 0, y: 1, z: 0 });
+    // the world's clock was not turned back: the comet is where the minute took it
+    const comet = cometAt();
+    const moved = (a: typeof comet, b: typeof comet) => Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
+    expect(moved(comet, cometBefore)).toBeLessThan(50);
+    expect(moved(comet, cometAtMount)).toBeGreaterThan(5000);
   });
 });
 

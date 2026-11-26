@@ -109,6 +109,7 @@ export interface EphemerisDebug extends PilotWorld {
     scanId: string | null;
     scanProgress: number;
     tooFast: boolean;
+    bodySpeed: number;
     speed: number;
     burning: boolean;
     marker: { x: number; y: number; onScreen: boolean; dist: number } | null;

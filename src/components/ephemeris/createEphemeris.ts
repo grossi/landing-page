@@ -446,6 +446,10 @@ export function createEphemeris(
   const scanPrev = new THREE.Vector3();
   let scanPrevId = '';
   const bodyVelocity = new THREE.Vector3();
+  // The POI pass reads world matrices, which are those of the last render:
+  // the world as the PREVIOUS frame's update left it. So the step between
+  // two samples of a body took the previous frame's dt, not this one's.
+  let previousDt = 0;
   // POI kinds, by id: ids are stable across sector rebuilds, and classifying
   // reads names and decorations, which is not per-frame work
   const kinds = new Map<string, ContactKind>();
@@ -603,16 +607,19 @@ export function createEphemeris(
   function start(mode: 'survey' | 'drift') {
     if (disposed) return;
     discoveredIds.clear();
+    // Every flight starts where the page always started: the ship at the
+    // spawn point on the spawn heading, level and at rest. (Behind the title
+    // and the end screen it has been cruising on with no hand on it.)
+    rig.levelUp.copy(WORLD_UP);
+    rig.shipBody.rotation.z = 0;
+    placeShip(SPAWN.x, SPAWN.y, SPAWN.z, scratch3.copy(SPAWN).add(SPAWN_HEADING));
     if (mode === 'survey') {
-      // The same start every time: the ship at the spawn point on the spawn
-      // heading, level, at rest, and the world's clock at zero, so the
-      // bodies are where they were on the last attempt.
+      // and a survey finds the world as the last attempt did: its clock
+      // goes back to zero, so the bodies are where they were
       resetSurvey(survey);
       markerDist = Infinity;
+      scanPrevId = '';
       worldTime = 0;
-      rig.levelUp.copy(WORLD_UP);
-      rig.shipBody.rotation.z = 0;
-      placeShip(SPAWN.x, SPAWN.y, SPAWN.z, scratch3.copy(SPAWN).add(SPAWN_HEADING));
       // the orbiters read the clock, so move them now: the first frame's
       // nearest-body pass must not see the last run's positions
       // (the comet drags a trail of its last COMET_TRAIL positions; that
@@ -663,7 +670,9 @@ export function createEphemeris(
     bodyVelocity.set(0, 0, 0);
     if (pick) {
       scratch.copy(pickCenter).add(origin);
-      if (scanPrevId === candidate.id && dt > 0) bodyVelocity.copy(scratch).sub(scanPrev).divideScalar(dt);
+      if (scanPrevId === candidate.id && previousDt > 0) {
+        bodyVelocity.copy(scratch).sub(scanPrev).divideScalar(previousDt);
+      }
       scanPrev.copy(scratch);
       scanPrevId = candidate.id;
     } else {
@@ -723,13 +732,19 @@ export function createEphemeris(
     // window (27 sectors around the ship, so there is always one)
     const target: Poi | null = targetPoi;
     markerDist = target ? targetDist : Infinity;
-    if (target) {
-      setHudText(hud.markerLabel, `${CONTACT_KINDS[kindOf(target)].label}\n${formatDistance(targetDist)}`);
-    }
+    if (target) labelMarker(target);
+  };
+
+  // The marker's two lines, and which body they were written for.
+  let markerLabelId = '';
+  const labelMarker = (target: Poi) => {
+    markerLabelId = target.id ?? '';
+    setHudText(hud.markerLabel, `${CONTACT_KINDS[kindOf(target)].label}\n${formatDistance(targetDist)}`);
   };
 
   // Per frame: where the marker sits. Bodies orbit and the camera turns,
-  // so the position is this frame's; only the label waits for the 10 Hz pass.
+  // so the position is this frame's. The label waits for the 10 Hz pass,
+  // except when the target changes: a marker never names the body before.
   const drawMarker = () => {
     // nothing to point at, or the target is the body under the scan ring,
     // which already names it at screen centre
@@ -738,6 +753,7 @@ export function createEphemeris(
       setHudStyle(hud.marker, 'opacity', '0');
       return;
     }
+    if (target.id !== markerLabelId) labelMarker(target);
     markerPos
       .copy(targetCenter)
       .sub(camera.position)
@@ -883,6 +899,7 @@ export function createEphemeris(
 
     // the survey: one step of the rules, fed from the pass above
     if (phase === 'survey') stepSurveyFrame(dt, boost);
+    previousDt = dt;
 
     // surface-horizon leveling: inside an enveloped body's ring-cue band the
     // roll leveler's reference up eases onto the local surface normal, so a
@@ -1018,6 +1035,8 @@ export function createEphemeris(
       scanId: string | null;
       scanProgress: number;
       tooFast: boolean;
+      /** Speed of the body being scanned, as the sim estimates it (0 with none). */
+      bodySpeed: number;
       speed: number;
       burning: boolean;
       marker: { x: number; y: number; onScreen: boolean; dist: number } | null;
@@ -1075,6 +1094,7 @@ export function createEphemeris(
       scanId: survey.scanId,
       scanProgress: survey.scanProgress,
       tooFast: survey.tooFast,
+      bodySpeed: bodyVelocity.length(),
       speed: velocity.length(),
       burning: lastBoost,
       marker:

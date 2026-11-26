@@ -57,6 +57,8 @@ const overlayLine = {
 const hudCss = `
 @keyframes eph-blink { 50% { opacity: 0; } }
 @keyframes eph-fade { from { opacity: 1; } to { opacity: 0; } }
+/* dvh: on a phone the browser's toolbar must not cover the BURN zone */
+.eph-page { height: 100vh; height: 100dvh; }
 .eph-blink { animation: eph-blink 1.2s steps(2) infinite; }
 .eph-warn[data-warn="on"] { animation: eph-blink .5s steps(2) infinite; }
 .eph-fade { animation: eph-fade .5s ease-out forwards; }
@@ -108,7 +110,7 @@ const Ephemeris = () => {
   const gameRef = useRef<EphemerisGame | null>(null);
   const [phase, setPhase] = useState<EphemerisPhase>('title');
   const [result, setResult] = useState<SurveyResult | null>(null);
-  // counts surveys started, so each one replays the fade from black
+  // counts flights started, so each one replays the fade from black
   const [run, setRun] = useState(0);
   // The BURN zone and the touch wording show once a finger is involved.
   const [touch, setTouch] = useState(
@@ -135,7 +137,7 @@ const Ephemeris = () => {
       onPhase: (next, closed) => {
         setPhase(next);
         if (closed) setResult(closed);
-        if (next === 'survey') setRun((n) => n + 1);
+        if (next === 'survey' || next === 'drift') setRun((n) => n + 1);
       },
     });
     gameRef.current = game;
@@ -180,13 +182,13 @@ const Ephemeris = () => {
   );
 
   return (
-    <Box height="100vh" display="flex" flexDirection="column" bg="black">
+    <Box className="eph-page" display="flex" flexDirection="column" bg="black">
       <style>{hudCss}</style>
       <Header />
       {/* touch-action: a drag steers the ship; the browser must not claim it */}
       <Box position="relative" flex="1" overflow="hidden" cursor="crosshair" touchAction="none">
         <Box ref={containerRef} position="absolute" inset={0} />
-        {surveying && (
+        {flying && (
           <Box key={run} className="eph-fade" position="absolute" inset={0} bg="black" pointerEvents="none" />
         )}
 
@@ -214,7 +216,12 @@ const Ephemeris = () => {
               cursor="pointer"
               pointerEvents={flying ? 'auto' : 'none'}
               _hover={{ opacity: 1 }}
-              onClick={() => gameRef.current?.menu()}
+              onClick={(e) => {
+                // or the hidden button keeps the focus and takes every key
+                // that should start the next run
+                e.currentTarget.blur();
+                gameRef.current?.menu();
+              }}
             >
               {touch ? 'MENU' : 'ESC · MENU'}
             </Box>

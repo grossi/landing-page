@@ -77,15 +77,29 @@ export function createFlightInput(container: HTMLElement, options: FlightInputOp
   // the pointer that steers when the keys do not: the last of the two to act
   let touchSteers = false;
 
+  // Keys that were down at a release. They count again after a key-up or a
+  // fresh press: the keyboard's auto-repeat of a key that started a run (or
+  // was held across a phase change) must not turn into a burn or a turn.
+  const suppressed = new Set<string>();
+
   const unit = (value: number) => Math.max(-1, Math.min(1, value));
 
   const release = () => {
-    for (const code in keys) keys[code] = false;
+    for (const code in keys) {
+      if (keys[code]) suppressed.add(code);
+      keys[code] = false;
+    }
     mouseDown = false;
     burnTouch = null;
     anchor = null;
     touches.clear();
     stick.x = stick.y = 0;
+    // the mouse stick centres too, until the mouse moves again: a pointer
+    // left off-centre must not keep turning the ship after a blur or a cancel
+    pointer.x = pointer.y = 0;
+    parked.x = parked.y = 0;
+    keysSteer = false;
+    touchSteers = false;
   };
 
   // blur clears the key map inside the tracker; the rest is dropped here
@@ -111,13 +125,19 @@ export function createFlightInput(container: HTMLElement, options: FlightInputOp
       if (!spent) mouseDown = true;
       return;
     }
+    touchSteers = true;
+    keysSteer = false;
+    // A tap that started or retried a run is nothing more: not a burn and
+    // not the stick. (The BURN zone is not on screen yet when it lands, so
+    // a thumb resting where the zone will be would otherwise take the stick
+    // and leave the other thumb with nothing.) Untracked, its moves and its
+    // lift are dropped.
+    if (spent) return;
     if (burnTouch === null && inBurnZone(e.clientX, e.clientY)) {
-      if (!spent) burnTouch = e.pointerId;
+      burnTouch = e.pointerId;
       return;
     }
     touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
-    touchSteers = true;
-    keysSteer = false;
     if (!anchor) {
       anchor = { id: e.pointerId, x: e.clientX, y: e.clientY };
       stick.x = stick.y = 0;
@@ -156,15 +176,25 @@ export function createFlightInput(container: HTMLElement, options: FlightInputOp
   };
 
   const onKeyDown = (e: KeyboardEvent) => {
+    if (e.repeat) {
+      // the key tracker (registered first) has just marked it held again
+      if (suppressed.has(e.code)) keys[e.code] = false;
+      return;
+    }
+    suppressed.delete(e.code);
     if (e.code === 'Escape') {
       onEscape?.();
       return;
     }
-    if (e.repeat || e.ctrlKey || e.metaKey || e.altKey || PASSIVE_KEYS.test(e.code)) return;
+    if (e.ctrlKey || e.metaKey || e.altKey || PASSIVE_KEYS.test(e.code)) return;
     // a key pressed on a link or a button is that control's, not the game's
     const target = e.target as Element | null;
     if (target?.closest?.('a, button, input, textarea, select')) return;
     onPress?.();
+  };
+
+  const onKeyUp = (e: KeyboardEvent) => {
+    suppressed.delete(e.code);
   };
 
   const onVisibilityChange = () => {
@@ -175,6 +205,7 @@ export function createFlightInput(container: HTMLElement, options: FlightInputOp
   // run (and releases everything) also drops the key that made it
   const listeners = createListenerGroup();
   listeners.add(window, 'keydown', onKeyDown);
+  listeners.add(window, 'keyup', onKeyUp);
   listeners.add(container, 'pointerdown', onPointerDown);
   listeners.add(container, 'pointermove', onPointerMove);
   listeners.add(window, 'pointerup', onPointerUp);
@@ -207,6 +238,7 @@ export function createFlightInput(container: HTMLElement, options: FlightInputOp
       listeners.dispose();
       keyTracker.dispose();
       release();
+      suppressed.clear();
     },
   };
 }
