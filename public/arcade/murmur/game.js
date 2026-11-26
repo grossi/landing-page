@@ -44,10 +44,10 @@ export const TUNE = {
 };
 
 export const BEST_KEY = 'murmur.best';
-/** The title screen's flight stays within MENU_REACH of the flock's anchor, the
- *  anchor within ROAM of its home, and no rock stands within MENU_CLEAR of that home. */
 /** A released flock is stepped this many times before anyone sees it: 5 seconds. */
 const SETTLE_STEPS = 150;
+/** The title screen's flight stays within MENU_REACH of the flock's anchor, the
+ *  anchor within ROAM of its home, and no rock stands within MENU_CLEAR of that home. */
 export const MENU_REACH = 48, ROAM = { x: 40, y: 14, z: 40 }, MENU_CLEAR = 135;
 
 /** What a bank of `birds` pays: bigger hauls pay much more per bird. */

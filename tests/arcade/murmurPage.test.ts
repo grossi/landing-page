@@ -192,6 +192,61 @@ describe('MURMUR page', () => {
     expect(input.hold).toBe(false);
   });
 
+  it('only the primary mouse button boosts, and a right click opens no menu', () => {
+    const { game, input } = playing();
+    const menu = Object.assign(new Event('contextmenu', { cancelable: true }), { button: 2 });
+    window.dispatchEvent(menu);
+    expect(menu.defaultPrevented).toBe(true);
+    // The right button goes down and its release never arrives: nothing is held.
+    send(window, 'pointerdown', { pointerType: 'mouse', pointerId: 1, button: 2 });
+    expect(input.hold).toBe(false);
+    ticks(2);
+    expect(game.ship.boost).toBe(false);
+    expect(speed(game)).toBeLessThan(TUNE.CRUISE + 2);
+    // Releasing another button does not let go of the primary one.
+    send(window, 'pointerdown', { pointerType: 'mouse', pointerId: 1, button: 0 });
+    send(window, 'pointerup', { pointerType: 'mouse', pointerId: 1, button: 2 });
+    expect(input.hold).toBe(true);
+    send(window, 'pointerup', { pointerType: 'mouse', pointerId: 1, button: 0 });
+    expect(input.hold).toBe(false);
+    // After dispose the page leaves the menu alone again.
+    page!.dispose(); page = undefined;
+    const later = new Event('contextmenu', { cancelable: true });
+    window.dispatchEvent(later);
+    expect(later.defaultPrevented).toBe(false);
+  });
+
+  it('never puts a marker under the BOOST thumb on a phone', () => {
+    Object.assign(window, { innerWidth: 390, innerHeight: 844 });
+    try {
+      const { game } = open();
+      touch('pointerdown', 1, 120, 600);
+      game.belt.count = 0;
+      ticks(0.3);
+      const { ship, gate } = game, side = Math.hypot(ship.fx, ship.fz);
+      const at = (id: string) => element(id).style.transform.match(/translate\(([-\d.]+)px, ([-\d.]+)px\)/)!.slice(1).map(Number);
+      const left = 390 - ZONE.GAP - ZONE.SIZE, top = 844 - ZONE.GAP - ZONE.SIZE;
+      let moved = 0;
+      // Targets all round the lower right: to the right and below, at every bearing.
+      for (let degrees = 5; degrees < 180; degrees += 2.5) {
+        for (const drop of [20, 60, 120, 240]) {
+          const angle = degrees * Math.PI / 180, ahead = Math.cos(angle) * 100, right = Math.sin(angle) * 100;
+          gate.x = ship.x + ship.fx / side * ahead - ship.fz / side * right; gate.y = ship.y - drop;
+          gate.z = ship.z + ship.fz / side * ahead + ship.fx / side * right;
+          game.flock.wake = 0;
+          ticks(1 / 600);
+          const [x, y] = at('gateMark');
+          expect(x > left && y > top, `bearing ${degrees}, ${drop} below: ${x}, ${y}`).toBe(false);
+          expect(x).toBeLessThanOrEqual(390); expect(y).toBeLessThanOrEqual(844);
+          if (Math.abs(x - (left - 22)) < 0.2 || Math.abs(y - (top - 22)) < 0.2) moved++;
+        }
+      }
+      expect(moved).toBeGreaterThan(3); // some of them would have landed on it
+    } finally {
+      Object.assign(window, { innerWidth: 1024, innerHeight: 768 });
+    }
+  });
+
   it.each(['pointercancel', 'touchcancel', 'blur', 'hidden'])('lets go of the stick, the keys and the boost on %s', how => {
     const { game, input } = open();
     const [bx, by] = boostSpot();
@@ -244,6 +299,26 @@ describe('MURMUR page', () => {
     // Moving the mouse takes the stick back.
     mouse('pointermove', innerWidth * 0.9, innerHeight / 2);
     ticks(0.6);
+    expect(game.ship.turn).toBeGreaterThan(0.8);
+  });
+
+  it('gives the stick to whoever acted last, even while a steering key is still held', () => {
+    const { game } = playing();
+    send(window, 'keydown', { code: 'ArrowRight' });
+    ticks(1);
+    expect(game.ship.turn).toBeGreaterThan(0.8);
+    // The key is still down; the mouse moves to the far left: the mouse steers now.
+    mouse('pointermove', 0, innerHeight / 2);
+    ticks(1);
+    expect(game.ship.turn).toBeLessThan(-0.8);
+    // Autorepeat of the held key is not a new press, and neither is holding on.
+    ticks(1);
+    expect(game.ship.turn).toBeLessThan(-0.8);
+    // A new press takes it back, and starts from a nudge, not from full stick.
+    send(window, 'keydown', { code: 'KeyD' });
+    ticks(0.1);
+    expect(game.ship.turn).toBeLessThan(0.2);
+    ticks(1);
     expect(game.ship.turn).toBeGreaterThan(0.8);
   });
 

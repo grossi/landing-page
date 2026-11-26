@@ -756,6 +756,53 @@ describe('finding things', () => {
     expect(widest).toBeLessThan(60);
   });
 
+  it('slides off the screen without a jump, whatever the way to steer is', () => {
+    // At the border the marker is still where the target was last seen; the way
+    // to steer takes over only as the target goes farther round.
+    const out = { x: 0, y: 0, edge: false };
+    const at = (x: number, y: number, turn: number, climb: number) =>
+      ({ ...markerSpot(x, y, -100, turn, climb, TAN, ASPECT, W, H, INSET, out) });
+    const edgeX = 100 * TAN * ASPECT * (W / 2 - INSET) / (W / 2), edgeY = 100 * TAN * (H / 2 - INSET) / (H / 2);
+    for (const [turn, climb] of [[1, 0], [0.3, -1.2], [-2, 0.4], [0.05, 1]]) {
+      for (const [x, y] of [[edgeX, 0], [edgeX, edgeY * 0.6], [-edgeX, -edgeY * 0.9], [edgeX * 0.4, edgeY], [-edgeX * 0.2, -edgeY]]) {
+        const inside = at(x * 0.999, y * 0.999, turn, climb), outside = at(x * 1.001, y * 1.001, turn, climb);
+        expect([inside.edge, outside.edge]).toEqual([false, true]);
+        expect(Math.hypot(inside.x - outside.x, inside.y - outside.y), `steer ${turn}, ${climb} at ${x}, ${y}`).toBeLessThan(4);
+      }
+    }
+    // Far round to the side, the marker is the way to steer and nothing else.
+    expect(at(edgeX * 40, 0, 1, 1).y).toBeLessThan(H / 2);
+    expect(at(edgeX * 40, 0, 1, -1).y).toBeGreaterThan(H / 2);
+  });
+
+  it('keeps the marker steady through the real camera with the nose pitched up or down', () => {
+    for (const pitch of [1, -1, 0.4]) {
+      const game = noRocks(running(5));
+      const view = createView({ THREE, createShipBody, game, aspect: ASPECT });
+      view.resize(W, H, 1);
+      game.ship.pitch = pitch;
+      for (let i = 0; i < 120; i++) { game.clock = TUNE.CLOCK; game.step(1 / 60, CENTRE); view.render({ render() {} }, 1 / 60); }
+      const { ship } = game, cam = { x: 0, y: 0, z: 0 }, way = { turn: 0, climb: 0 }, out = { x: 0, y: 0, edge: false };
+      const tan = Math.tan(view.camera.fov * Math.PI / 360);
+      let previous: { x: number, y: number } | null = null, widest = 0;
+      // A target circling the ship at its own height, a quarter of a degree at a time.
+      for (let degrees = 0; degrees <= 360; degrees += 0.25) {
+        const angle = ship.yaw - degrees * Math.PI / 180;
+        const target = { x: ship.x - Math.sin(angle) * 120, y: ship.y + 15, z: ship.z - Math.cos(angle) * 120 };
+        view.toCamera(target.x, target.y, target.z, cam);
+        game.bearing(target.x, target.y, target.z, way);
+        markerSpot(cam.x, cam.y, cam.z, way.turn, way.climb, tan, ASPECT, W, H, INSET, out);
+        expect(out.x).toBeGreaterThanOrEqual(INSET - 1e-6); expect(out.x).toBeLessThanOrEqual(W - INSET + 1e-6);
+        expect(out.y).toBeGreaterThanOrEqual(INSET - 1e-6); expect(out.y).toBeLessThanOrEqual(H - INSET + 1e-6);
+        // Dead astern is the one place it changes sides.
+        if (previous && Math.abs(degrees - 180) > 2) widest = Math.max(widest, Math.hypot(out.x - previous.x, out.y - previous.y));
+        previous = { x: out.x, y: out.y };
+      }
+      expect(widest, `pitch ${pitch}`).toBeLessThan(40); // 225 px before the blend
+      view.dispose();
+    }
+  });
+
   it('marks a target behind to the side the ship must turn, never above or below where it cannot go', () => {
     // The ship cannot loop: its pitch is limited. Behind and below means turn round, then nose down.
     for (const y of [-70, 70, 0]) {

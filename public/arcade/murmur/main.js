@@ -9,8 +9,9 @@ export const ZONE = { SIZE: 96, GAP: 20, SLACK: 16 };
 /** A held steering key moves the stick to full in 1 / KEY_RAMP seconds, so a tap
  *  is a nudge; let go and it centres in 1 / KEY_RELEASE. */
 export const KEY_RAMP = 2.5, KEY_RELEASE = 6;
-/** Markers stay this far inside the screen's edge. */
-const INSET = 38;
+const STEER_KEYS = ['ArrowRight', 'KeyD', 'ArrowLeft', 'KeyA', 'ArrowDown', 'ArrowUp'];
+/** Markers stay this far inside the screen's edge, and this far clear of the BOOST square. */
+const INSET = 38, ZONE_CLEAR = 22;
 /** A phone slower than this many frames a second flies the smaller flock from its next run. */
 const SLOW_FPS = 34;
 
@@ -63,15 +64,24 @@ export function mount({ THREE, createShipBody, storage = safeStorage(), random =
     },
   });
   // The BOOST square is for thumbs: it appears with the first touch.
-  const onTouch = event => { if (event.pointerType === 'touch') hud.root.classList.add('touch'); };
+  let thumbs = coarse;
+  const onTouch = event => {
+    if (event.pointerType !== 'touch') return;
+    thumbs = true;
+    hud.root.classList.add('touch');
+  };
   addEventListener('pointerdown', onTouch);
+  // No menu over the game: a right click must not freeze the page mid-run.
+  const noMenu = event => event.preventDefault();
+  addEventListener('contextmenu', noMenu);
 
   const stick = { x: 0, y: 0 }, keyStick = { x: 0, y: 0 };
-  // The stick belongs to whoever acted last. Once a steering key is pressed the
-  // keys keep it, released or not, until the pointer moves again: a mouse left
-  // lying off-centre must not take the ship from a keyboard player. `parked` is
-  // where the pointer was then (its position, not the stick, which is clamped).
-  let keysSteer = false;
+  // The stick belongs to whoever acted last: pressing a steering key gives it
+  // to the keys, moving the pointer gives it back. A key still held does not
+  // hold on to it, and a mouse left lying off-centre does not take it: only a
+  // new press or a new move counts. `parked` is where the pointer was when
+  // the keys took over (its position, not the stick, which is clamped).
+  let keysSteer = false, held = 0;
   const parked = { x: 0, y: 0 };
   const ramp = (value, target, dt) => {
     const rate = (target === 0 ? KEY_RELEASE : KEY_RAMP) * dt;
@@ -80,16 +90,22 @@ export function mount({ THREE, createShipBody, storage = safeStorage(), random =
 
   function readStick(dt) {
     const { keys } = input;
-    const kx = (keys.ArrowRight || keys.KeyD ? 1 : 0) - (keys.ArrowLeft || keys.KeyA ? 1 : 0);
-    const ky = (keys.ArrowDown ? 1 : 0) - (keys.ArrowUp ? 1 : 0);
-    if (kx || ky) {
+    const right = keys.ArrowRight || keys.KeyD ? 1 : 0, left = keys.ArrowLeft || keys.KeyA ? 1 : 0;
+    const down = keys.ArrowDown ? 1 : 0, up = keys.ArrowUp ? 1 : 0;
+    // One bit per steering key, so a new press is seen whatever else is held.
+    let now = 0;
+    for (let i = 0; i < STEER_KEYS.length; i++) if (keys[STEER_KEYS[i]]) now |= 1 << i;
+    if (now & ~held) {
       keysSteer = true;
       parked.x = input.pointer.x; parked.y = input.pointer.y;
     } else if (keysSteer && (input.pointer.x !== parked.x || input.pointer.y !== parked.y)) {
       keysSteer = false;
     }
-    keyStick.x = ramp(keyStick.x, kx, dt);
-    keyStick.y = ramp(keyStick.y, ky, dt);
+    held = now;
+    // While the pointer has the stick the keys' own stick runs down, so taking
+    // it back with a new press starts from a nudge again.
+    keyStick.x = ramp(keyStick.x, keysSteer ? right - left : 0, dt);
+    keyStick.y = ramp(keyStick.y, keysSteer ? down - up : 0, dt);
     stick.x = keysSteer ? keyStick.x : input.stick.x;
     stick.y = keysSteer ? keyStick.y : input.stick.y;
     return stick;
@@ -103,6 +119,14 @@ export function mount({ THREE, createShipBody, storage = safeStorage(), random =
     game.bearing(target.x, target.y, target.z, way);
     markerSpot(camera.x, camera.y, camera.z, way.turn, way.climb,
       Math.tan(view.camera.fov * Math.PI / 360), view.camera.aspect, innerWidth, innerHeight, INSET, spot);
+    if (thumbs) {
+      // Never under the BOOST thumb: a marker that lands on the square moves
+      // up the right edge, or along the bottom edge, to just clear of it.
+      const left = innerWidth - ZONE.GAP - ZONE.SIZE - ZONE_CLEAR, top = innerHeight - ZONE.GAP - ZONE.SIZE - ZONE_CLEAR;
+      if (spot.x > left && spot.y > top) {
+        if (innerWidth - spot.x <= innerHeight - spot.y) spot.y = top; else spot.x = left;
+      }
+    }
     element.style.transform = `translate(${spot.x.toFixed(1)}px, ${spot.y.toFixed(1)}px) translate(-50%, -50%)`;
     element.classList.toggle('edge', spot.edge);
     setText(label, String(Math.round(Math.hypot(target.x - ship.x, target.y - ship.y, target.z - ship.z))));
@@ -171,6 +195,7 @@ export function mount({ THREE, createShipBody, storage = safeStorage(), random =
     input.dispose();
     removeEventListener('resize', resize);
     removeEventListener('pointerdown', onTouch);
+    removeEventListener('contextmenu', noMenu);
     view.dispose();
     renderer.dispose();
     renderer.domElement.remove();

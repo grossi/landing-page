@@ -70,7 +70,9 @@ export function createInput({ onPress, pressKeys, holdZone } = {}) {
   listen(window, 'pointerdown', e => {
     input.pointerDown = true;
     if (e.pointerType !== 'touch') {
-      mouseHeld = true;
+      // Only the primary button holds: a right click opens a menu that may
+      // swallow its own release, and the hold would stick.
+      if (!e.button) mouseHeld = true;
     } else if (holdZone?.(e.clientX, e.clientY)) {
       // It stays a hold wherever it slides to, and is never the stick.
       holds.add(e.pointerId);
@@ -87,7 +89,7 @@ export function createInput({ onPress, pressKeys, holdZone } = {}) {
   listen(window, 'pointerup', e => {
     input.pointerDown = false;
     touches.delete(e.pointerId);
-    if (e.pointerType !== 'touch') mouseHeld = false;
+    if (e.pointerType !== 'touch' && !e.button) mouseHeld = false;
     holds.delete(e.pointerId);
     input.hold = mouseHeld || holds.size > 0;
     if (anchor && anchor.id === e.pointerId) {
