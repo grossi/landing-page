@@ -15,7 +15,6 @@ export const SECTORS = ['THE RANGES', 'THE CITY', 'THE SEA', 'THE SHARDS'];
 export const LANES = 9, LANE_W = 20, ROW_D = 40, CITY_IN = 80, CITY_ROWS = 27;
 
 export const laneX = lane => (lane - (LANES - 1) / 2) * LANE_W;
-const clamp = (value, low, high) => Math.max(low, Math.min(high, value));
 const smooth = t => t * t * (3 - 2 * t);
 
 export function mulberry32(seed) {
@@ -105,7 +104,8 @@ export function createWorld(random = Math.random) {
    * through: consecutive rows always share a free lane, and the walk moves at
    * most one lane every second row, so following it never asks for more than
    * 20 units sideways per 80 of travel. Later laps leave fewer free lanes
-   * beside it.
+   * beside it. Nothing gets through without steering: every lane is walled
+   * across its full width in one row, so every straight line meets a tower.
    */
   function cityRows(ordinal) {
     let rows = cities.get(ordinal);
@@ -118,11 +118,14 @@ export function createWorld(random = Math.random) {
     let corridor = Math.floor(LANES / 2), partner = corridor + 1;
     for (let k = 0; k < CITY_ROWS; k++) {
       if (k > 0 && k % 2 === 0) {
-        // Always a step, never straight on: a ship that does not steer meets a tower.
-        if (wide) corridor = clamp(corridor + (rng() < 0.5 ? -1 : 1), 1, LANES - 2);
-        else {
-          // Step onto one of the previous row's two free lanes, then open a neighbour.
-          if (rng() < 0.5) corridor = partner;
+        if (wide) {
+          // Always a step, never straight on; at the edge of the city, back inward.
+          const step = rng() < 0.5 ? -1 : 1;
+          corridor += corridor + step < 1 || corridor + step > LANES - 2 ? -step : step;
+        } else {
+          // Step onto one of the previous row's two free lanes (always, the first
+          // time, so no lane is the way through from end to end), then open a neighbour.
+          if (rng() < 0.5 || k === 2) corridor = partner;
           partner = corridor + (rng() < 0.5 ? -1 : 1);
           if (partner < 0 || partner >= LANES) partner = corridor - (partner - corridor);
         }
@@ -137,6 +140,20 @@ export function createWorld(random = Math.random) {
         if (!free && !open) towers.push({ lane, x, w, depth, h });
       }
       rows.push({ d: world.origin + ordinal * SPAN + CITY_IN + k * ROW_D, k, ordinal, corridor, towers });
+    }
+    // Wall each lane once. A row may wall any lane but its own free lane and the
+    // next row's, which is the lane the two rows share: the way through stays.
+    for (let lane = 0; lane < LANES; lane++) {
+      const allowed = rows.filter((row, k) =>
+        lane !== row.corridor && lane !== rows[Math.min(k + 1, rows.length - 1)].corridor);
+      // Past the open entrance if possible, and off the free lane's neighbours.
+      const inside = allowed.filter(row => row.k >= 2);
+      const clear = inside.filter(row => Math.abs(lane - row.corridor) > 1);
+      const from = clear.length ? clear : inside.length ? inside : allowed;
+      const row = from[Math.floor(rng() * from.length)];
+      let tower = row.towers.find(candidate => candidate.lane === lane);
+      if (!tower) row.towers.push(tower = { lane, x: 0, w: 0, depth: 10 + rng() * 9, h: 8 + rng() * 34 });
+      tower.x = laneX(lane); tower.w = LANE_W;
     }
     cities.set(ordinal, rows);
     return rows;

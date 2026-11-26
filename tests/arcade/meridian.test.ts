@@ -464,7 +464,12 @@ describe('the world', () => {
             expect(Math.abs(tower.x - laneX(tower.lane)) + tower.w / 2).toBeLessThanOrEqual(LANE_W / 2);
             expect(tower.h).toBeLessThan(TUNE.CEILING - 10);
           }
-          if (k > 0) expect(freeLanes(row).filter(lane => freeLanes(rows[k - 1]).includes(lane)).length).toBeGreaterThan(0);
+          if (k > 0) {
+            expect(freeLanes(row).filter(lane => freeLanes(rows[k - 1]).includes(lane)).length).toBeGreaterThan(0);
+            // Precisely: this row's free lane is also open in the row before it, one step away at most.
+            expect(freeLanes(rows[k - 1])).toContain(row.corridor);
+            expect(Math.abs(row.corridor - rows[k - 1].corridor)).toBeLessThanOrEqual(k % 2 ? 0 : 1);
+          }
           if (k >= 2) { free += freeLanes(row).length; count++; }
         });
       }
@@ -473,6 +478,32 @@ describe('the world', () => {
     // Later laps leave less room.
     expect(averages[0]).toBeGreaterThan(averages[2]);
     expect(averages[2]).toBeGreaterThan(averages[4]);
+  });
+
+  it('leaves no straight line through a city at low height, on any lap', () => {
+    // Flying low pays triple; it must not be free. Whatever line a ship holds
+    // without steering, some tower of the city stands on it.
+    for (const lap of [1, 2, 3, 5, 9]) {
+      for (let seed = 1; seed <= 150; seed++) {
+        const world = createWorld(mulberry32(seed * 17 + lap));
+        world.reseed();
+        const rows = world.cityRows((lap - 1) * SECTORS.length + CITY);
+        for (let x = -HALF; x <= HALF; x += 0.25) {
+          const blocked = rows.some((row: any) => row.towers.some((t: any) => Math.abs(x - t.x) < t.w / 2 + TUNE.HULL));
+          if (!blocked) expect.fail(`lap ${lap}, seed ${seed}: x = ${x} is open through the whole city`);
+        }
+      }
+    }
+    // And in the game itself: the seed and line a reviewer flew straight through.
+    for (const [seed, x] of [[36, 0], [36, 10], [1, -60], [7, 20], [12, -30]]) {
+      const game = running(seed);
+      game.gates.length = 0;
+      game.world.restartAt(game.dist - SPAN - 10); // the lap 1 city starts here
+      game.x = x; game.y = 4; game.vx = game.vy = 0; game.runTime = TUNE.GRACE;
+      const end = game.world.cityRows(CITY)[26].d + 20;
+      while (game.state === 'play' && game.dist < end) { game.charge = TUNE.CHARGE; game.step(1 / 60, CENTRE); }
+      expect(game, `seed ${seed}, x ${x}`).toMatchObject({ state: 'over', cause: 'IMPACT', sector: CITY });
+    }
   });
 
   it('stands every gate clear of the ground, inside the track, and on the free lane in the city', () => {
