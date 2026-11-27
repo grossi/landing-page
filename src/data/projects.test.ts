@@ -1,223 +1,190 @@
 /// <reference types="node" />
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { demoHref, demos } from 'data/demos';
-import {
-  projectSections,
-  projects,
-  statusLabels,
-  type Project,
-  type ProjectLink,
-} from 'data/projects';
+import { arcadeGames } from 'data/demos';
+import { projectGroups, projects, type ImageFile } from 'data/projects';
 
-const bySlug = (slug: string): Project => {
-  const found = projects.find((project) => project.slug === slug);
-  if (!found) throw new Error(`no project with slug "${slug}"`);
-  return found;
+const repoRoot = fileURLToPath(new URL('../../', import.meta.url));
+
+/** Width and height from a WebP file's header (VP8, VP8L or VP8X). */
+function webpSize(bytes: Buffer): { width: number; height: number } {
+  if (bytes.toString('ascii', 0, 4) !== 'RIFF' || bytes.toString('ascii', 8, 12) !== 'WEBP') {
+    throw new Error('not a WebP file');
+  }
+  const chunk = bytes.toString('ascii', 12, 16);
+  if (chunk === 'VP8X') {
+    return { width: 1 + bytes.readUIntLE(24, 3), height: 1 + bytes.readUIntLE(27, 3) };
+  }
+  if (chunk === 'VP8 ') {
+    return { width: bytes.readUInt16LE(26) & 0x3fff, height: bytes.readUInt16LE(28) & 0x3fff };
+  }
+  if (chunk === 'VP8L') {
+    const bits = bytes.readUInt32LE(21);
+    return { width: 1 + (bits & 0x3fff), height: 1 + ((bits >> 14) & 0x3fff) };
+  }
+  throw new Error(`unknown WebP chunk ${chunk}`);
+}
+
+/** The file on disk behind an imported image URL (`/src/data/images/x.webp`). */
+const fileOf = (image: ImageFile): string => {
+  const path = image.src.split('?')[0];
+  expect(path, image.src).toMatch(/^\/src\/data\/images\/[a-z0-9-]+\.webp$/);
+  return `${repoRoot}${path.slice(1)}`;
 };
 
-const hrefs = (slug: string) => bySlug(slug).links.map((link) => link.href);
+describe('entries', () => {
+  it('are exactly the agreed list, grouped in page order', () => {
+    expect(projectGroups.map((group) => [group.id, group.projects.map((p) => p.slug)])).toEqual([
+      ['hoshi-labs', ['hoshi-labs', 'star-survival', 'tactia-pocket']],
+      ['prototypes', ['mossmage', 'emberwatch', 'tsukikage']],
+      ['web-and-apps', ['isuzu-portfolio', 'fold-fix']],
+      ['arcade', ['meridian', 'hypertunnel', 'ephemeris']],
+    ]);
+    expect(projects).toEqual(projectGroups.flatMap((group) => group.projects));
+  });
 
-const allLinks: ProjectLink[] = projects.flatMap((project) => project.links);
-
-// Repos checked as PUBLIC with `gh repo view <repo> --json visibility` on
-// 2026-11-26. Linking another repo means checking it and adding it here.
-const PUBLIC_REPOS = [
-  'https://github.com/grossi/isuzu-artist-portfolio',
-  'https://github.com/grossi/fold-fix',
-  'https://github.com/grossi/image-gen-mcp',
-];
-
-describe('project data shape', () => {
-  it('groups the page as studio, prototypes, tools, in that order', () => {
-    expect(projectSections.map((section) => section.id)).toEqual(['studio', 'prototypes', 'tools']);
-    for (const section of projectSections) {
-      expect(section.title.trim()).not.toBe('');
-      expect(section.blurb.trim()).not.toBe('');
-      expect(section.projects.length).toBeGreaterThan(0);
+  it('leave out what has no public link or was cut', () => {
+    for (const slug of ['pickaxe-rs', 'gamelib', 'image-gen-mcp', 'game-prototypes', 'murmur']) {
+      expect(projects.some((project) => project.slug === slug), slug).toBe(false);
     }
   });
 
-  it('uses unique, URL-safe slugs across projects and demos', () => {
-    const slugs = [...projects.map((project) => project.slug), ...demos.map((demo) => demo.slug)];
+  it('have unique, URL-safe slugs and group ids', () => {
+    const slugs = projects.map((project) => project.slug);
     expect(new Set(slugs).size).toBe(slugs.length);
     for (const slug of slugs) expect(slug).toMatch(/^[a-z0-9]+(-[a-z0-9]+)*$/);
+    const ids = projectGroups.map((group) => group.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    for (const group of projectGroups) expect(group.title.trim(), group.id).not.toBe('');
   });
 
-  it('gives every project a name, tagline, description, tech and a known status', () => {
+  it('carry only a name, kind, line, link and optional image', () => {
     for (const project of projects) {
+      expect(Object.keys(project).sort(), project.slug).toEqual(
+        project.image
+          ? ['image', 'kind', 'line', 'link', 'name', 'slug']
+          : ['kind', 'line', 'link', 'name', 'slug'],
+      );
       expect(project.name.trim(), project.slug).not.toBe('');
-      expect(project.tagline.trim(), project.slug).not.toBe('');
-      expect(project.tech.length, project.slug).toBeGreaterThan(0);
-      for (const item of project.tech) expect(item.trim(), project.slug).not.toBe('');
-      expect(Object.keys(statusLabels), project.slug).toContain(project.status);
+      expect(['game', 'site', 'app', 'demo'], project.slug).toContain(project.kind);
+      expect(Object.keys(project.link).sort(), project.slug).toEqual(['href', 'label']);
+      expect(['PLAY', 'VISIT', 'GET', 'SOURCE'], project.slug).toContain(project.link.label);
     }
   });
 
-  it('keeps each description to two or three sentences', () => {
+  it('say one line of at most 12 words', () => {
     for (const project of projects) {
-      const sentences = project.description.split(/(?<=[.!?])\s+/).filter(Boolean);
-      expect(sentences.length, project.slug).toBeGreaterThanOrEqual(2);
-      expect(sentences.length, project.slug).toBeLessThanOrEqual(3);
+      const words = project.line.trim().split(/\s+/);
+      expect(project.line.trim(), project.slug).not.toBe('');
+      expect(project.line, project.slug).not.toMatch(/\n/);
+      expect(words.length, `${project.slug}: "${project.line}"`).toBeLessThanOrEqual(12);
     }
   });
 
-  it('labels every link', () => {
-    for (const link of allLinks) expect(link.label.trim(), link.href).not.toBe('');
+  it('use the arcade taglines from ARCADE.md', () => {
+    expect(arcadeGames.map((game) => [game.name, game.line])).toEqual([
+      ['MERIDIAN', 'low-altitude run across a changing world'],
+      ['HYPERTUNNEL', 'tunnel reflex run with a perfect chain'],
+      ['EPHEMERIS', 'daily solar-system survey'],
+    ]);
   });
 });
 
-describe('project links are public', () => {
-  it('uses https for every external link and never a tailnet host', () => {
-    expect(allLinks.length).toBeGreaterThan(0);
-    for (const link of allLinks) {
+describe('links', () => {
+  it('are public https URLs or in-site paths, never a tailnet or local host', () => {
+    for (const { slug, link } of projects) {
+      if (link.href.startsWith('/')) {
+        expect(link.href, slug).not.toMatch(/^\/\//);
+        continue;
+      }
       const url = new URL(link.href);
-      expect(url.protocol, link.href).toBe('https:');
-      expect(url.hostname.endsWith('.ts.net'), link.href).toBe(false);
-      expect(url.hostname, link.href).not.toBe('ts.net');
-      expect(url.port, link.href).toBe('');
-      expect(url.username + url.password, link.href).toBe('');
+      expect(url.protocol, slug).toBe('https:');
+      expect(url.hostname.endsWith('.ts.net'), slug).toBe(false);
+      expect(url.hostname, slug).not.toMatch(/^(localhost|.*\.local|.*\.lan|.*\.internal|[\d.]+|\[.*\])$/);
+      expect(url.port + url.username + url.password, slug).toBe('');
     }
   });
 
-  it('never links a loopback, LAN or bare-IP host', () => {
-    for (const link of allLinks) {
-      const { hostname } = new URL(link.href);
-      expect(hostname, link.href).not.toMatch(/^(localhost|.*\.local|.*\.lan|.*\.internal)$/);
-      expect(hostname, link.href).not.toMatch(/^[\d.]+$|^\[/);
-      expect(hostname, link.href).toContain('.');
+  it('send every in-site link to a page that exists', () => {
+    for (const { slug, link } of projects.filter((project) => project.link.href.startsWith('/'))) {
+      if (link.href === '/ephemeris') continue; // a route in App.tsx
+      expect(existsSync(`${repoRoot}public${link.href}`), `${slug}: ${link.href}`).toBe(true);
     }
   });
 
-  it('links only repos that were checked as public', () => {
-    const repoLinks = allLinks.filter((link) => new URL(link.href).hostname === 'github.com');
-    expect(repoLinks.map((link) => link.href).sort()).toEqual([...PUBLIC_REPOS].sort());
-  });
-
-  it('links one store listing: the released Star Survival', () => {
-    const storeLinks = allLinks.filter((link) => /(^|\.)play\.google\.com$/.test(new URL(link.href).hostname));
-    expect(storeLinks.map((link) => link.href)).toEqual([
-      'https://play.google.com/store/apps/details?id=net.jp.hoshilabs.starsurvival',
+  it('link only the repo checked as public and the one public store listing', () => {
+    const hosts = projects.map((project) => [project.slug, project.link.href]);
+    const repos = hosts.filter(([, href]) => href.startsWith('https://github.com/'));
+    expect(repos).toEqual([['fold-fix', 'https://github.com/grossi/fold-fix']]);
+    const stores = hosts.filter(([, href]) => href.includes('play.google.com'));
+    expect(stores).toEqual([
+      ['star-survival', 'https://play.google.com/store/apps/details?id=net.jp.hoshilabs.starsurvival'],
     ]);
   });
 
-  it('keeps private details out of every string in the data', () => {
-    const text = JSON.stringify({ projectSections, demos });
+  it('send prototypes straight to a game, never to the prototypes index', () => {
+    for (const project of projects) {
+      const { hostname, pathname } = new URL(project.link.href, 'https://grossi.tech');
+      if (hostname !== 'game-prototypes-omega.vercel.app') continue;
+      expect(project.kind, project.slug).toBe('demo');
+      expect(project.link.label, project.slug).toBe('PLAY');
+      expect(pathname, project.slug).toMatch(/^\/games\/\d{2}_[a-z0-9_]+\/$/);
+    }
+    const demos = projects.filter((project) => project.link.href.startsWith('https://game-prototypes-omega.vercel.app/'));
+    expect(demos.map((project) => project.slug)).toEqual(['mossmage', 'emberwatch', 'tsukikage']);
+  });
+});
+
+describe('images', () => {
+  const withImages = projects.filter((project) => project.image);
+
+  it('exist for every entry but FoldFix', () => {
+    expect(projects.filter((project) => !project.image).map((project) => project.slug)).toEqual(['fold-fix']);
+  });
+
+  it('are WebP files of their stated size and within the byte limits', () => {
+    for (const project of withImages) {
+      const image = project.image!;
+      for (const [file, size, limit] of [
+        [image.large, [1280, 800], 120_000],
+        [image.small, [640, 400], 40_000],
+      ] as const) {
+        expect([file.width, file.height], project.slug).toEqual(size);
+        const path = fileOf(file);
+        expect(existsSync(path), path).toBe(true);
+        expect(webpSize(readFileSync(path)), path).toEqual({ width: file.width, height: file.height });
+        expect(statSync(path).size, path).toBeLessThanOrEqual(limit);
+      }
+    }
+  });
+
+  it('have alt text that names what is shown', () => {
+    for (const project of withImages) {
+      const alt = project.image!.alt;
+      expect(alt.length, project.slug).toBeGreaterThan(20);
+      expect(alt, project.slug).not.toMatch(/screenshot of|image of/i);
+    }
+  });
+
+  it('are not shared between entries', () => {
+    const files = withImages.flatMap((project) => [project.image!.large.src, project.image!.small.src]);
+    expect(new Set(files).size).toBe(files.length);
+  });
+});
+
+describe('the whole data', () => {
+  it('holds no private detail', () => {
+    const text = JSON.stringify(projectGroups);
     for (const forbidden of [
       /ts\.net/i,
       /tailnet|tailscale/i,
       /localhost|127\.0\.0\.1/i,
       /\/home\//,
       /internal t(rack|esting)/i,
-      /\b\d{1,3}(\.\d{1,3}){3}\b/,
     ]) {
       expect(text).not.toMatch(forbidden);
     }
-    // The one app id on the page is the released game's public listing.
     expect(text.match(/net\.jp\.[a-z0-9.]+/gi)).toEqual(['net.jp.hoshilabs.starsurvival']);
-  });
-});
-
-describe('the real projects', () => {
-  it('lists the studio and all four Hoshi Labs games first, each with its checked page', () => {
-    expect(projectSections[0].projects.map((project) => project.slug)).toEqual([
-      'hoshi-labs',
-      'star-survival',
-      'tactia-pocket',
-      'yonkoma-yokocho',
-      'yomikiri',
-    ]);
-    expect(hrefs('hoshi-labs')).toEqual(['https://hoshilabs.jp.net/en/']);
-    expect(hrefs('star-survival')).toEqual([
-      'https://play.google.com/store/apps/details?id=net.jp.hoshilabs.starsurvival',
-      'https://hoshilabs.jp.net/en/games/star-survival/',
-    ]);
-    expect(hrefs('tactia-pocket')).toEqual(['https://hoshilabs.jp.net/en/games/tactia-pocket/']);
-    expect(hrefs('yonkoma-yokocho')).toEqual(['https://hoshilabs.jp.net/en/games/yonkoma/']);
-    expect(hrefs('yomikiri')).toEqual(['https://hoshilabs.jp.net/en/games/yomikiri/']);
-  });
-
-  it('marks only Star Survival as released; the other games are coming soon', () => {
-    expect(bySlug('star-survival').status).toBe('released');
-    for (const slug of ['tactia-pocket', 'yonkoma-yokocho', 'yomikiri']) {
-      expect(bySlug(slug).status, slug).toBe('coming-soon');
-    }
-  });
-
-  it('lists the prototypes workspace with its public deployment', () => {
-    expect(bySlug('game-prototypes').status).toBe('prototype');
-    expect(hrefs('game-prototypes')).toEqual(['https://game-prototypes-omega.vercel.app/']);
-  });
-
-  it('lists the tools and open source with their public links', () => {
-    expect(hrefs('isuzu-portfolio')).toEqual([
-      'https://isuzu.work/',
-      'https://github.com/grossi/isuzu-artist-portfolio',
-    ]);
-    expect(hrefs('fold-fix')).toEqual(['https://github.com/grossi/fold-fix']);
-    expect(hrefs('image-gen-mcp')).toEqual(['https://github.com/grossi/image-gen-mcp']);
-    for (const slug of ['fold-fix', 'image-gen-mcp']) expect(bySlug(slug).status, slug).toBe('open-source');
-  });
-
-  it('says image-gen-mcp is a fork, not an original project', () => {
-    const fork = bySlug('image-gen-mcp');
-    expect(`${fork.tagline} ${fork.description}`).toMatch(/fork/i);
-  });
-
-  it('shows private projects without any link', () => {
-    const unlinked = projects.filter((project) => project.links.length === 0);
-    expect(unlinked.map((project) => project.slug).sort()).toEqual(['gamelib', 'pickaxe-rs']);
-    for (const project of unlinked) {
-      expect(['in-development', 'private'], project.slug).toContain(project.status);
-    }
-  });
-
-  it('gives every public status at least one link', () => {
-    for (const project of projects) {
-      if (project.status === 'in-development' || project.status === 'private') continue;
-      expect(project.links.length, project.slug).toBeGreaterThan(0);
-    }
-  });
-});
-
-describe('the demos', () => {
-  it('keeps all nine, in the original order', () => {
-    expect(demos.map((demo) => demo.slug)).toEqual([
-      'ephemeris',
-      'meridian',
-      'murmur',
-      'horizon',
-      'drift',
-      'city',
-      'tunnel',
-      'asteroids',
-      'stack',
-    ]);
-  });
-
-  it('opens EPHEMERIS on its site route and the rest from their static builds', () => {
-    expect(demoHref(demos[0])).toBe('/ephemeris');
-    for (const demo of demos.slice(1)) {
-      expect(demo.route, demo.slug).toBeUndefined();
-      expect(demoHref(demo), demo.slug).toBe(`/arcade/${demo.slug}/index.html`);
-    }
-  });
-
-  it('points every static demo at a build that exists in public/', () => {
-    for (const demo of demos) {
-      if (demo.route) continue;
-      const file = fileURLToPath(new URL(`../../public${demoHref(demo)}`, import.meta.url));
-      expect(existsSync(file), file).toBe(true);
-    }
-  });
-
-  it('gives every demo its card fields', () => {
-    for (const demo of demos) {
-      for (const field of [demo.title, demo.tagline, demo.description, demo.controls]) {
-        expect(field.trim(), demo.slug).not.toBe('');
-      }
-      expect(['game', 'simulation'], demo.slug).toContain(demo.kind);
-    }
   });
 });

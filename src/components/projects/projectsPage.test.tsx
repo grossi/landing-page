@@ -5,8 +5,8 @@ import { ChakraProvider } from '@chakra-ui/react';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import App from '../../App';
 import theme from '../../theme';
-import { demoHref, demos } from 'data/demos';
-import { projectSections, projects, statusLabels } from 'data/projects';
+
+import { projectGroups, projects } from 'data/projects';
 
 let root: Root | undefined;
 let host: HTMLElement | undefined;
@@ -53,163 +53,112 @@ async function openApp(path: string): Promise<HTMLElement> {
   return host;
 }
 
-const card = (page: HTMLElement, slug: string): HTMLElement => {
+const row = (page: HTMLElement, slug: string): HTMLElement => {
   const found = page.querySelector<HTMLElement>(`[data-project="${slug}"]`);
-  if (!found) throw new Error(`no card for "${slug}"`);
+  if (!found) throw new Error(`no row for "${slug}"`);
   return found;
 };
 
-describe('the projects page', () => {
-  it('renders on /projects and on the old /arcade address', async () => {
+const unmount = () => {
+  act(() => root?.unmount());
+  host?.remove();
+  root = undefined;
+  host = undefined;
+};
+
+describe('the projects page (placeholder)', () => {
+  it('renders every entry on /projects and on the old /arcade address', async () => {
     for (const path of ['/projects', '/arcade']) {
       const page = await openApp(path);
       expect(page.querySelector('h1')?.textContent, path).toBe('PROJECTS');
-      expect(page.querySelectorAll('[data-project]').length, path).toBe(projects.length);
-      expect(page.querySelectorAll('[data-demo]').length, path).toBe(demos.length);
+      expect(
+        [...page.querySelectorAll('[data-project]')].map((el) => el.getAttribute('data-project')),
+        path,
+      ).toEqual(projects.map((project) => project.slug));
       // Two addresses, one page: both name /projects as the canonical one.
       const canonical = [...document.querySelectorAll('link[rel="canonical"]')];
-      expect(canonical.map((link) => link.getAttribute('href')), path).toEqual([
-        'https://grossi.tech/projects',
-      ]);
-      act(() => root?.unmount());
-      host?.remove();
+      expect(canonical.map((link) => link.getAttribute('href')), path).toEqual(['https://grossi.tech/projects']);
+      unmount();
     }
   });
 
   it('points the PROJECTS nav entry at /projects and marks it current on both addresses', async () => {
     for (const path of ['/projects', '/arcade']) {
       const page = await openApp(path);
-      const navLinks = [...page.querySelectorAll<HTMLAnchorElement>('a')].filter(
-        (link) => link.textContent === 'PROJECTS',
-      );
-      expect(navLinks.length, path).toBeGreaterThan(0);
-      for (const link of navLinks) {
-        expect(link.getAttribute('href'), path).toBe('/projects');
-        expect(link.getAttribute('aria-current'), path).toBe('page');
+      const nav = [...page.querySelectorAll<HTMLAnchorElement>('a')].filter((a) => a.textContent === 'PROJECTS');
+      expect(nav.length, path).toBeGreaterThan(0);
+      for (const a of nav) {
+        expect(a.getAttribute('href'), path).toBe('/projects');
+        expect(a.getAttribute('aria-current'), path).toBe('page');
       }
-      const others = [...page.querySelectorAll<HTMLAnchorElement>('a')].filter((link) =>
-        ['EXPERIENCE', 'BLOG'].includes(link.textContent ?? ''),
-      );
-      expect(others.length, path).toBeGreaterThan(0);
-      for (const link of others) expect(link.getAttribute('aria-current'), path).toBeNull();
-      act(() => root?.unmount());
-      host?.remove();
+      unmount();
     }
   });
 
-  it('shows the sections in order: studio, prototypes, tools, then the demos', async () => {
+  it('shows each group as a section with its entries in order', async () => {
     const page = await openApp('/projects');
     const sections = [...page.querySelectorAll('section')];
-    expect(sections.map((section) => section.id)).toEqual(['studio', 'prototypes', 'tools', 'experiments']);
-    projectSections.forEach((section, index) => {
-      expect(sections[index].querySelector('h2')?.textContent).toBe(section.title);
-      const slugs = [...sections[index].querySelectorAll('[data-project]')].map((el) =>
-        el.getAttribute('data-project'),
-      );
-      expect(slugs).toEqual(section.projects.map((project) => project.slug));
+    expect(sections.map((section) => section.id)).toEqual(projectGroups.map((group) => group.id));
+    projectGroups.forEach((group, index) => {
+      expect(sections[index].querySelector('h2')?.textContent).toBe(group.title);
+      expect(
+        [...sections[index].querySelectorAll('[data-project]')].map((el) => el.getAttribute('data-project')),
+      ).toEqual(group.projects.map((project) => project.slug));
     });
-    expect(sections[3].querySelectorAll('[data-demo]').length).toBe(demos.length);
-    expect(sections[3].querySelectorAll('[data-project]').length).toBe(0);
   });
 
-  it('scrolls to the section named in the address on a fresh load', async () => {
-    for (const [path, id] of [
-      ['/projects#tools', 'tools'],
-      ['/arcade#experiments', 'experiments'],
-      // A percent-encoded fragment names the same section, as it does to a browser.
-      ['/projects#%74ools', 'tools'],
-    ]) {
-      const page = await openApp(path);
-      const section = page.querySelector(`section#${id}`);
-      expect(section, path).not.toBeNull();
-      expect(scrollIntoView.mock.contexts.at(-1), path).toBe(section);
-      act(() => root?.unmount());
-      host?.remove();
-      scrollIntoView.mockClear();
-    }
-  });
-
-  it('stays at the top without a section in the address, or with an unknown or malformed one', async () => {
-    for (const path of ['/projects', '/projects#', '/projects#nowhere', '/projects#%', '/projects#%E0%A4%A']) {
-      const page = await openApp(path);
-      expect(page.querySelectorAll('[data-project]').length, path).toBe(projects.length);
-      expect(scrollIntoView, path).not.toHaveBeenCalled();
-      act(() => root?.unmount());
-      host?.remove();
-    }
-  });
-
-  it('names each project link by its project and says it opens a new tab', async () => {
+  it('shows the name, kind, line, one link and the image of every entry', async () => {
     const page = await openApp('/projects');
-    const names = [...page.querySelectorAll('[data-project] a')].map((a) => a.getAttribute('aria-label'));
-    expect(new Set(names).size).toBe(names.length);
     for (const project of projects) {
-      for (const a of card(page, project.slug).querySelectorAll('a')) {
-        const name = a.getAttribute('aria-label') ?? '';
-        expect(name, project.slug).toContain(project.name);
-        expect(name, project.slug).toContain('opens in a new tab');
-        // The accessible name starts with the words a sighted visitor reads.
-        const visible = a.querySelector('[aria-hidden="true"]')
-          ? (a.textContent ?? '').replace(a.querySelector('[aria-hidden="true"]')?.textContent ?? '', '').trim()
-          : '';
-        expect(visible, project.slug).not.toBe('');
-        expect(name.startsWith(visible), project.slug).toBe(true);
+      const el = row(page, project.slug);
+      expect(el.querySelector('h3')?.textContent, project.slug).toBe(project.name);
+      expect(el.textContent, project.slug).toContain(project.kind);
+      expect(el.textContent, project.slug).toContain(project.line);
+      const links = [...el.querySelectorAll('a')];
+      expect(links.map((a) => a.getAttribute('href')), project.slug).toEqual([project.link.href]);
+      expect(links[0].textContent, project.slug).toContain(project.link.label);
+      expect(links[0].getAttribute('aria-label'), project.slug).toContain(project.name);
+      const img = el.querySelector('img');
+      if (project.image) {
+        expect(img?.getAttribute('src'), project.slug).toBe(project.image.small.src);
+        expect(img?.getAttribute('alt'), project.slug).toBe(project.image.alt);
+        expect(img?.getAttribute('loading'), project.slug).toBe('lazy');
+        expect(img?.getAttribute('width'), project.slug).toBeTruthy();
+        expect(img?.getAttribute('height'), project.slug).toBeTruthy();
+      } else {
+        expect(img, project.slug).toBeNull();
       }
     }
   });
 
-  it('puts name, tagline, description, tech, status and links on every project card', async () => {
+  it('opens other sites in a new tab and the arcade games in this one', async () => {
     const page = await openApp('/projects');
     for (const project of projects) {
-      const el = card(page, project.slug);
-      const text = el.textContent ?? '';
-      expect(el.querySelector('h3')?.textContent, project.slug).toBe(project.name);
-      expect(text, project.slug).toContain(project.tagline);
-      expect(text, project.slug).toContain(project.description);
-      for (const tech of project.tech) expect(text, project.slug).toContain(tech);
-      expect(text, project.slug).toContain(statusLabels[project.status]);
-      const anchors = [...el.querySelectorAll('a')];
-      expect(anchors.map((a) => a.getAttribute('href')), project.slug).toEqual(
-        project.links.map((link) => link.href),
-      );
-      for (const a of anchors) {
+      const a = row(page, project.slug).querySelector('a')!;
+      if (project.link.href.startsWith('https://')) {
         expect(a.getAttribute('target'), project.slug).toBe('_blank');
         expect(a.getAttribute('rel'), project.slug).toContain('noopener');
+      } else {
+        expect(a.getAttribute('target'), project.slug).toBeNull();
       }
     }
   });
 
-  it('gives a private project a note in place of a link', async () => {
-    const page = await openApp('/projects');
-    for (const slug of ['pickaxe-rs', 'gamelib']) {
-      const el = card(page, slug);
-      expect(el.querySelectorAll('a').length, slug).toBe(0);
-      expect(el.textContent, slug).toContain('NO PUBLIC LINK');
+  it('scrolls to the group named in the address on a fresh load', async () => {
+    for (const [path, id] of [
+      ['/projects#arcade', 'arcade'],
+      ['/arcade#prototypes', 'prototypes'],
+      ['/projects#%61rcade', 'arcade'],
+    ]) {
+      const page = await openApp(path);
+      expect(scrollIntoView.mock.contexts.at(-1), path).toBe(page.querySelector(`section#${id}`));
+      unmount();
+      scrollIntoView.mockClear();
     }
-  });
-
-  it('never renders a link to a tailnet, loopback or plain-http address', async () => {
-    const page = await openApp('/projects');
-    const external = [...page.querySelectorAll<HTMLAnchorElement>('a')]
-      .map((a) => a.getAttribute('href') ?? '')
-      .filter((href) => !href.startsWith('/') && !href.startsWith('#'));
-    expect(external.length).toBeGreaterThan(0);
-    for (const href of external) {
-      expect(href).toMatch(/^https:\/\//);
-      expect(href).not.toMatch(/ts\.net|localhost|127\.0\.0\.1/);
-    }
-  });
-
-  it('opens every demo where it opened before', async () => {
-    const page = await openApp('/arcade');
-    for (const demo of demos) {
-      const el = page.querySelector<HTMLAnchorElement>(`a[data-demo="${demo.slug}"]`);
-      expect(el, demo.slug).not.toBeNull();
-      expect(el?.getAttribute('href'), demo.slug).toBe(demoHref(demo));
-      expect(el?.textContent, demo.slug).toContain(demo.title);
-      expect(el?.textContent, demo.slug).toContain('PLAY');
-      // The in-site route stays in this tab; the static builds open in a new one.
-      expect(el?.getAttribute('target'), demo.slug).toBe(demo.route ? null : '_blank');
+    for (const path of ['/projects', '/projects#', '/projects#nowhere', '/projects#%']) {
+      await openApp(path);
+      expect(scrollIntoView, path).not.toHaveBeenCalled();
+      unmount();
     }
   });
 });

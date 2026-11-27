@@ -1,105 +1,50 @@
-// The three.js demos that live on this site, shown as the "Experiments"
-// section of the projects page.
+// The arcade games that live on this site. The user kept three (MURMUR was
+// shelved on 2026-11-27); names, lines and URLs follow the managers' ARCADE.md.
+// The other old demo pages stay reachable at their URLs but are not listed.
 
-export interface Demo {
-  slug: string;
-  title: string;
-  tagline: string;
-  description: string;
-  controls: string;
-  kind: 'game' | 'simulation';
-  /** Site route instead of the static /arcade/<slug>/ build. */
-  route?: string;
-  featured?: boolean;
-}
+import ephemerisLarge from 'data/images/ephemeris-1280.webp';
+import ephemerisSmall from 'data/images/ephemeris-640.webp';
+import hypertunnelLarge from 'data/images/hypertunnel-1280.webp';
+import hypertunnelSmall from 'data/images/hypertunnel-640.webp';
+import meridianLarge from 'data/images/meridian-1280.webp';
+import meridianSmall from 'data/images/meridian-640.webp';
+import { screenshot, type Project } from 'data/types';
 
-// All prototypes are self-contained HTML files served from public/arcade/;
-// EPHEMERIS graduated to a real page with three.js bundled by Vite.
-export const demos: Demo[] = [
-  {
-    slug: 'ephemeris',
-    title: 'EPHEMERIS',
-    tagline: 'solar-system drifter',
-    description:
-      'Drift through a procedurally generated solar system — seven named planets with rings and moons, an asteroid belt, and a comet dragging its trail. New system every visit.',
-    controls: 'mouse steers · hold = burn',
-    kind: 'simulation',
-    route: '/ephemeris',
-    featured: true,
-  },
+export const arcadeGames: Project[] = [
   {
     slug: 'meridian',
-    title: 'MERIDIAN',
-    tagline: 'endless landscape glider',
-    description:
-      'Auto-gliding flight over infinite terrain that keeps becoming somewhere else — ranges, dunes, an animated sea, crystal shards — under a scanline sun.',
-    controls: 'mouse steers',
-    kind: 'simulation',
-  },
-  {
-    slug: 'murmur',
-    title: 'MURMUR',
-    tagline: 'interactive murmuration',
-    description:
-      'A flock of 1,100 boids swirls and breathes around a wander point. Fly into the cloud and it scatters off your hull, then reforms behind you.',
-    controls: 'mouse steers · hold = boost',
-    kind: 'simulation',
-  },
-  {
-    slug: 'horizon',
-    title: 'OPEN HORIZON',
-    tagline: 'terrain-skimming gate runner',
-    description:
-      'Skim a procedural wireframe landscape and thread the floating gates without clipping a ridge. The mountains never repeat and the speed never stops climbing.',
-    controls: 'mouse or arrows',
+    name: 'MERIDIAN',
     kind: 'game',
+    line: 'low-altitude run across a changing world',
+    link: { label: 'PLAY', href: '/arcade/meridian/index.html' },
+    image: screenshot(
+      'MERIDIAN being played: a white wireframe ship skimming wireframe mountains toward a ring gate, on black.',
+      meridianLarge,
+      meridianSmall,
+    ),
   },
   {
-    slug: 'drift',
-    title: 'DRIFT BELT',
-    tagline: '360° free-flight beacon chase',
-    description:
-      'True open space: pitch and yaw anywhere with momentum drift. Chase pulsing beacons through an endless asteroid belt before the clock runs out.',
-    controls: 'mouse steers · hold = boost',
+    slug: 'hypertunnel',
+    name: 'HYPERTUNNEL',
     kind: 'game',
+    line: 'tunnel reflex run with a perfect chain',
+    link: { label: 'PLAY', href: '/arcade/tunnel/index.html' },
+    image: screenshot(
+      'HYPERTUNNEL being played: a wireframe ring wall with one gap, the ship below it, looking down a black tunnel.',
+      hypertunnelLarge,
+      hypertunnelSmall,
+    ),
   },
   {
-    slug: 'city',
-    title: 'GRID CITY',
-    tagline: 'street-level city run',
-    description:
-      'Weave between black monolith towers over a glowing street grid. Flying low between the buildings pays ×3 — climbing above them is the escape hatch.',
-    controls: 'mouse or arrows',
+    slug: 'ephemeris',
+    name: 'EPHEMERIS',
     kind: 'game',
-  },
-  {
-    slug: 'tunnel',
-    title: 'HYPERTUNNEL',
-    tagline: 'endless tunnel dodger',
-    description:
-      'Ride the wall of a wireframe tunnel and steer through the gaps in incoming rings while the speed ramps and the camera rolls with you.',
-    controls: 'arrows / A-D',
-    kind: 'game',
-  },
-  {
-    slug: 'asteroids',
-    title: 'VOID FIELD',
-    tagline: '3D asteroids',
-    description:
-      'Classic Asteroids on a tilted plane, Vectrex style. Rotate, thrust, fire — icosahedron rocks split twice and the world wraps at the frame edge.',
-    controls: 'arrows + space',
-    kind: 'game',
-  },
-  {
-    slug: 'stack',
-    title: 'MONOSTACK',
-    tagline: 'one-button tower',
-    description:
-      'Drop the sliding block; the overhang gets sliced off and tumbles away. Perfect drops chain a combo while the grayscale tower climbs.',
-    controls: 'click / space',
-    kind: 'game',
+    line: 'daily solar-system survey',
+    link: { label: 'PLAY', href: '/ephemeris' },
+    image: screenshot(
+      'EPHEMERIS being played: a wireframe ship drifting past a wireframe planet and its orbit, in black space.',
+      ephemerisLarge,
+      ephemerisSmall,
+    ),
   },
 ];
-
-/** Where a demo opens: its site route, or its static build under public/arcade/. */
-export const demoHref = (demo: Demo): string => demo.route ?? `/arcade/${demo.slug}/index.html`;
