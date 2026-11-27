@@ -1,199 +1,90 @@
+<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
 <link rel="icon" href="/logo98.png">
 <title>MERIDIAN</title>
 <style>
-  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+  /* touch-action: the drag steers the ship; the browser must not claim it. */
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; touch-action: none; }
   canvas { display: block; }
   .hud {
     position: fixed; inset: 0; pointer-events: none; color: #fff;
     font-family: ui-monospace, "SF Mono", Menlo, monospace;
     user-select: none; -webkit-user-select: none;
   }
-  .biome { position: absolute; top: 18px; left: 20px; font-size: 15px; letter-spacing: .18em; transition: opacity .8s; }
-  .dist  { position: absolute; top: 42px; left: 20px; font-size: 12px; letter-spacing: .18em; opacity: .5; }
-  .title-line {
-    position: absolute; top: 26px; left: 0; right: 0; text-align: center;
-    font-size: 13px; letter-spacing: .5em; opacity: .8;
+  .score { position: absolute; top: 18px; left: 20px; font-size: 15px; letter-spacing: .18em; }
+  .chain { position: absolute; top: 42px; left: 20px; font-size: 12px; letter-spacing: .18em; opacity: .7; white-space: pre; }
+  .low {
+    position: absolute; bottom: 74px; left: 50%; transform: translateX(-50%);
+    font-size: 12px; letter-spacing: .3em; margin-right: -.3em;
   }
-  .hint  {
-    position: absolute; bottom: 26px; left: 0; right: 0; text-align: center;
-    font-size: 12px; letter-spacing: .28em; opacity: .45;
+  .flash { position: absolute; inset: 0; background: #fff; opacity: 0; }
+  .flash.hit { animation: hit .35s ease-out; }
+  @keyframes hit { 0% { opacity: .55; } 100% { opacity: 0; } }
+  .best  { position: absolute; top: 18px; right: 20px; font-size: 15px; letter-spacing: .18em; opacity: .5; }
+  .dial  { position: absolute; top: 42px; right: 20px; font-size: 11px; letter-spacing: .18em; opacity: .5; }
+  .sector {
+    position: absolute; top: 96px; left: 0; right: 0; text-align: center;
+    font-size: 13px; letter-spacing: .5em; opacity: 0;
   }
+  .sector.announce { animation: announce 3.2s ease-out; }
+  @keyframes announce { 0% { opacity: 0; } 12% { opacity: .9; } 70% { opacity: .9; } 100% { opacity: 0; } }
+  .charge {
+    position: absolute; bottom: 26px; left: 50%; width: min(260px, 60vw); transform: translateX(-50%);
+    font-size: 11px; letter-spacing: .3em; text-align: center;
+  }
+  .charge .bar { height: 8px; border: 1px solid rgba(255,255,255,.55); margin-bottom: 8px; }
+  .charge .fill { height: 100%; width: 100%; background: #fff; }
+  .charge .label { opacity: .5; }
+  .charge.low { animation: blink .5s steps(2) infinite; }
+  .center {
+    position: absolute; inset: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; text-align: center; gap: 14px; padding: 0 16px;
+  }
+  .title { font-size: clamp(28px, 8vw, 54px); letter-spacing: .32em; margin-right: -.32em; font-weight: 700; }
+  .sub   { font-size: clamp(11px, 3.1vw, 13px); letter-spacing: .22em; opacity: .6; line-height: 2; }
+  .record { font-size: 13px; letter-spacing: .3em; }
+  .blink { animation: blink 1.2s steps(2) infinite; font-size: 13px; letter-spacing: .3em; }
+  @keyframes blink { 50% { opacity: 0; } }
+  .hidden { display: none; }
 </style>
 <div class="hud">
-  <div class="title-line">MERIDIAN</div>
-  <div class="biome" id="biome"></div>
-  <div class="dist" id="dist"></div>
-  <div class="hint">MOUSE STEERS &middot; THE LAND KEEPS CHANGING &middot; YOU CANNOT CRASH</div>
+  <div class="flash" id="flash"></div>
+  <div class="best" id="best"></div>
+  <div class="dial hidden" id="dial"></div>
+  <div class="hidden" id="flight">
+    <div class="score" id="score"></div>
+    <div class="low" id="low"></div>
+    <div class="chain" id="chain"></div>
+    <div class="sector" id="sector"></div>
+    <div class="charge" id="charge">
+      <div class="bar"><div class="fill" id="chargeFill"></div></div>
+      <div class="label">CHARGE</div>
+    </div>
+  </div>
+  <div class="center" id="menu">
+    <div class="title">MERIDIAN</div>
+    <div class="sub">FLY LOW FOR ×3<br>THREAD THE GATES TO STAY CHARGED<br>DON'T HIT ANYTHING</div>
+    <div class="sub">MOUSE OR ARROWS &middot; DRAG ON A PHONE</div>
+    <div class="blink">CLICK, TAP OR PRESS A KEY</div>
+  </div>
+  <div class="center hidden" id="over">
+    <div class="title" id="cause"></div>
+    <div class="sub" id="result"></div>
+    <div class="record hidden" id="record">NEW BEST</div>
+    <div class="sub" id="facts"></div>
+    <div class="blink">TAP OR PRESS A KEY TO RETRY</div>
+  </div>
 </div>
 <script type="importmap">
   { "imports": { "three": "/arcade/vendor/three.module.min.js" } }
 </script>
 <script type="module">
 import * as THREE from 'three';
-import { createShipBody } from '../shared/ship.js';
-import { createInput, startLoop, setText } from '../shared/runtime.js';
+// Absolute paths: the page is also served without its trailing slash, where
+// a relative import would resolve one folder too high.
+import { createShipBody } from '/arcade/shared/ship.js';
+import { mount } from '/arcade/meridian/main.js';
 
-const DEMO = new URLSearchParams(location.search).has('demo');
-const scene = new THREE.Scene();
-scene.fog = new THREE.Fog(0x000000, 100, 255);
-const camera = new THREE.PerspectiveCamera(62, innerWidth / innerHeight, 0.5, 900);
-const renderer = new THREE.WebGLRenderer({ antialias: true });
-renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
-renderer.setSize(innerWidth, innerHeight);
-document.body.appendChild(renderer.domElement);
-
-// ---- noise ----
-const hash = (x, z) => {
-  let n = Math.sin(x * 127.1 + z * 311.7) * 43758.5453;
-  return n - Math.floor(n);
-};
-const smooth = t => t * t * (3 - 2 * t);
-function noise(x, z) {
-  const ix = Math.floor(x), iz = Math.floor(z), fx = smooth(x - ix), fz = smooth(z - iz);
-  const a = hash(ix, iz), b = hash(ix + 1, iz), c = hash(ix, iz + 1), d = hash(ix + 1, iz + 1);
-  return a + (b - a) * fx + (c - a) * fz + (a - b - c + d) * fx * fz;
-}
-
-// ---- biomes: cycle by distance travelled ----
-const BIOMES = [
-  { name: 'THE RANGES',   f: (x, z, t) => noise(x / 34, z / 34) * 26 + noise(x / 90 + 40, z / 90) * 18 - 14 },
-  { name: 'THE DUNES',    f: (x, z, t) => Math.abs(noise(x / 60, z / 46) - 0.5) * -44 + 12 + noise(x / 18, z / 18) * 2 },
-  { name: 'THE SEA',      f: (x, z, t) => Math.sin(x / 21 + t * 1.1) * 2.2 + Math.sin(z / 16 + t * 0.8) * 2.6 + noise(x / 50, z / 50) * 3 - 5 },
-  { name: 'THE SHARDS',   f: (x, z, t) => { const n = noise(x / 26, z / 26); return (n > 0.62 ? (n - 0.62) * 120 : n * 6) - 6; } },
-  { name: 'THE FLATS',    f: (x, z, t) => noise(x / 70, z / 70) * 5 - 4 }
-];
-const BIOME_SPAN = 900; // distance per biome
-
-// terrain grid that follows the ship
-const GW = 64, GD = 64, CELL = 9;
-const terrGeo = new THREE.PlaneGeometry(GW * CELL, GD * CELL, GW, GD);
-terrGeo.rotateX(-Math.PI / 2);
-const terrain = new THREE.Mesh(terrGeo, new THREE.MeshBasicMaterial({
-  color: 0xffffff, wireframe: true, transparent: true, opacity: 0.32
-}));
-terrain.frustumCulled = false;
-scene.add(terrain);
-const tPos = terrGeo.attributes.position;
-
-let biomeIndex = 0, biomeBlend = 0;
-let previousGridX = NaN, previousGridZ = NaN, previousBiome = -1, previousBlend = NaN;
-function heightAt(wx, wz, t) {
-  const a = BIOMES[biomeIndex].f(wx, wz, t);
-  return biomeBlend === 0 ? a : a * (1 - biomeBlend) +
-    BIOMES[(biomeIndex + 1) % BIOMES.length].f(wx, wz, t) * biomeBlend;
-}
-
-// stars + horizon sun
-{
-  const n = 350, pos = new Float32Array(n * 3);
-  for (let i = 0; i < n; i++) {
-    const a = Math.random() * Math.PI * 2, r = 500 + Math.random() * 200;
-    pos[i * 3] = Math.cos(a) * r;
-    pos[i * 3 + 1] = 30 + Math.random() * 320;
-    pos[i * 3 + 2] = Math.sin(a) * r;
-  }
-  const g = new THREE.BufferGeometry();
-  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-  scene.add(new THREE.Points(g, new THREE.PointsMaterial({ color: 0xffffff, size: 1.4, transparent: true, opacity: 0.5, fog: false })));
-}
-const sunDisk = new THREE.Group();
-{
-  const mat = new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.8, fog: false });
-  for (const r of [26, 22]) {
-    const pts = [];
-    for (let a = 0; a <= 64; a++) pts.push(new THREE.Vector3(Math.cos(a / 64 * Math.PI * 2) * r, Math.sin(a / 64 * Math.PI * 2) * r, 0));
-    sunDisk.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), mat));
-  }
-  // horizontal scanlines through the disk (retro sun)
-  for (let i = 0; i < 5; i++) {
-    const y = -4 - i * 4, half = Math.sqrt(Math.max(0, 26 * 26 - y * y));
-    sunDisk.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([
-      new THREE.Vector3(-half, y, 0), new THREE.Vector3(half, y, 0)]), mat));
-  }
-  scene.add(sunDisk);
-}
-
-// ship
-const ship = createShipBody(THREE);
-scene.add(ship);
-
-const biomeEl = document.getElementById('biome'), distEl = document.getElementById('dist');
-
-const input = createInput();
-const { keys, pointer } = input;
-
-let wx = 0, wz = 0, heading = 0, dist = 0, shipY = 10, t = 0, lastBiome = '';
-
-let hudElapsed = 0.1;
-function tick(dt) {
-  hudElapsed += dt;
-  const refreshHud = hudElapsed >= 0.1;
-  if (refreshHud) hudElapsed = 0;
-  t += dt;
-
-  // steer: mouse x = turn, keys work too
-  let turn = pointer.x;
-  if (keys.ArrowLeft || keys.KeyA) turn = -0.7;
-  if (keys.ArrowRight || keys.KeyD) turn = 0.7;
-  if (DEMO) turn = Math.sin(t * 0.28) * 0.55;
-  heading -= turn * 1.1 * dt;
-
-  const speed = 42;
-  wx += Math.sin(heading) * -speed * dt;
-  wz += Math.cos(heading) * -speed * dt;
-  dist += speed * dt;
-
-  // biome + HUD
-  const segment = dist / BIOME_SPAN;
-  biomeIndex = Math.floor(segment) % BIOMES.length;
-  const progress = segment - Math.floor(segment);
-  biomeBlend = progress > 0.8 ? smooth((progress - 0.8) / 0.2) : 0;
-  const bName = BIOMES[biomeIndex].name;
-  if (bName !== lastBiome) { lastBiome = bName; biomeEl.style.opacity = 0; setTimeout(() => { setText(biomeEl, bName); biomeEl.style.opacity = 1; }, 400); }
-  refreshHud && setText(distEl, Math.floor(dist) + ' km');
-
-  // rebuild terrain around ship (snap origin to CELL grid to avoid vertex swim);
-  // ship stays at scene origin, the world scrolls under it
-  const ox = Math.round(wx / CELL) * CELL, oz = Math.round(wz / CELL) * CELL;
-  terrain.position.set(ox - wx, 0, oz - wz);
-  const animated = biomeIndex === 2 || (biomeBlend > 0 && (biomeIndex + 1) % BIOMES.length === 2);
-  if (animated || ox !== previousGridX || oz !== previousGridZ ||
-      biomeIndex !== previousBiome || biomeBlend !== previousBlend) {
-    for (let i = 0; i < tPos.count; i++) {
-      tPos.setY(i, heightAt(tPos.getX(i) + ox, tPos.getZ(i) + oz, t));
-    }
-    tPos.needsUpdate = true;
-    previousGridX = ox; previousGridZ = oz;
-    previousBiome = biomeIndex; previousBlend = biomeBlend;
-  }
-
-  // glide: follow the ground smoothly, never crash
-  const groundHere = heightAt(wx, wz - 6, t);
-  const targetY = groundHere + 9;
-  shipY += (targetY - shipY) * Math.min(1, dt * 2.2);
-
-  ship.position.set(0, shipY, 0);
-  ship.rotation.y = heading;
-  ship.rotation.z = -turn * 0.5;
-
-  const backX = Math.sin(heading), backZ = Math.cos(heading);
-  camera.position.set(backX * 16, shipY + 7, backZ * 16);
-  camera.lookAt(backX * -30, shipY + 1, backZ * -30);
-
-  // sun sits on the horizon opposite the start heading, slowly wheeling
-  const sa = t * 0.01 + 0.6;
-  sunDisk.position.set(Math.sin(sa) * -420, 46 + Math.sin(t * 0.05) * 22, Math.cos(sa) * -420);
-  sunDisk.lookAt(camera.position);
-
-  renderer.render(scene, camera);
-}
-startLoop(tick);
-
-addEventListener('resize', () => {
-  camera.aspect = innerWidth / innerHeight;
-  camera.updateProjectionMatrix();
-  renderer.setSize(innerWidth, innerHeight);
-});
+mount({ THREE, createShipBody });
 </script>

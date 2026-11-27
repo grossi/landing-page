@@ -1,10 +1,22 @@
+/** Full touch deflection, in CSS pixels of drag from where the thumb landed. */
+const STICK_RADIUS = 56;
+/** A mouse reaches full deflection at 1 / MOUSE_GAIN of the way to the screen edge. */
+const MOUSE_GAIN = 1.5;
+
 /** Input shared by the standalone games. State is stable for the whole mount. */
 export function createInput({ onPress, pressKeys } = {}) {
   const input = {
     keys: {}, pointer: { x: 0, y: 0 }, pointerActive: false,
-    pointerDown: false, touchDirection: 0, dispose,
+    pointerDown: false, touchDirection: 0,
+    // One stick for every pointer: a mouse deflects it by its offset from the
+    // screen centre; a touch deflects it by its drag from where it landed, so
+    // the thumb never has to cover the ship. Lifting the thumb centres it.
+    stick: { x: 0, y: 0 }, dispose,
   };
   const listeners = [];
+  // Touches that are down, by pointer id, and the one the stick is anchored to.
+  const touches = new Map();
+  let anchor = null;
   function listen(target, type, handler, options) {
     target.addEventListener(type, handler, options);
     listeners.push(() => target.removeEventListener(type, handler, options));
@@ -14,7 +26,11 @@ export function createInput({ onPress, pressKeys } = {}) {
     input.pointer.x = input.pointer.y = 0;
     input.pointerActive = input.pointerDown = false;
     input.touchDirection = 0;
+    input.stick.x = input.stick.y = 0;
+    anchor = null;
+    touches.clear();
   }
+  const unit = value => Math.max(-1, Math.min(1, value));
   function move(x, y) {
     input.pointer.x = Math.max(-1, Math.min(1, x / innerWidth * 2 - 1));
     input.pointer.y = Math.max(-1, Math.min(1, y / innerHeight * 2 - 1));
@@ -26,9 +42,41 @@ export function createInput({ onPress, pressKeys } = {}) {
     if (!e.repeat && (!pressKeys || pressKeys.includes(e.code))) onPress?.();
   });
   listen(window, 'keyup', e => { input.keys[e.code] = false; });
-  listen(window, 'pointermove', e => move(e.clientX, e.clientY));
-  listen(window, 'pointerdown', () => { input.pointerDown = true; onPress?.(); });
-  listen(window, 'pointerup', () => { input.pointerDown = false; });
+  listen(window, 'pointermove', e => {
+    move(e.clientX, e.clientY);
+    if (e.pointerType !== 'touch') {
+      input.stick.x = unit(input.pointer.x * MOUSE_GAIN);
+      input.stick.y = unit(input.pointer.y * MOUSE_GAIN);
+    } else if (touches.has(e.pointerId)) {
+      const point = touches.get(e.pointerId);
+      point.x = e.clientX; point.y = e.clientY;
+      if (anchor.id === e.pointerId) {
+        input.stick.x = unit((e.clientX - anchor.x) / STICK_RADIUS);
+        input.stick.y = unit((e.clientY - anchor.y) / STICK_RADIUS);
+      }
+    }
+  });
+  listen(window, 'pointerdown', e => {
+    input.pointerDown = true;
+    if (e.pointerType === 'touch') {
+      touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (!anchor) {
+        anchor = { id: e.pointerId, x: e.clientX, y: e.clientY };
+        input.stick.x = input.stick.y = 0;
+      }
+    }
+    onPress?.();
+  });
+  listen(window, 'pointerup', e => {
+    input.pointerDown = false;
+    touches.delete(e.pointerId);
+    if (anchor && anchor.id === e.pointerId) {
+      // The stick centres; a finger still down becomes its new centre where it is.
+      const [next] = touches;
+      anchor = next ? { id: next[0], x: next[1].x, y: next[1].y } : null;
+      input.stick.x = input.stick.y = 0;
+    }
+  });
   listen(window, 'touchstart', e => {
     input.touchDirection = e.touches[0].clientX < innerWidth / 2 ? -1 : 1;
   }, { passive: true });
