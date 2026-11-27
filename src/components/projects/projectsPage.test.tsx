@@ -82,15 +82,22 @@ describe('the projects page (placeholder)', () => {
     }
   });
 
-  it('points the PROJECTS nav entry at /projects and marks it current on both addresses', async () => {
+  it('marks WORK, the page\'s section, in the header on both addresses', async () => {
+    // The header lists the home page's sections on every page (see
+    // components/home/homePage.test.tsx); the projects page is the full page
+    // of the work section.
     for (const path of ['/projects', '/arcade']) {
       const page = await openApp(path);
-      const nav = [...page.querySelectorAll<HTMLAnchorElement>('a')].filter((a) => a.textContent === 'PROJECTS');
-      expect(nav.length, path).toBeGreaterThan(0);
-      for (const a of nav) {
-        expect(a.getAttribute('href'), path).toBe('/projects');
-        expect(a.getAttribute('aria-current'), path).toBe('page');
+      const entries = [...page.querySelectorAll<HTMLAnchorElement>('nav[aria-label="Site"] a')];
+      const work = entries.filter((link) => link.textContent === 'WORK');
+      expect(work.length, path).toBeGreaterThan(0);
+      for (const link of work) {
+        expect(link.getAttribute('href'), path).toBe('/#work');
+        expect(link.getAttribute('aria-current'), path).toBe('true');
       }
+      const others = entries.filter((link) => link.textContent !== 'WORK');
+      expect(others.length, path).toBeGreaterThan(0);
+      for (const link of others) expect(link.getAttribute('aria-current'), path).toBeNull();
       unmount();
     }
   });

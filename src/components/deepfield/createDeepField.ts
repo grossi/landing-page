@@ -97,10 +97,38 @@ const STATION_OFFSET = new THREE.Vector3(0, 0, BASE_SPEED / CHASE_POS_RATE)
 
 export type DeepFieldMode = 'title' | 'engage' | 'play' | 'disengage';
 
+export interface DeepFieldOptions {
+  onMode?: (mode: DeepFieldMode) => void;
+  /**
+   * Limits the title screen's pointer input to this element: with it set, a
+   * move or press outside it neither steers nor burns while the field is in
+   * title mode, so content laid out around the field (a scrolling page) keeps
+   * its own clicks. Through engage, play and disengage the whole window
+   * steers, exactly as without the option. Omitted: every pointer event on
+   * the window reaches the field in every mode.
+   *
+   * A scope also means there is a page to scroll, so on the title screen a
+   * finger or a pen is treated as a possible scroll: it kicks the drift
+   * when it lifts as a tap, and does nothing if the browser takes it over
+   * as a scroll (pointercancel). A mouse is unchanged. Without a scope a
+   * finger or pen kicks and burns from the moment it lands, as before.
+   */
+  inputScope?: HTMLElement;
+}
+
 export interface DeepFieldHandle {
   dispose(): void;
   play(): void;
   exit(): void;
+  /**
+   * Explicit pause for a field its host knows is not being looked at (for
+   * example scrolled under a sticky header). While paused the render loop is
+   * stopped, any held burn or steer is dropped, and pointer and touch input
+   * is ignored; resuming picks the drift up where it stopped. Escape still
+   * requests the exit, which runs on resume, as it does across the stage's
+   * own hidden-tab and off-screen pausing (this stacks with both).
+   */
+  setPaused(paused: boolean): void;
 }
 
 /**
@@ -116,9 +144,10 @@ export interface DeepFieldHandle {
  */
 export function createDeepField(
   container: HTMLElement,
-  opts?: { onMode?: (mode: DeepFieldMode) => void },
+  opts?: DeepFieldOptions,
 ): DeepFieldHandle {
   const onMode = opts?.onMode;
+  const inputScope = opts?.inputScope;
   // far 20,000 gives the giants a deep corridor; nothing nests, so a
   // standard depth buffer at 4e4 far:near is comfortable (near raised to 0.5).
   // maxPixelRatio 2: full retina crispness for the 1px wireframes at quality
@@ -314,8 +343,26 @@ export function createDeepField(
   let steerLive = false;
   let throttleDown = false;
   let boost = 1;
+  // host-requested pause (setPaused): gates every input handler below
+  let paused = false;
+  // a finger or pen down on a scoped title screen, not yet known to be a tap
+  let tapPending = false;
+
+  // inputScope only narrows the title screen (blend 0, nothing engaging):
+  // from the first engage frame the page is the game and the window steers
+  const outOfScope = (e: Event) =>
+    inputScope !== undefined &&
+    blend === 0 &&
+    target === 0 &&
+    !(e.target instanceof Node && inputScope.contains(e.target));
 
   const onMouseMove = (e: MouseEvent) => {
+    if (paused) return;
+    if (outOfScope(e)) {
+      // the cursor left the scope: same as leaving the document
+      onMouseLeave();
+      return;
+    }
     // pointerToNdc mutates the stable `ndc` — move events fire every frame
     // while steering, and a fresh object per event is per-frame garbage
     pointerToNdc(ndc, e.clientX, e.clientY, renderer.domElement);
@@ -327,12 +374,20 @@ export function createDeepField(
     steerLive = false;
   };
   const onTouchMove = (e: TouchEvent) => {
+    if (paused) return;
     pointerToNdc(ndc, e.touches[0].clientX, e.touches[0].clientY, renderer.domElement);
     steerLive = true;
   };
   const onPointerDown = (e: PointerEvent) => {
+    if (paused || outOfScope(e)) return;
     // Links and buttons layered over the backdrop keep their normal clicks.
     if (e.target instanceof Element && e.target.closest('a,button')) return;
+    // every pointer that can pan the page: a finger, and a pen as well
+    if (inputScope !== undefined && e.pointerType !== 'mouse' && blend === 0 && target === 0) {
+      // on a page that scrolls, this may be the start of a swipe: wait and see
+      tapPending = true;
+      return;
+    }
     throttleDown = true;
     // the click kick is a title-throttle gimmick; in play (like EPHEMERIS)
     // pointer hold is just a burn, no impulse. Checking target too covers
@@ -340,13 +395,17 @@ export function createDeepField(
     // mode is effectively disengage — the kick applies again there
     if (!(blend === 1 && target === 1)) boost = Math.min(boost + 2.6, 8);
   };
-  const onPointerUp = () => {
+  const onPointerUp = (e: Event) => {
     throttleDown = false;
+    // it lifted as a tap (a scroll ends in pointercancel instead): the kick
+    if (tapPending && e.type === 'pointerup' && !paused) boost = Math.min(boost + 2.6, 8);
+    tapPending = false;
   };
   // pointerup never arrives for a button held across a focus loss, so blur
   // drops the throttle along with the tracked keys
   const keyTracker = createKeyTracker(window, () => {
     throttleDown = false;
+    tapPending = false;
   });
   const { keys } = keyTracker;
   const onKeyDown = (e: KeyboardEvent) => {
@@ -725,6 +784,18 @@ export function createDeepField(
     lod.update(camera, container.clientHeight, dt);
   });
 
+  const setPaused = (next: boolean) => {
+    paused = next;
+    if (next) {
+      // nothing stays held across a pause: pointerup may land while the
+      // handlers are gated, and the cursor will be somewhere else on resume
+      throttleDown = false;
+      tapPending = false;
+      onMouseLeave();
+    }
+    stage.setPaused(next);
+  };
+
   const dispose = () => {
     listeners.dispose();
     keyTracker.dispose();
@@ -734,5 +805,5 @@ export function createDeepField(
     stage.dispose();
   };
 
-  return { dispose, play, exit };
+  return { dispose, play, exit, setPaused };
 }
