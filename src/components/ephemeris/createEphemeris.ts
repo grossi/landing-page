@@ -1,11 +1,12 @@
 import * as THREE from 'three';
-import { buildFinds, planFinds, type FindPlan, type Keepout } from 'components/ephemeris/finds';
+import { buildFinds, clockOffsetFor, planFinds, type FindPlan, type Keepout } from 'components/ephemeris/finds';
 import { createFlightInput } from 'components/ephemeris/flightInput';
 import { formatDistance, placeMarker, type MarkerPlacement } from 'components/ephemeris/marker';
 import {
   beginLoop,
   createLoop,
   darkness,
+  daySchedule,
   discoveryRange,
   elapsedOf,
   FIND_IDS,
@@ -26,6 +27,7 @@ import {
   type ChartResult,
   type FindId,
   type Places,
+  type Schedule,
   type StorageLike,
   type SurveySeed,
 } from 'components/ephemeris/survey';
@@ -145,6 +147,8 @@ export interface EphemerisGame {
   menu(): void;
   /** Names of the places the finds' notes point at. */
   places: Places;
+  /** When each find answers, this day. */
+  schedule: Schedule;
   /** Stops the loop, removes listeners and frees all GPU resources. */
   dispose(): void;
 }
@@ -405,6 +409,14 @@ export function createEphemeris(
   // move a few kilometres a second, so where they are at the start is where
   // they are all loop.
   const beltRadius = 4700 * HOME_LAYOUT.orbitStretch;
+  // the world's clock starts where the seed says, so the comet does too;
+  // laying the trail down that many times puts it all on the comet
+  const clockOffset = clockOffsetFor(worldSeed);
+  const setWorldClock = () => {
+    for (let i = 0; i < COMET_TRAIL; i++) home.update?.(0, clockOffset);
+    home.group.updateMatrixWorld(true);
+  };
+  setWorldClock();
   const keepouts: Keepout[] = home.pois.map((poi) => {
     poi.object.getWorldPosition(scratchFind);
     return { x: scratchFind.x, z: scratchFind.z, reach: poi.radius * (1 + HOME_LAYOUT.moonReachRadii) + 200 };
@@ -434,8 +446,9 @@ export function createEphemeris(
   // Clock of the world's own motion (orbits, the comet). The stage's clock
   // only ever runs forward; this one goes back to zero with every loop, so
   // each attempt at a system finds its bodies where the last one did.
-  let worldTime = 0;
-  const loop = createLoop(readLog(storage, seedLabel).logged);
+  let worldTime = clockOffset;
+  const schedule = daySchedule(worldSeed);
+  const loop = createLoop(readLog(storage, seedLabel).logged, schedule);
   let loopNumber = 0;
 
   // ---- input (components/ephemeris/flightInput) ----
@@ -662,13 +675,13 @@ export function createEphemeris(
       resetLoop(loop, log.logged);
       scanPrevId = '';
       bellAnnounced = darkAnnounced = false;
-      worldTime = 0;
+      worldTime = clockOffset;
       // the orbiters read the clock, so move them now: the first frame must
       // not see the last loop's positions (the comet drags a trail of its
       // last COMET_TRAIL positions; that many steps lay the whole trail back
       // on the comet, as on a fresh mount, so no line crosses the system)
-      for (let i = 0; i < COMET_TRAIL; i++) home.update?.(0, 0);
-      field.updateContents(0, 0);
+      setWorldClock();
+      field.updateContents(0, clockOffset);
       placePassenger();
       finds.update(0, 0, 0);
       scene.updateMatrixWorld(true);
@@ -741,7 +754,7 @@ export function createEphemeris(
     if (logged) {
       const charted = recordFind(storage, seedLabel, logged);
       pingTimer = 5;
-      setHudText(hud.ping, `${FINDS[logged].label} LOGGED · ${findNote(logged, plan.places)}`);
+      setHudText(hud.ping, `${FINDS[logged].label} LOGGED · ${findNote(logged, plan.places, schedule)}`);
       setHudText(hud.contacts, `LOG ${loop.logged.size}/${FIND_IDS.length}`);
       if (loop.closed) {
         closeLoop(charted);
@@ -754,7 +767,7 @@ export function createEphemeris(
     }
 
     // the set times: a signal that starts mid-loop, and the dark
-    if (!bellAnnounced && elapsed >= FINDS.bell.opensAt && !loop.logged.has('bell')) {
+    if (!bellAnnounced && elapsed >= schedule.bell[0] && !loop.logged.has('bell')) {
       bellAnnounced = true;
       pingTimer = 4;
       // told of it, the bell can be followed; not, it is something to look for
@@ -940,7 +953,7 @@ export function createEphemeris(
     placePassenger();
     if (phase === 'survey' || phase === 'closed' || phase === 'title') {
       const elapsed = phase === 'survey' ? elapsedOf(loop) : 0;
-      const bellLit = phase === 'survey' && isOpen('bell', elapsed) && !loop.logged.has('bell') ? 1 : 0;
+      const bellLit = phase === 'survey' && isOpen('bell', elapsed, schedule) && !loop.logged.has('bell') ? 1 : 0;
       const lightLit = phase === 'survey' && !loop.logged.has('light') ? darkness(elapsed) > 0 ? Math.min(1, 0.4 + darkness(elapsed)) : 0 : 0;
       finds.update(dt, bellLit, lightLit);
     }
@@ -1097,7 +1110,7 @@ export function createEphemeris(
     /** POIs of the home system + active sectors, in absolute coordinates. */
     pois: () => Array<{ name: string; x: number; y: number; z: number; radius: number; id: string; solid: boolean; envelope: boolean }>;
     /** The day's finds, where they are now in absolute coordinates, and whether each answers. */
-    finds: () => Array<{ id: FindId; x: number; y: number; z: number; open: boolean; logged: boolean }>;
+    finds: () => Array<{ id: FindId; x: number; y: number; z: number; open: boolean; logged: boolean; opensAt: number; closesAt: number }>;
     /**
      * The game as a player sees it, for scripted play: the phase, the loop's
      * numbers, the speed, and the strongest signal ahead.
@@ -1172,7 +1185,9 @@ export function createEphemeris(
           x: scratchFind.x + origin.x,
           y: scratchFind.y + origin.y,
           z: scratchFind.z + origin.z,
-          open: isOpen(id, elapsed),
+          open: isOpen(id, elapsed, schedule),
+          opensAt: schedule[id][0],
+          closesAt: schedule[id][1],
           logged: loop.logged.has(id),
         };
       });
@@ -1233,5 +1248,5 @@ export function createEphemeris(
     stage.dispose();
   };
 
-  return { start, menu, places: plan.places, dispose };
+  return { start, menu, places: plan.places, schedule, dispose };
 }

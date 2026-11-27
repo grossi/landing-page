@@ -297,13 +297,15 @@ describe('signals and the log', () => {
     expect(hud.scanTick.style.transform).toBe(`rotate(${(-signal.angle).toFixed(3)}rad)`);
   });
 
-  it('the bell answers from 1:20 to 2:10 only, and cannot be logged outside that', async () => {
+  it('the bell answers only in its window, and cannot be logged outside that', async () => {
     park('bell');
     await fake.advance(seconds(3));
     expect(state().scanId).toBeNull();
-    await until(FINDS.bell.opensAt - 0.5);
+    const opens = find('bell').opensAt;
+    expect(game.schedule.bell[0]).toBe(opens);
+    await until(opens - 0.5);
     park('bell');
-    await until(FINDS.bell.opensAt + 0.2);
+    await until(opens + 0.2);
     expect(hud.ping.textContent).toBe('SOMETHING FAR OFF IS ANSWERING');
     await fake.advance(seconds(TUNE.SCAN_SECONDS + 0.3));
     expect(state().logged).toEqual(['bell']);
@@ -313,7 +315,7 @@ describe('signals and the log', () => {
   it('a bell told of is announced as the bell', async () => {
     storage.data.set(logKeyFor(SEED.label), JSON.stringify({ logged: ['light'], loops: 1, best: 0 }));
     game.start('survey');
-    await until(FINDS.bell.opensAt + 0.2);
+    await until(find('bell').opensAt + 0.2);
     expect(hud.ping.textContent).toBe('THE BELL IS ANSWERING');
     // and is heard from wherever the ship is
     const bell = find('bell');
@@ -431,6 +433,19 @@ describe('loops', () => {
     expect(savedLog()).toEqual({ logged: [], loops: 1, best: 2 });
   });
 
+  it('a forgotten log starts the next loop as loop 1 with nothing logged', async () => {
+    storage.data.set(logKeyFor(SEED.label), JSON.stringify({ logged: ['relay', 'passenger'], loops: 3, best: 2 }));
+    mount();
+    await fake.advance(2);
+    const { forgetLog } = await import('components/ephemeris/survey');
+    forgetLog(storage, SEED.label);
+    game.start('survey');
+    await fake.advance(1);
+    expect(state()).toMatchObject({ loop: 1, logged: [] });
+    expect(hud.contacts.textContent).toBe('LOG 0/5');
+    expect(savedLog()).toEqual({ logged: [], loops: 1, best: 2 });
+  });
+
   it('Escape abandons a loop: back to the title; finds it logged stay logged', async () => {
     mount();
     await fake.advance(2);
@@ -472,14 +487,35 @@ describe('loops', () => {
     await fake.advance(1);
     const sun = poi('THE SUN');
     const r = (id: FindId) => Math.hypot(find(id).x - sun.x, find(id).z - sun.z);
-    expect(r('wreck')).toBeGreaterThan(20000);
-    expect(r('bell')).toBeGreaterThan(20000);
+    // past hearing from the sun until a note tells of them
+    expect(r('wreck')).toBeGreaterThan(TUNE.HEAR_RANGE + 5000);
+    expect(r('bell')).toBeGreaterThan(TUNE.HEAR_RANGE + 5000);
     const angle = (id: FindId) => Math.atan2(find(id).z - sun.z, find(id).x - sun.x);
     const apart = Math.abs(angle('wreck') - angle('bell'));
     expect(Math.min(apart, 2 * Math.PI - apart)).toBeGreaterThan((2 * Math.PI) / 3 - 0.5);
     game.start('survey');
     await fake.advance(1);
-    expect(distanceTo(find('relay'))).toBeLessThan(5000);
+    expect(distanceTo(find('relay'))).toBeLessThan(5500);
+  });
+
+  it('where and when come from the seed: the bell\'s window, the comet\'s place, the relay', async () => {
+    const day = async (search: string) => {
+      mount({ seed: resolveSeed(search, new Date(Date.UTC(2026, 10, 27))) });
+      await fake.advance(1);
+      game.start('survey');
+      await fake.advance(1);
+      const comet = poi('THE COMET');
+      const out = { bell: game.schedule.bell, comet: [comet.x, comet.z].map(Math.round), relay: Math.round(distanceTo(find('relay'))) };
+      game.dispose();
+      document.body.replaceChildren();
+      return out;
+    };
+    const days = [];
+    for (const search of ['?seed=a', '?seed=b', '?seed=c', '?seed=d']) days.push(await day(search));
+    expect(new Set(days.map((d) => d.bell[0])).size).toBeGreaterThan(1);
+    expect(new Set(days.map((d) => d.comet.join())).size).toBe(4);
+    expect(new Set(days.map((d) => d.relay)).size).toBeGreaterThan(1);
+    expect(await day('?seed=a')).toEqual(days[0]);
   });
 });
 

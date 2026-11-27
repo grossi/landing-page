@@ -40,14 +40,10 @@ export const TUNE = {
   RETRY_LOCK_SECONDS: 0.6,
 } as const;
 
-/** What each find is and when it answers. */
+/** What each find is. When it answers is the day's (`Schedule`). */
 export interface FindRule {
   /** As the HUD names it. */
   label: string;
-  /** Seconds into the loop from which it sends and can be logged… */
-  opensAt: number;
-  /** …and until which. */
-  closesAt: number;
   /** Distance (km) inside which it can be logged. */
   range: number;
   /** Fastest the ship may pass it (km/s, relative) and still log it. */
@@ -58,23 +54,47 @@ export interface FindRule {
 
 export const FINDS: Record<FindId, FindRule> = {
   // first, and straight ahead of the start: the first seconds teach the game
-  relay: { label: 'RELAY', opensAt: 0, closesAt: TUNE.WINDOW_SECONDS, range: TUNE.FIND_RANGE, maxSpeed: TUNE.SCAN_MAX_SPEED, toldBy: null },
+  relay: { label: 'RELAY', range: TUNE.FIND_RANGE, maxSpeed: TUNE.SCAN_MAX_SPEED, toldBy: null },
   // far, beyond the home system; told of by the passenger, tells of the light
-  wreck: { label: 'WRECK', opensAt: 0, closesAt: TUNE.WINDOW_SECONDS, range: TUNE.FIND_RANGE, maxSpeed: TUNE.SCAN_MAX_SPEED, toldBy: 'passenger' },
-  // answers for fifty seconds only, far out; told of only by the late light,
-  // which shows after the bell has stopped: a loop that learns of it cannot
-  // use it, the next one can
-  bell: { label: 'BELL', opensAt: 80, closesAt: 130, range: TUNE.FIND_RANGE, maxSpeed: TUNE.SCAN_MAX_SPEED, toldBy: 'light' },
+  wreck: { label: 'WRECK', range: TUNE.FIND_RANGE, maxSpeed: TUNE.SCAN_MAX_SPEED, toldBy: 'passenger' },
+  // answers for fifty seconds only (when is the day's), far out; told of
+  // only by the late light, which shows after the bell has stopped: a loop
+  // that learns of it cannot use it, the next one can
+  bell: { label: 'BELL', range: TUNE.FIND_RANGE, maxSpeed: TUNE.SCAN_MAX_SPEED, toldBy: 'light' },
   // rides the home comet, which runs at 190 to 440 km/s: logged by keeping
   // pace with it, which a wider range and a looser match make possible
-  passenger: { label: 'PASSENGER', opensAt: 0, closesAt: TUNE.WINDOW_SECONDS, range: 1000, maxSpeed: 250, toldBy: 'relay' },
+  passenger: { label: 'PASSENGER', range: 1000, maxSpeed: 250, toldBy: 'relay' },
   // only shows once the dark comes in, in the home system's belt
-  light: { label: 'LATE LIGHT', opensAt: TUNE.DARK_STARTS, closesAt: TUNE.WINDOW_SECONDS, range: TUNE.FIND_RANGE, maxSpeed: TUNE.SCAN_MAX_SPEED, toldBy: 'wreck' },
+  light: { label: 'LATE LIGHT', range: TUNE.FIND_RANGE, maxSpeed: TUNE.SCAN_MAX_SPEED, toldBy: 'wreck' },
 };
 
+/** When each find answers: seconds into the loop it opens, and closes. */
+export type Schedule = Record<FindId, readonly [number, number]>;
+
+/** Seconds the bell answers for. */
+export const BELL_SECONDS = 50;
+
+/**
+ * The day's schedule. Most finds answer all loop; the late light only in the
+ * dark (that is what it is); the bell for fifty seconds starting somewhere
+ * between 1:00 and 1:50, from the seed, so a day cannot be played from the
+ * memory of another. It always closes before the dark, so the light that
+ * tells of it comes too late for the loop that finds the light.
+ */
+export function daySchedule(seed: number): Schedule {
+  const bellOpens = 60 + ((seed >>> 0) % 51);
+  return {
+    relay: [0, TUNE.WINDOW_SECONDS],
+    wreck: [0, TUNE.WINDOW_SECONDS],
+    bell: [bellOpens, bellOpens + BELL_SECONDS],
+    passenger: [0, TUNE.WINDOW_SECONDS],
+    light: [TUNE.DARK_STARTS, TUNE.WINDOW_SECONDS],
+  };
+}
+
 /** Whether a find answers `elapsed` seconds into the loop. */
-export function isOpen(id: FindId, elapsed: number): boolean {
-  const { opensAt, closesAt } = FINDS[id];
+export function isOpen(id: FindId, elapsed: number, schedule: Schedule): boolean {
+  const [opensAt, closesAt] = schedule[id];
   return elapsed >= opensAt && elapsed < closesAt;
 }
 
@@ -94,7 +114,7 @@ export interface Places {
  * What logging `id` tells you. Each note points at another find: where it
  * is, and when it answers if that matters. Short, so a note fits a phone.
  */
-export function findNote(id: FindId, places: Places): string {
+export function findNote(id: FindId, places: Places, schedule: Schedule): string {
   switch (id) {
     case 'relay':
       return 'SOMETHING RIDES THE COMET';
@@ -103,7 +123,7 @@ export function findNote(id: FindId, places: Places): string {
     case 'wreck':
       return 'WHEN THE DARK COMES IN, A LIGHT IN THE BELT';
     case 'light':
-      return `A BELL ANSWERS PAST ${places.bell}, ${formatMoment(FINDS.bell.opensAt)} TO ${formatMoment(FINDS.bell.closesAt)}`;
+      return `A BELL ANSWERS PAST ${places.bell}, ${formatMoment(schedule.bell[0])} TO ${formatMoment(schedule.bell[1])}`;
     case 'bell':
       return 'IT ANSWERS FOR FIFTY SECONDS A LOOP';
   }
@@ -165,13 +185,16 @@ export interface LoopState {
   closed: boolean;
   /** All five are logged. */
   charted: boolean;
+  /** When each find answers, this day. */
+  schedule: Schedule;
 }
 
 /** Seconds since the loop began. */
 export const elapsedOf = (state: LoopState): number => TUNE.WINDOW_SECONDS - state.timeLeft;
 
-export function createLoop(logged: Iterable<FindId> = []): LoopState {
+export function createLoop(logged: Iterable<FindId> = [], schedule: Schedule = daySchedule(0)): LoopState {
   const state: LoopState = {
+    schedule,
     timeLeft: TUNE.WINDOW_SECONDS,
     scanId: null,
     scanProgress: 0,
@@ -201,7 +224,7 @@ export function resetLoop(state: LoopState, logged: Iterable<FindId>): void {
 /** Finds that answer now and are not logged: the ones that send a signal. */
 export function listening(state: LoopState): FindId[] {
   const elapsed = elapsedOf(state);
-  return FIND_IDS.filter((id) => !state.logged.has(id) && isOpen(id, elapsed));
+  return FIND_IDS.filter((id) => !state.logged.has(id) && isOpen(id, elapsed, state.schedule));
 }
 
 /** Whether a note in the log has told you of `id` (the relay needs none: it is where you start). */
@@ -241,7 +264,7 @@ export function stepLoop(state: LoopState, dt: number, frame: LoopFrame): FindId
 
   let logged: FindId | null = null;
   const { candidate } = frame;
-  if (!candidate || state.logged.has(candidate) || !isOpen(candidate, startedAt)) {
+  if (!candidate || state.logged.has(candidate) || !isOpen(candidate, startedAt, state.schedule)) {
     state.scanId = null;
     state.scanProgress = 0;
     state.tooFast = false;
@@ -440,6 +463,17 @@ export interface ChartResult {
   newBest: boolean;
   /** Days charted all-time, this one included. */
   charted: number;
+}
+
+/**
+ * Forgets the day's log, so the system can be flown again from nothing:
+ * nothing logged, no loops counted. The best stays, and so do the days
+ * charted: they are records of what was done.
+ */
+export function forgetLog(storage: StorageLike | null, label: string): DayLog {
+  const log: DayLog = { logged: [], loops: 0, best: readLog(storage, label).best };
+  writeLog(storage, label, log);
+  return log;
 }
 
 /**

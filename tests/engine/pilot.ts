@@ -17,7 +17,7 @@
 
 export interface PilotWorld {
   pois(): Array<{ name: string; x: number; y: number; z: number; radius: number; id: string; solid: boolean; envelope: boolean }>;
-  finds(): Array<{ id: string; x: number; y: number; z: number; open: boolean; logged: boolean }>;
+  finds(): Array<{ id: string; x: number; y: number; z: number; open: boolean; logged: boolean; opensAt: number; closesAt: number }>;
   shipAbs(): { x: number; y: number; z: number };
   attitude(): { quaternion: { x: number; y: number; z: number; w: number }; fov: number; aspect: number };
   state(): {
@@ -44,7 +44,7 @@ export interface PilotPlan {
   margin?: number;
 }
 
-/** Find ranges and windows as the rules have them (survey.ts FINDS). */
+/** Find ranges as the rules have them (survey.ts FINDS); windows come from the day (world.finds). */
 const RANGE: Record<string, number> = { relay: 600, wreck: 600, bell: 600, passenger: 1000, light: 600 };
 
 /** How far the ship coasts off the burn from `speed` to 150 km/s (createEphemeris brakingDistance). */
@@ -53,8 +53,6 @@ function brakingDistance(speed: number): number {
   if (excess <= 50) return 0;
   return (excess - 50) / 1.4 + (100 * Math.log(excess / 50)) / 1.4;
 }
-const OPENS: Record<string, number> = { relay: 0, wreck: 0, bell: 80, passenger: 0, light: 180 };
-const CLOSES: Record<string, number> = { relay: 240, wreck: 240, bell: 130, passenger: 240, light: 240 };
 
 type Vec = { x: number; y: number; z: number };
 const sub = (a: Vec, b: Vec): Vec => ({ x: a.x - b.x, y: a.y - b.y, z: a.z - b.z });
@@ -174,9 +172,9 @@ export function createPilot(world: PilotWorld, controls: PilotControls, plan: Pi
       const etaPenalty = (f: (typeof finds)[number]) => {
         const d = len(sub(f, ship));
         const travel = d / 3000;
-        const opensIn = Math.max(0, OPENS[f.id] - elapsed);
+        const opensIn = Math.max(0, f.opensAt - elapsed);
         // a find that closes before we could get there is out
-        if (elapsed + travel > CLOSES[f.id] - 2) return Infinity;
+        if (elapsed + travel > f.closesAt - 2) return Infinity;
         return Math.max(travel, opensIn) + d / 20000;
       };
       let pick = finds[0];

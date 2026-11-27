@@ -100,7 +100,7 @@ export interface EphemerisDebug extends PilotWorld {
     fov: number;
     aspect: number;
   };
-  finds(): Array<{ id: FindId; x: number; y: number; z: number; open: boolean; logged: boolean }>;
+  finds(): Array<{ id: FindId; x: number; y: number; z: number; open: boolean; logged: boolean; opensAt: number; closesAt: number }>;
   state(): {
     phase: EphemerisPhase;
     timeLeft: number;

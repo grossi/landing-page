@@ -33,8 +33,11 @@ export interface Keepout {
  * sector's own body is in the picture when you arrive.
  */
 const ABOVE_FEATURE = 3200;
-/** The relay sits this far ahead of the spawn point, on the spawn heading. */
-const RELAY_AHEAD = 4200;
+/** The relay sits this far ahead of the spawn point (km), on the spawn heading, give or take the seed's share. */
+const RELAY_AHEAD = 3600;
+const RELAY_AHEAD_SPREAD = 1200;
+/** …and this far off that line at most (km): a few degrees, so the first signal reads full. */
+const RELAY_ASIDE = 500;
 /** The late light sits in the home belt, at this radius scale times the belt's middle. */
 const LIGHT_LIFT = 400;
 
@@ -56,17 +59,21 @@ export function planFinds(
 ): FindPlan {
   const rand = mulberry32((worldSeed ^ 0x51f7) >>> 0);
 
+  const ahead = RELAY_AHEAD + rand() * RELAY_AHEAD_SPREAD;
   const relay = {
-    x: spawn.x + spawnHeading.x * RELAY_AHEAD + (rand() - 0.5) * 800,
-    y: spawn.y + spawnHeading.y * RELAY_AHEAD,
-    z: spawn.z + spawnHeading.z * RELAY_AHEAD,
+    x: spawn.x + spawnHeading.x * ahead + (rand() - 0.5) * 2 * RELAY_ASIDE,
+    y: spawn.y + spawnHeading.y * ahead + (rand() - 0.5) * RELAY_ASIDE,
+    z: spawn.z + spawnHeading.z * ahead,
   };
 
-  // the ring of cells two out, in the plane of the system
+  // the ring of cells whose centres are two and a half cells out from the
+  // sun (cells are numbered from their low corner, so that is x = -3 or 2),
+  // in the plane of the system: 30,000 to 42,000 km away, past the home
+  // system and past hearing until a note tells of them
   const ring: Array<[number, number, number]> = [];
-  for (let x = -2; x <= 2; x++) {
-    for (let z = -2; z <= 2; z++) {
-      if (Math.max(Math.abs(x), Math.abs(z)) === 2) ring.push([x, 0, z]);
+  for (let x = -3; x <= 2; x++) {
+    for (let z = -3; z <= 2; z++) {
+      if (Math.max(Math.abs(x + 0.5), Math.abs(z + 0.5)) === 2.5) ring.push([x, 0, z]);
     }
   }
   const angleOf = ([x, , z]: [number, number, number]) => Math.atan2(z + 0.5, x + 0.5);
@@ -117,6 +124,15 @@ export function planFinds(
     cells: { wreck: wreckCell, bell: bellCell },
     places: { wreck: wreck.name, bell: bell.name },
   };
+}
+
+/**
+ * Where the world's clock starts each loop, from the seed: up to one turn of
+ * the home comet (about 140 s), so the comet, and the passenger on it, start
+ * each day somewhere else on its orbit. The planets move a few hundred km.
+ */
+export function clockOffsetFor(worldSeed: number): number {
+  return ((worldSeed >>> 0) % 1400) / 10;
 }
 
 /** The finds as things in the world. */

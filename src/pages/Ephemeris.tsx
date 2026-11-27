@@ -12,14 +12,14 @@ import {
   FIND_IDS,
   findNote,
   FINDS,
-  formatClock,
+  forgetLog,
   readCharted,
   readLog,
   resolveSeed,
-  TUNE,
   type DayLog,
   type FindId,
   type Places,
+  type Schedule,
   type StorageLike,
 } from 'components/ephemeris/survey';
 import { monoFont } from 'config/site';
@@ -129,11 +129,17 @@ function safeStorage(): StorageLike | null {
 /** `20261126` reads as `2026-11-26`. */
 const dayText = (label: string) => `${label.slice(0, 4)}-${label.slice(4, 6)}-${label.slice(6, 8)}`;
 
+/** What the sim knows of the day that the notes need. */
+interface Day {
+  places: Places;
+  schedule: Schedule;
+}
+
 /**
  * The day's log, as the title and end screens show it: the finds logged by
  * name, then one line for each find a logged one's note points at.
  */
-function LogLines({ logged, places }: { logged: readonly FindId[]; places: Places | null }) {
+function LogLines({ logged, day }: { logged: readonly FindId[]; day: Day | null }) {
   const clues = FIND_IDS.filter((id) => {
     const teller = FINDS[id].toldBy;
     return !logged.includes(id) && teller !== null && logged.includes(teller);
@@ -142,11 +148,11 @@ function LogLines({ logged, places }: { logged: readonly FindId[]; places: Place
   return (
     <Text {...overlayLine}>
       {logged.map((id) => FINDS[id].label).join(' · ')}
-      {places &&
+      {day &&
         clues.map((id) => (
           <span key={id}>
             <br />
-            {findNote(FINDS[id].toldBy!, places)}
+            {findNote(FINDS[id].toldBy!, day.places, day.schedule)}
           </span>
         ))}
     </Text>
@@ -163,7 +169,9 @@ const Ephemeris = () => {
   const gameRef = useRef<EphemerisGame | null>(null);
   const [phase, setPhase] = useState<EphemerisPhase>('title');
   const [result, setResult] = useState<SurveyResult | null>(null);
-  const [places, setPlaces] = useState<Places | null>(null);
+  const [day, setDay] = useState<Day | null>(null);
+  // bumped when the day's log is forgotten, so the screens read it again
+  const [forgotten, setForgotten] = useState(0);
   // counts flights started, so each one replays the fade from black
   const [run, setRun] = useState(0);
   // The BURN zone and the touch wording show once a finger is involved.
@@ -174,7 +182,7 @@ const Ephemeris = () => {
   const seed = useMemo(() => resolveSeed(window.location.search, new Date()), []);
   const storage = useMemo(safeStorage, []);
   // read again whenever the title or the result comes up
-  const log: DayLog = useMemo(() => readLog(storage, seed.label), [storage, seed, phase]);
+  const log: DayLog = useMemo(() => readLog(storage, seed.label), [storage, seed, phase, forgotten]);
   const daysCharted = useMemo(() => readCharted(storage), [storage, phase]);
   const charted = log.logged.length === FIND_IDS.length;
 
@@ -197,7 +205,7 @@ const Ephemeris = () => {
       },
     });
     gameRef.current = game;
-    setPlaces(game.places);
+    setDay({ places: game.places, schedule: game.schedule });
     return () => {
       gameRef.current = null;
       game.dispose();
@@ -234,6 +242,38 @@ const Ephemeris = () => {
     >
       FREE DRIFT · NO CLOCK
     </Box>
+  );
+  // Today's log, forgotten: the system flown again from nothing. The best
+  // and the days charted stay. Shown once there is something to forget.
+  const forget = (log.loops > 0 || log.logged.length > 0) && (
+    <Box
+      as="button"
+      {...hudFont}
+      px="14px"
+      py="8px"
+      fontSize="11px"
+      letterSpacing=".24em"
+      border="1px solid rgba(255,255,255,.25)"
+      bg="rgba(0,0,0,.55)"
+      opacity={0.7}
+      cursor="pointer"
+      pointerEvents="auto"
+      _hover={{ opacity: 1, borderColor: 'rgba(255,255,255,.6)' }}
+      onClick={(e: React.MouseEvent<HTMLElement>) => {
+        e.currentTarget.blur();
+        forgetLog(storage, seed.label);
+        setForgotten((n) => n + 1);
+        gameRef.current?.menu();
+      }}
+    >
+      FORGET TODAY
+    </Box>
+  );
+  const buttons = (
+    <Flex direction="column" align="center" gap="10px">
+      {freeDrift}
+      {forget}
+    </Flex>
   );
 
   return (
@@ -470,11 +510,11 @@ const Ephemeris = () => {
               </Text>
               <Text {...overlayLine}>{systemLine}</Text>
               <Text {...overlayLine} opacity={0.9}>
-                POINT AT A SIGNAL UNTIL IT IS STRONG, THEN GO
+                POINT THE NOSE AT THE SIGNAL
                 <br />
-                SLOW DOWN NEAR A FIND TO LOG IT
+                LOG FIVE FINDS BEFORE THE DARK
                 <br />
-                AT {formatClock(TUNE.WINDOW_SECONDS)} THE DARK COMES IN. THE LOG STAYS.
+                WHAT YOU LOG STAYS FOR TODAY
               </Text>
             </Flex>
             <Flex {...overlayGroup}>
@@ -489,14 +529,14 @@ const Ephemeris = () => {
                   </Text>
                 )
               )}
-              {!charted && <LogLines logged={log.logged} places={places} />}
+              {!charted && <LogLines logged={log.logged} day={day} />}
               <Text {...overlayLine}>
                 {touch ? 'DRAG TO STEER · HOLD BURN' : 'MOUSE OR WASD STEERS · HOLD / SPACE = BURN'}
               </Text>
               <Text {...hudFont} className="eph-blink" fontSize="13px" letterSpacing=".3em">
                 {charted ? 'PRESS TO CHART IT AGAIN' : 'CLICK, TAP OR PRESS A KEY'}
               </Text>
-              {freeDrift}
+              {buttons}
             </Flex>
           </Flex>
         )}
@@ -532,7 +572,7 @@ const Ephemeris = () => {
               )}
             </Flex>
             <Flex {...overlayGroup}>
-              {!result.charted && <LogLines logged={result.logged} places={places} />}
+              {!result.charted && <LogLines logged={result.logged} day={day} />}
               <Text {...overlayLine}>
                 {systemLine}
                 {daysCharted > 0 && (
@@ -545,7 +585,7 @@ const Ephemeris = () => {
               <Text {...hudFont} className="eph-blink" fontSize="13px" letterSpacing=".3em">
                 {result.charted ? 'TAP OR PRESS A KEY TO CHART IT AGAIN' : 'TAP OR PRESS A KEY FOR THE NEXT LOOP'}
               </Text>
-              {freeDrift}
+              {buttons}
             </Flex>
           </Flex>
         )}

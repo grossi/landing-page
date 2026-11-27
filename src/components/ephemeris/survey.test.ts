@@ -5,12 +5,14 @@ import {
   createLoop,
   dailyLabel,
   darkness,
+  daySchedule,
   discoveryRange,
   elapsedOf,
   FIND_IDS,
   findNote,
   FINDS,
   formatClock,
+  forgetLog,
   formatMoment,
   isHeard,
   isOpen,
@@ -57,6 +59,8 @@ function memoryStorage(initial: Record<string, string> = {}) {
 
 const deg = (d: number) => (d * Math.PI) / 180;
 const places = { wreck: 'KHEVEL EXPANSE', bell: 'ORAMIR DEEP' };
+/** A day whose bell answers 1:20 to 2:10 (60 + 20). */
+const day = daySchedule(20);
 
 describe('the five finds', () => {
   it('are five, each with a name and a range', () => {
@@ -67,23 +71,37 @@ describe('the five finds', () => {
     }
   });
 
-  it('answer at set times: the bell 1:20 to 2:10, the light from 3:00, the rest all loop', () => {
+  it('answer at set times: the bell for fifty seconds, the light from 3:00, the rest all loop', () => {
+    expect(day.bell).toEqual([80, 130]);
     for (const id of ['relay', 'wreck', 'passenger'] as const) {
-      expect(isOpen(id, 0), id).toBe(true);
-      expect(isOpen(id, 239.9), id).toBe(true);
+      expect(isOpen(id, 0, day), id).toBe(true);
+      expect(isOpen(id, 239.9, day), id).toBe(true);
     }
-    expect(isOpen('bell', 79.9)).toBe(false);
-    expect(isOpen('bell', 80)).toBe(true);
-    expect(isOpen('bell', 129.9)).toBe(true);
-    expect(isOpen('bell', 130)).toBe(false);
-    expect(isOpen('light', 179.9)).toBe(false);
-    expect(isOpen('light', 180)).toBe(true);
-    expect(isOpen('light', 239.9)).toBe(true);
+    expect(isOpen('bell', 79.9, day)).toBe(false);
+    expect(isOpen('bell', 80, day)).toBe(true);
+    expect(isOpen('bell', 129.9, day)).toBe(true);
+    expect(isOpen('bell', 130, day)).toBe(false);
+    expect(isOpen('light', 179.9, day)).toBe(false);
+    expect(isOpen('light', 180, day)).toBe(true);
     expect(TUNE.DARK_STARTS).toBe(180);
   });
 
+  it('the bell\'s window comes from the seed: somewhere from 1:00 to 1:50, always shut before the dark', () => {
+    const opens = new Set<number>();
+    for (let seed = 0; seed < 2000; seed += 7) {
+      const [a, b] = daySchedule(seed * 2654435761).bell;
+      expect(a).toBeGreaterThanOrEqual(60);
+      expect(a).toBeLessThanOrEqual(110);
+      expect(b - a).toBe(50);
+      expect(b).toBeLessThan(TUNE.DARK_STARTS);
+      opens.add(a);
+    }
+    expect(opens.size).toBeGreaterThan(30);
+    expect(daySchedule(12345)).toEqual(daySchedule(12345));
+  });
+
   it('only the unlogged ones that answer now send a signal', () => {
-    const state = createLoop(['relay']);
+    const state = createLoop(['relay'], day);
     expect(listening(state)).toEqual(['wreck', 'passenger']);
     run(state, 100);
     expect(listening(state)).toEqual(['wreck', 'bell', 'passenger']);
@@ -94,17 +112,18 @@ describe('the five finds', () => {
   it('each note points at another find, and every find is pointed at but the relay', () => {
     const toldOf = new Set<FindId>();
     for (const id of FIND_IDS) {
-      const note = findNote(id, places);
+      const note = findNote(id, places, day);
       expect(note.length, id).toBeLessThan(60);
       expect(note, id).toMatch(/^[A-Z0-9 ,:.]+$/);
       const told = FIND_IDS.find((other) => FINDS[other].toldBy === id);
       if (told) toldOf.add(told);
     }
     expect([...toldOf].sort()).toEqual(['bell', 'light', 'passenger', 'wreck']);
-    expect(findNote('light', places)).toBe('A BELL ANSWERS PAST ORAMIR DEEP, 1:20 TO 2:10');
-    expect(findNote('passenger', places)).toContain('KHEVEL EXPANSE');
-    expect(findNote('wreck', places)).toContain('DARK');
-    expect(findNote('relay', places)).toContain('COMET');
+    expect(findNote('light', places, day)).toBe('A BELL ANSWERS PAST ORAMIR DEEP, 1:20 TO 2:10');
+    expect(findNote('light', places, daySchedule(5))).toBe('A BELL ANSWERS PAST ORAMIR DEEP, 1:05 TO 1:55');
+    expect(findNote('passenger', places, day)).toContain('KHEVEL EXPANSE');
+    expect(findNote('wreck', places, day)).toContain('DARK');
+    expect(findNote('relay', places, day)).toContain('COMET');
   });
 
   it('formats moments of the loop', () => {
@@ -134,9 +153,13 @@ describe('what the log has told you', () => {
     expect(FINDS.bell.toldBy).toBe('light');
   });
 
-  it('the bell is told of only after its window has closed in that loop', () => {
+  it('the bell is told of only after its window has closed in that loop, every day', () => {
     // the light that tells of it opens after the bell has stopped answering
-    expect(FINDS[FINDS.bell.toldBy!].opensAt).toBeGreaterThanOrEqual(FINDS.bell.closesAt);
+    expect(FINDS.bell.toldBy).toBe('light');
+    for (const seed of [0, 1, 50, 99, 4294967295]) {
+      const schedule = daySchedule(seed);
+      expect(schedule.light[0]).toBeGreaterThanOrEqual(schedule.bell[1]);
+    }
   });
 });
 
@@ -223,7 +246,7 @@ describe('scan', () => {
   });
 
   it('a find that does not answer yet cannot be logged, however close', () => {
-    const state = createLoop();
+    const state = createLoop([], day);
     run(state, 70, { candidate: 'bell' });
     expect(state.scanProgress).toBe(0);
     expect(state.logged.has('bell')).toBe(false);
@@ -232,7 +255,7 @@ describe('scan', () => {
   });
 
   it('a find that stops answering mid-scan loses the ring', () => {
-    const state = createLoop();
+    const state = createLoop([], day);
     run(state, 129);
     run(state, 0.9, { candidate: 'bell' });
     expect(state.scanProgress).toBeGreaterThan(0.5);
@@ -386,6 +409,26 @@ describe('the day\'s log', () => {
     beginLoop(storage, 'day2');
     for (const id of FIND_IDS.slice(0, 4)) recordFind(storage, 'day2', id);
     expect(recordFind(storage, 'day2', 'light')).toMatchObject({ charted: 2, newBest: true });
+  });
+
+  it('can be forgotten: nothing logged, no loops, the best and the days charted kept', () => {
+    const storage = memoryStorage();
+    beginLoop(storage, 'x');
+    for (const id of FIND_IDS) recordFind(storage, 'x', id);
+    beginLoop(storage, 'x');
+    recordFind(storage, 'x', 'relay');
+    expect(readLog(storage, 'x')).toEqual({ logged: ['relay'], loops: 1, best: 1 });
+    expect(forgetLog(storage, 'x')).toEqual({ logged: [], loops: 0, best: 1 });
+    expect(readLog(storage, 'x')).toEqual({ logged: [], loops: 0, best: 1 });
+    expect(readCharted(storage)).toBe(1);
+    // the next loop is loop 1 of a fresh log
+    expect(beginLoop(storage, 'x')).toEqual({ logged: [], loops: 1, best: 1 });
+    // another day's log is untouched
+    beginLoop(storage, 'y');
+    recordFind(storage, 'y', 'wreck');
+    forgetLog(storage, 'x');
+    expect(readLog(storage, 'y').logged).toEqual(['wreck']);
+    expect(forgetLog(null, 'x')).toEqual({ logged: [], loops: 0, best: 0 });
   });
 
   it('reads junk as an empty log and keeps the known finds of a damaged one', () => {
