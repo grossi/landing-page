@@ -445,8 +445,28 @@ describe('the home sections', () => {
     const page = await openApp('/');
     for (const tile of section(page, 'work').querySelectorAll<HTMLAnchorElement>('a[data-project]')) {
       const href = tile.getAttribute('href')!;
-      if (href.startsWith('/')) {
-        // the site's own pages and the static arcade games stay in this tab
+      if (href.startsWith('/arcade/')) {
+        // a static game page: a real page load in this tab, which the router must not intercept
+        expect(tile.getAttribute('target'), href).toBeNull();
+        const click = new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 });
+        // The window hears the click last, after React's root listener where the
+        // router would take it over: read the verdict there, then stop
+        // happy-dom's own navigation.
+        let preventedByApp: boolean | undefined;
+        window.addEventListener(
+          'click',
+          (e) => {
+            preventedByApp = e.defaultPrevented;
+            e.preventDefault();
+          },
+          { once: true },
+        );
+        await act(async () => {
+          tile.dispatchEvent(click);
+        });
+        expect(preventedByApp, href).toBe(false);
+        expect(window.location.pathname, href).toBe('/');
+      } else if (href.startsWith('/')) {
         expect(tile.getAttribute('target'), href).toBeNull();
       } else {
         expect(href).toMatch(/^https:\/\//);
@@ -454,6 +474,19 @@ describe('the home sections', () => {
         expect(tile.getAttribute('rel'), href).toContain('noopener');
         expect(tile.getAttribute('aria-label'), href).toContain('opens in a new tab');
       }
+    }
+  });
+
+  it('give each selected project a short link name and its line as the description', async () => {
+    const page = await openApp('/');
+    for (const tile of section(page, 'work').querySelectorAll<HTMLAnchorElement>('a[data-project]')) {
+      const project = projects.find((p) => p.slug === tile.getAttribute('data-project'))!;
+      expect(tile.getAttribute('aria-label'), project.slug).toContain(`${project.name}: ${project.link.label}`);
+      const described = tile.getAttribute('aria-describedby');
+      expect(described, project.slug).toBeTruthy();
+      const description = document.getElementById(described!);
+      expect(description?.textContent, project.slug).toBe(project.line);
+      expect(tile.contains(description), project.slug).toBe(true);
     }
   });
 

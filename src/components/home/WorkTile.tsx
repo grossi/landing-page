@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { useId } from 'react';
 import { Box, Flex, Text } from '@chakra-ui/react';
 import { Link as RouterLink } from 'react-router';
 import { focusRing, tone } from 'components/home/Section';
@@ -12,15 +13,18 @@ import type { Project } from 'data/projects';
  */
 function ProjectAnchor({
   project,
+  describedBy,
   children,
   ...style
-}: { project: Project; children: React.ReactNode } & React.ComponentProps<typeof Box>) {
+}: { project: Project; describedBy: string; children: React.ReactNode } & React.ComponentProps<typeof Box>) {
   const { href, label } = project.link;
+  // A short name for link lists; the project's line is its description, so
+  // a screen reader still says what the project is.
   const name = `${project.name}: ${label}`;
   if (href.startsWith('/') && !href.startsWith('/arcade/')) {
     return (
       <Box asChild {...style}>
-        <RouterLink to={href} aria-label={name}>
+        <RouterLink to={href} aria-label={name} aria-describedby={describedBy}>
           {children}
         </RouterLink>
       </Box>
@@ -29,11 +33,17 @@ function ProjectAnchor({
   return (
     <Box asChild {...style}>
       {href.startsWith('/') ? (
-        <a href={href} aria-label={name}>
+        <a href={href} aria-label={name} aria-describedby={describedBy}>
           {children}
         </a>
       ) : (
-        <a href={href} target="_blank" rel="noopener noreferrer" aria-label={`${name} (opens in a new tab)`}>
+        <a
+          href={href}
+          target="_blank"
+          rel="noopener noreferrer"
+          aria-label={`${name} (opens in a new tab)`}
+          aria-describedby={describedBy}
+        >
           {children}
         </a>
       )}
@@ -48,9 +58,11 @@ function ProjectAnchor({
  */
 const WorkTile = ({ project }: { project: Project }) => {
   const external = !project.link.href.startsWith('/');
+  const lineId = useId();
   return (
     <ProjectAnchor
       project={project}
+      describedBy={lineId}
       data-project={project.slug}
       display="flex"
       flexDirection={{ base: 'row', md: 'column' }}
@@ -98,7 +110,7 @@ const WorkTile = ({ project }: { project: Project }) => {
             {project.link.label} <span aria-hidden="true">{external ? '↗' : '→'}</span>
           </Text>
         </Flex>
-        <Text fontSize={{ base: '13px', md: 'sm' }} lineHeight="1.5" color={tone.soft}>
+        <Text id={lineId} fontSize={{ base: '13px', md: 'sm' }} lineHeight="1.5" color={tone.soft}>
           {project.line}
         </Text>
       </Flex>
