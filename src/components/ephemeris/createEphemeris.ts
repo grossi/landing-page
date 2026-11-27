@@ -1,15 +1,46 @@
 import * as THREE from 'three';
+import { buildFinds, clockOffsetFor, planFinds, type FindPlan, type Keepout } from 'components/ephemeris/finds';
+import { createFlightInput } from 'components/ephemeris/flightInput';
+import { formatDistance, placeMarker, type MarkerPlacement } from 'components/ephemeris/marker';
 import {
-  burnKeysDown,
+  beginLoop,
+  createLoop,
+  darkness,
+  daySchedule,
+  discoveryRange,
+  elapsedOf,
+  FIND_IDS,
+  findNote,
+  FINDS,
+  formatClock,
+  isHeard,
+  isOpen,
+  isTold,
+  listening,
+  prefersCandidate,
+  readLog,
+  recordFind,
+  resetLoop,
+  signalStrength,
+  stepLoop,
+  TUNE,
+  type ChartResult,
+  type FindId,
+  type Places,
+  type Schedule,
+  type StorageLike,
+  type SurveySeed,
+  withMemory,
+} from 'components/ephemeris/survey';
+import {
   CRUISE_FOV,
+  DECEL_RATE,
   easeUpVector,
   FORWARD,
-  resolveSteer,
   speedResponseRate,
+  WORLD_UP,
 } from 'engine/core/flight';
 import { computeRebase } from 'engine/core/floatingOrigin';
-import { createKeyTracker } from 'engine/core/keyTracker';
-import { createListenerGroup } from 'engine/core/listenerGroup';
 import {
   BOOST_LIMIT_FACTOR,
   diffuseDrag,
@@ -18,7 +49,6 @@ import {
   envelopeCap,
   speedLimit,
 } from 'engine/core/motion';
-import { pointerToNdc } from 'engine/core/pointerNdc';
 import { mulberry32 } from 'engine/core/rng';
 import { KIND_PRESETS } from 'engine/lod/displacement';
 import { createLodManager, type LodBeacon, type LodBodyHandle } from 'engine/lod/lodManager';
@@ -52,10 +82,80 @@ export interface EphemerisHudElements {
   speed: HTMLElement;
   /** Current sector, e.g. "KHEVEL EXPANSE · 2.0.-1". */
   sector: HTMLElement;
-  /** Running discovery tally, e.g. "5 CONTACTS LOGGED". */
+  /** "LOG 2/5" in a loop; in FREE DRIFT the discovery tally, e.g. "5 CONTACTS LOGGED". */
   contacts: HTMLElement;
-  /** Transient "NEW CONTACT" banner; the sim drives its opacity. */
+  /** Transient banner (a find logged, a new signal, the dark); the sim drives its opacity. */
   ping: HTMLElement;
+  /** "LOOP 2". */
+  loop: HTMLElement;
+  /** Loop clock, e.g. "3:42". */
+  clock: HTMLElement;
+  /** The reticle at screen centre; the sim drives its opacity. */
+  scan: HTMLElement;
+  /** The reticle's progress arc: any element whose `stroke-dashoffset` runs 100 (empty) to 0 (full). */
+  scanArc: HTMLElement | SVGElement;
+  /** A tick on the reticle toward the signal; the sim drives its rotation and opacity. */
+  scanTick: HTMLElement;
+  /** Line under the reticle: the signal, the scan, or what to do. */
+  scanLabel: HTMLElement;
+  /** Bracket on a find the ship is pointed at; the sim drives its transform and opacity. */
+  marker: HTMLElement;
+  /** The bracket's glyph. */
+  markerGlyph: HTMLElement;
+  /** The find's name and distance on two lines, e.g. "RELAY" over "1420 km". */
+  markerLabel: HTMLElement;
+  /** Full-screen layer for the dark; the sim drives its `--dark` (0..1). */
+  dark: HTMLElement;
+}
+
+/**
+ * - `title`: the world drifts behind the title screen; any press starts a loop.
+ * - `survey`: the four-minute loop.
+ * - `closed`: the loop is over (the dark came in, or the log is complete);
+ *   any press after the lock starts the next loop.
+ * - `drift`: FREE DRIFT, the experience as it was before the loop: no clock,
+ *   no dark, contacts logged on first approach.
+ */
+export type EphemerisPhase = 'title' | 'survey' | 'closed' | 'drift';
+
+/** What the end screen shows. */
+export interface SurveyResult {
+  /** Which loop of the day's log this was. */
+  loop: number;
+  /** Finds logged in this loop. */
+  loggedNow: FindId[];
+  /** Finds logged today, this loop included. */
+  logged: FindId[];
+  /** Set when this loop completed the log. */
+  charted: ChartResult | null;
+}
+
+export interface EphemerisOptions {
+  /** The system to fly. Default: a new random one per mount. */
+  seed?: SurveySeed;
+  /**
+   * Where the day's log is kept. Pass the same store the page reads (a
+   * `withMemory` one), so a log survives the loop even without storage.
+   * Default: this mount's memory.
+   */
+  storage?: StorageLike | null;
+  /** The BURN zone for the second thumb on a phone (see createFlightInput). */
+  burnZone?: HTMLElement | null;
+  /** Phase changes, with the result when a loop ends. Not called per frame. */
+  onPhase?: (phase: EphemerisPhase, result: SurveyResult | null) => void;
+}
+
+export interface EphemerisGame {
+  /** Starts a loop (from the same start, every time) or FREE DRIFT (from the spawn, the world clock running). */
+  start(mode: 'survey' | 'drift'): void;
+  /** Back to the title screen. A loop in flight is abandoned; finds it logged stay logged. */
+  menu(): void;
+  /** Names of the places the finds' notes point at. */
+  places: Places;
+  /** When each find answers, this day. */
+  schedule: Schedule;
+  /** Stops the loop, removes listeners and frees all GPU resources. */
+  dispose(): void;
 }
 
 /**
@@ -104,21 +204,51 @@ const BEACON_RANGE = 2;
  */
 const CRUISE_SPEED = 100;
 const BOOST_FACTOR = 40;
-/**
- * First close approach inside this surface distance logs a POI. The cap
- * binds for the sprawling diffuse volumes — nebulae reach 2,940, clusters
- * 2,598, swarms 2,400 — which would otherwise log from most of a cell
- * away; the biggest solid bodies stay under it (rogue 960 → 1,152, home
- * sun 800 → 960), and a future authored giant caps at 1,200 too.
- */
-const discoveryRange = (radius: number) => Math.max(150, Math.min(radius * 1.2, 1200));
 /** The HUD flags "APPROACH" inside this surface distance. */
 const approachRange = (radius: number) => Math.max(60, radius * 0.5);
+/** Points in the home comet's trail (engine/world/sectorContent builds it). */
+const COMET_TRAIL = 70;
+/** The clock blinks through its last seconds. */
+const CLOCK_WARN_SECONDS = 20;
+/** Fog density of the world, and what the dark thickens it to at the end of a loop. */
+const FOG_DENSITY = 0.000055;
+const FOG_DARK = 0.0006;
+/** Starfield opacity (createStarfield below), faded out by the dark. */
+const STAR_OPACITY = 0.55;
+/** Cells in the signal meter under the reticle. */
+const SIGNAL_CELLS = 8;
+/**
+ * The bracket on a find shows once the ship points at it this well, or once
+ * it is this close: a lock, not a marker on everything.
+ */
+const LOCK_STRENGTH = 0.75;
+const LOCK_DISTANCE = 3000;
+/**
+ * How far the ship coasts, off the burn, from `speed` down to scan speed:
+ * the flight law eases speed toward cruise at DECEL_RATE (about 3,000 km
+ * from a full burn). The readout says to come off the burn when a find is
+ * this close, plus a margin to react.
+ */
+const brakingDistance = (speed: number) => {
+  const excess = speed - CRUISE_SPEED;
+  const goal = TUNE.SCAN_MAX_SPEED - CRUISE_SPEED;
+  if (excess <= goal) return 0;
+  const seconds = Math.log(excess / goal) / DECEL_RATE;
+  return (excess - goal) / DECEL_RATE + CRUISE_SPEED * seconds;
+};
+const BRAKE_MARGIN = 1500;
+/** The passenger rides this far above the comet's centre (the comet's radius is 54). */
+const PASSENGER_LIFT = 70;
 
 /**
  * Mounts the EPHEMERIS solar-system simulation into `container` and starts
- * its render loop. Returns a dispose function that stops the loop, removes
- * listeners and frees all GPU resources.
+ * its render loop. The world opens drifting behind a title screen; the
+ * returned handle starts a survey or FREE DRIFT and disposes the mount.
+ *
+ * The loop's rules (clock, finds and their windows, signal strength, the
+ * scan, the dark, the day's log) live in components/ephemeris/survey and know
+ * nothing of this file. Here they are fed what the sim measures: which find
+ * is in range, how fast the ship is going past it, where the nose points.
  *
  * Space is truly unbounded: ship physics run in JS doubles as absolute
  * position = floating origin + render-local position, and the whole scene is
@@ -142,7 +272,11 @@ const approachRange = (radius: number) => Math.max(60, radius * 0.5);
  * The sim owns its canvas; HUD text is written into the provided elements so
  * the caller controls layout/styling without re-rendering per frame.
  */
-export function createEphemeris(container: HTMLElement, hud: EphemerisHudElements): () => void {
+export function createEphemeris(
+  container: HTMLElement,
+  hud: EphemerisHudElements,
+  options: EphemerisOptions = {},
+): EphemerisGame {
   // log depth: near 0.5 / far 60,000 spans five distance decades with nested
   // nested LOD + skim-band shells — a linear z-buffer would z-fight them.
   // far covers the beacon-dot shell (BEACON_RANGE sectors on the diagonal).
@@ -162,7 +296,12 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
   });
   const { scene, camera, tracker } = stage;
 
-  const worldSeed = Math.floor(Math.random() * 2 ** 31);
+  // One system per seed: the page passes the UTC day (or `?seed=`), so a
+  // best score is a best in a system that can be flown again.
+  const randomSeed = Math.floor(Math.random() * 2 ** 31);
+  const { seed: worldSeed, label: seedLabel } =
+    options.seed ?? { seed: randomSeed, label: String(randomSeed) };
+  const storage = options.storage ?? withMemory(null);
 
   // ---- LOD ladder for planets/stars (screen-space rungs, cross-dissolve) ----
   // surfaceHaze: skimming a body fades its far limb; surfaceShells: skim-band
@@ -176,6 +315,7 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
   home.group.updateMatrixWorld(true);
   home.lodBodies.forEach((body) => lod.register(body));
 
+  const scratchFind = new THREE.Vector3();
   // stars — attached to the ship's position each frame so the backdrop is
   // infinite (they only rotate with the camera, never translate past you);
   // the 20–40k shell spans the beacon band, inside the far plane
@@ -263,35 +403,77 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
   // spawn just outside the home system: past the outermost planet's deepest
   // moon reach, with the same ~2,400-unit clearance the pre-scale layout
   // had (extent 9,591 → spawn 12,000; at home ×2, extent ~11,037 → ~13,437)
-  ship.position.set(0, 340 * WORLD_SCALE.home, HOME_LAYOUT.maxExtent + 2400);
+  const SPAWN = new THREE.Vector3(0, 340 * WORLD_SCALE.home, HOME_LAYOUT.maxExtent + 2400);
+  // slight spawn tilt: the pitch −0.04 forward direction
+  const SPAWN_HEADING = new THREE.Vector3(0, -Math.sin(0.04), -Math.cos(0.04));
+  ship.position.copy(SPAWN);
   scene.add(ship);
 
-  // ---- input ----
-  // last pointer position in standard GL NDC (y up); resolveSteer flips it
-  // to the screen-down steer sense at the consumption site
-  const pointer = { x: 0, y: 0 };
-  let pointerDown = false;
-  // blur also drops the pointer hold — pointerup never arrives for a button
-  // held across a focus loss, which would leave the ship burning forever
-  const keyTracker = createKeyTracker(window, () => { pointerDown = false; });
-  const { keys } = keyTracker;
-
-  // pointerToNdc mutates the stable `pointer` — pointermove fires every
-  // frame while steering, and a fresh object per event is per-frame garbage
-  const onPointerMove = (e: PointerEvent) => { pointerToNdc(pointer, e.clientX, e.clientY, container); };
-  const onPointerDown = () => { pointerDown = true; };
-  const onPointerUp = () => { pointerDown = false; };
-  const onTouchMove = (e: TouchEvent) => {
-    pointerToNdc(pointer, e.touches[0].clientX, e.touches[0].clientY, container);
+  // ---- the day's finds (components/ephemeris/finds) ----
+  // The late light keeps clear of the planets that cross the belt; planets
+  // move a few kilometres a second, so where they are at the start is where
+  // they are all loop.
+  const beltRadius = 4700 * HOME_LAYOUT.orbitStretch;
+  // the world's clock starts where the seed says, so the comet does too;
+  // laying the trail down that many times puts it all on the comet
+  const clockOffset = clockOffsetFor(worldSeed);
+  const setWorldClock = () => {
+    for (let i = 0; i < COMET_TRAIL; i++) home.update?.(0, clockOffset);
+    home.group.updateMatrixWorld(true);
   };
-  const listeners = createListenerGroup();
-  listeners.add(container, 'pointermove', onPointerMove);
-  listeners.add(container, 'pointerdown', onPointerDown);
-  listeners.add(window, 'pointerup', onPointerUp);
-  // a browser-canceled touch (scroll takeover, system gesture) never sends
-  // pointerup — without this the ship burns forever
-  listeners.add(window, 'pointercancel', onPointerUp);
-  listeners.add(container, 'touchmove', onTouchMove, { passive: true });
+  setWorldClock();
+  const keepouts: Keepout[] = home.pois.map((poi) => {
+    poi.object.getWorldPosition(scratchFind);
+    return { x: scratchFind.x, z: scratchFind.z, reach: poi.radius * (1 + HOME_LAYOUT.moonReachRadii) + 200 };
+  });
+  const plan: FindPlan = planFinds(worldSeed, SECTOR, SPAWN, SPAWN_HEADING, beltRadius, keepouts);
+  const finds = buildFinds(tracker);
+  // parented to the home group, the finds ride the floating origin with it
+  const findGroup = new THREE.Group();
+  for (const id of ['relay', 'wreck', 'bell', 'light'] as const) {
+    finds.groups[id].position.set(plan[id].x, plan[id].y, plan[id].z);
+  }
+  for (const id of FIND_IDS) findGroup.add(finds.groups[id]);
+  home.group.add(findGroup);
+  // the passenger rides the comet: the home system's last POI
+  const comet = home.pois.find((poi) => poi.name === 'THE COMET')!.object;
+  const placePassenger = () => {
+    finds.groups.passenger.position.copy(comet.position);
+    finds.groups.passenger.position.y += PASSENGER_LIFT;
+  };
+  placePassenger();
+  home.group.updateMatrixWorld(true);
+
+  // ---- phase ----
+  let phase: EphemerisPhase = 'title';
+  // seconds of the end screen's input lock still to run
+  let lockTimer = 0;
+  // Clock of the world's own motion (orbits, the comet). The stage's clock
+  // only ever runs forward; this one goes back to zero with every loop, so
+  // each attempt at a system finds its bodies where the last one did.
+  let worldTime = clockOffset;
+  const schedule = daySchedule(worldSeed);
+  const loop = createLoop(readLog(storage, seedLabel).logged, schedule);
+  let loopNumber = 0;
+
+  // ---- input (components/ephemeris/flightInput) ----
+  const input = createFlightInput(container, {
+    burnZone: options.burnZone,
+    onPress: () => {
+      if (phase === 'title') {
+        start('survey');
+        return true;
+      }
+      if (phase === 'closed') {
+        // presses during the lock are swallowed: the hand that was burning
+        // when the window closed must not skip the result
+        if (lockTimer <= 0) start('survey');
+        return true;
+      }
+      return false;
+    },
+    onEscape: () => menu(),
+  });
 
   // ---- HUD (write only on change; per-frame DOM writes cause layout churn) ----
   const hudCache = new Map<HTMLElement, string>();
@@ -300,6 +482,21 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
       hudCache.set(el, text);
       el.textContent = text;
     }
+  };
+  // The same rule for the inline styles the sim drives. One cached property
+  // per element (opacity, width, the arc's offset); the marker's transform
+  // changes every frame it is shown and is written directly.
+  const styleCache = new Map<Element, string>();
+  const setHudStyle = (el: HTMLElement | SVGElement, property: string, value: string) => {
+    if (styleCache.get(el) !== value) {
+      styleCache.set(el, value);
+      el.style.setProperty(property, value);
+    }
+  };
+  // blinking is CSS, switched by an attribute the page styles
+  const setHudWarn = (el: HTMLElement, warn: boolean) => {
+    const value = warn ? 'on' : 'off';
+    if (el.dataset.warn !== value) el.dataset.warn = value;
   };
 
   // ---- discovery ----
@@ -311,6 +508,35 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
   // frame are steady garbage, and a 60 Hz distance readout is unreadable
   let hudTimer = 0;
   setHudText(hud.contacts, '0 CONTACTS LOGGED');
+
+  // ---- the loop ----
+  // Where each find is this frame, render-local (the passenger moves).
+  const findPos: Record<FindId, THREE.Vector3> = {
+    relay: new THREE.Vector3(),
+    wreck: new THREE.Vector3(),
+    bell: new THREE.Vector3(),
+    passenger: new THREE.Vector3(),
+    light: new THREE.Vector3(),
+  };
+  // the find in range and slow enough to scan, and the strongest signal
+  let pick: FindId | null = null;
+  let pickDist = Infinity;
+  const signal = { id: null as FindId | null, strength: 0, dist: Infinity, offNose: 0 };
+  // how many finds can be heard from here at all, ahead or not
+  let heard = 0;
+  // Where the find being scanned was a frame ago, in absolute coordinates
+  // (a rebase must not read as motion): its velocity is what the ship's
+  // speed is measured against. Every find is at rest but the passenger.
+  const scanPrev = new THREE.Vector3();
+  let scanPrevId = '';
+  const bodyVelocity = new THREE.Vector3();
+  // one-shot pings of the loop's set times
+  let bellAnnounced = false;
+  let darkAnnounced = false;
+  const marker: MarkerPlacement = { x: 0, y: 0, onScreen: false, angle: 0 };
+  const cameraInverse = new THREE.Quaternion();
+  const markerPos = new THREE.Vector3();
+  let locked = false;
 
   // Nearest bodies of the last completed HUD pass (one frame stale —
   // <50 units at max speed). `nearest` spans BOTH kinds and drives the HUD;
@@ -371,7 +597,8 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
       // inside a diffuse volume — the deepest overlapping one sets the drag
       dragFactor = Math.min(dragFactor, diffuseDrag(d, poi.radius));
     }
-    if (d < discoveryRange(poi.radius) && poi.id && !discoveredIds.has(poi.id)) {
+    // FREE DRIFT: the first close approach logs the contact, as it always did
+    if (phase === 'drift' && poi.id && d < discoveryRange(poi.radius) && !discoveredIds.has(poi.id)) {
       discoveredIds.add(poi.id);
       pingTimer = 4;
       setHudText(hud.ping, `NEW CONTACT · ${poi.name}`);
@@ -379,32 +606,310 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
     }
   };
 
+  // ---- phase changes ----
+  // The dark belongs to the loop: anything else is lit as it always was.
+  const setDark = (amount: number) => {
+    const fog = scene.fog as THREE.FogExp2 | null;
+    if (fog) fog.density = FOG_DENSITY + (FOG_DARK - FOG_DENSITY) * amount;
+    stars.material.opacity = STAR_OPACITY * (1 - amount);
+    setHudStyle(hud.dark, '--dark', amount.toFixed(3));
+  };
+
+  const setPhase = (next: EphemerisPhase, result: SurveyResult | null = null) => {
+    phase = next;
+    // whatever was held belongs to the phase that just ended
+    input.release();
+    hudTimer = 0; // the readouts of the new phase show on its first frame
+    pingTimer = 0;
+    hud.ping.style.opacity = '0';
+    setHudStyle(hud.scan, 'opacity', '0');
+    setHudStyle(hud.scanTick, 'opacity', '0');
+    setHudStyle(hud.marker, 'opacity', '0');
+    // the finds are part of the loop's world; FREE DRIFT is the world as it was
+    findGroup.visible = next !== 'drift';
+    if (next !== 'closed') setDark(0);
+    options.onPhase?.(next, result);
+  };
+
+  // Puts the ship at ABSOLUTE coordinates: re-anchors the floating origin at
+  // the containing cell corner, keeps the ship at the render-local remainder
+  // and shifts every render-local root. With a look target the chase pose is
+  // re-seeded, converged, so there is no swoop.
+  const placeShip = (x: number, y: number, z: number, look?: THREE.Vector3) => {
+    rebase.set(
+      Math.floor(x / SECTOR) * SECTOR - origin.x,
+      Math.floor(y / SECTOR) * SECTOR - origin.y,
+      Math.floor(z / SECTOR) * SECTOR - origin.z,
+    );
+    if (rebase.lengthSq() > 0) {
+      // keep the chase pose — no cross-sector swoop. The rig shifts the
+      // virtual pose (ship.position is rewritten just below anyway); the
+      // real camera shifts too so it stays the pose's mirror mid-warp.
+      rig.applyRebase(rebase);
+      camera.position.sub(rebase);
+      home.group.position.sub(rebase);
+      home.group.updateMatrixWorld(true);
+      field.applyOriginShift(rebase);
+      beaconCellKey = '';
+    }
+    ship.position.set(x - origin.x, y - origin.y, z - origin.z);
+    velocity.set(0, 0, 0);
+    envelopeAnnounced.clear(); // a jump is not an approach — start re-armed
+    if (look) {
+      rig.seed(scratch.copy(look).sub(scratch2.set(x, y, z)).normalize());
+      camera.position.copy(rig.pose.position);
+      camera.quaternion.copy(rig.pose.quaternion);
+    }
+    field.sync(shipAbs.copy(ship.position).add(origin), true);
+  };
+
+  function start(mode: 'survey' | 'drift') {
+    if (disposed) return;
+    discoveredIds.clear();
+    // Every flight starts where the page always started: the ship at the
+    // spawn point on the spawn heading, level and at rest. (Behind the title
+    // and the end screen it has been cruising on with no hand on it.)
+    rig.levelUp.copy(WORLD_UP);
+    rig.shipBody.rotation.z = 0;
+    placeShip(SPAWN.x, SPAWN.y, SPAWN.z, scratch3.copy(SPAWN).add(SPAWN_HEADING));
+    if (mode === 'survey') {
+      // and a loop finds the world as the last one did: its clock goes back
+      // to zero, so the bodies, the comet and its passenger are where they were
+      const log = beginLoop(storage, seedLabel);
+      loopNumber = log.loops;
+      resetLoop(loop, log.logged);
+      scanPrevId = '';
+      bellAnnounced = darkAnnounced = false;
+      worldTime = clockOffset;
+      // the orbiters read the clock, so move them now: the first frame must
+      // not see the last loop's positions (the comet drags a trail of its
+      // last COMET_TRAIL positions; that many steps lay the whole trail back
+      // on the comet, as on a fresh mount, so no line crosses the system)
+      setWorldClock();
+      field.updateContents(0, clockOffset);
+      placePassenger();
+      finds.update(0, 0, 0);
+      scene.updateMatrixWorld(true);
+      setHudText(hud.contacts, `LOG ${loop.logged.size}/${FIND_IDS.length}`);
+      setHudText(hud.loop, `LOOP ${loopNumber}`);
+    } else {
+      setHudText(hud.contacts, '0 CONTACTS LOGGED');
+    }
+    setPhase(mode);
+  }
+
+  function menu() {
+    if (disposed || phase === 'title') return;
+    setPhase('title');
+  }
+
+  // ---- the loop, per frame ----
+  // Hands the rules this frame's facts and puts what they decide on the HUD.
+  const stepLoopFrame = (dt: number) => {
+    const elapsed = elapsedOf(loop);
+    for (const id of FIND_IDS) finds.groups[id].getWorldPosition(findPos[id]);
+
+    // (getWorldPosition brings the matrices up to date: these are this
+    // frame's positions, after the world update, so the passenger's step
+    // between two samples took this frame's dt)
+
+    // which find is in range to scan; which signal is strongest ahead
+    forward.copy(FORWARD).applyQuaternion(ship.quaternion);
+    pick = null;
+    pickDist = Infinity;
+    signal.id = null;
+    signal.strength = 0;
+    heard = 0;
+    for (const id of listening(loop)) {
+      scratchFind.copy(findPos[id]).sub(ship.position);
+      const d = scratchFind.length();
+      if (d < FINDS[id].range && prefersCandidate(loop.scanId, pick, pickDist, id, d)) {
+        pick = id;
+        pickDist = d;
+      }
+      if (!isHeard(loop, id, d)) continue;
+      heard += 1;
+      const offNose = d > 1e-6 ? Math.acos(Math.max(-1, Math.min(1, forward.dot(scratchFind) / d))) : 0;
+      const strength = signalStrength(offNose, d);
+      if (strength > signal.strength) {
+        signal.id = id;
+        signal.strength = strength;
+        signal.dist = d;
+        signal.offNose = offNose;
+      }
+    }
+
+    // the find's own velocity, from where it was a frame ago
+    bodyVelocity.set(0, 0, 0);
+    if (pick) {
+      scratch.copy(findPos[pick]).add(origin);
+      if (scanPrevId === pick && dt > 0) {
+        bodyVelocity.copy(scratch).sub(scanPrev).divideScalar(dt);
+      }
+      scanPrev.copy(scratch);
+      scanPrevId = pick;
+    } else {
+      scanPrevId = '';
+    }
+    const logged = stepLoop(loop, dt, {
+      speed: scratch.copy(velocity).sub(bodyVelocity).length(),
+      candidate: pick,
+    });
+
+    if (logged) {
+      const charted = recordFind(storage, seedLabel, logged);
+      pingTimer = 5;
+      setHudText(hud.ping, `${FINDS[logged].label} LOGGED · ${findNote(logged, plan.places, schedule)}`);
+      setHudText(hud.contacts, `LOG ${loop.logged.size}/${FIND_IDS.length}`);
+      if (loop.closed) {
+        closeLoop(charted);
+        return;
+      }
+    }
+    if (loop.closed) {
+      closeLoop(null);
+      return;
+    }
+
+    // the set times: a signal that starts mid-loop, and the dark
+    if (!bellAnnounced && elapsed >= schedule.bell[0] && !loop.logged.has('bell')) {
+      bellAnnounced = true;
+      pingTimer = 4;
+      // told of it, the bell can be followed; not, it is something to look for
+      setHudText(hud.ping, isTold(loop, 'bell') ? 'THE BELL IS ANSWERING' : 'SOMETHING FAR OFF IS ANSWERING');
+    }
+    if (!darkAnnounced && elapsed >= TUNE.DARK_STARTS) {
+      darkAnnounced = true;
+      pingTimer = 4;
+      setHudText(hud.ping, 'THE DARK IS COMING IN');
+    }
+    setDark(darkness(elapsed));
+  };
+
+  const closeLoop = (charted: ChartResult | null) => {
+    lockTimer = TUNE.RETRY_LOCK_SECONDS;
+    setHudText(hud.clock, formatClock(loop.timeLeft));
+    setPhase('closed', {
+      loop: loopNumber,
+      loggedNow: [...loop.loggedNow],
+      logged: FIND_IDS.filter((id) => loop.logged.has(id)),
+      charted,
+    });
+    // the end screen sits in the dark, or in the light of a charted system
+    setDark(loop.charted ? 0 : 1);
+  };
+
+  // The 10 Hz readouts of a loop: clock and the line under the reticle.
+  const writeLoopReadouts = () => {
+    setHudText(hud.clock, formatClock(loop.timeLeft));
+    setHudWarn(hud.clock, loop.timeLeft <= CLOCK_WARN_SECONDS);
+    const speed = velocity.length();
+    let line: string;
+    if (loop.scanId) {
+      // a moving find (the passenger) is matched, not stopped at: say which way
+      const chasing = bodyVelocity.lengthSq() > 1;
+      line = !loop.tooFast
+        ? `LOGGING · ${FINDS[loop.scanId].label}`
+        : chasing && velocity.dot(bodyVelocity) < bodyVelocity.lengthSq()
+          ? 'TOO SLOW · BURN TO KEEP PACE'
+          : 'TOO FAST · COME OFF THE BURN';
+    } else if (signal.id) {
+      const cells = Math.max(1, Math.round(signal.strength * SIGNAL_CELLS));
+      const bars = '▮'.repeat(cells) + '▯'.repeat(SIGNAL_CELLS - cells);
+      const brake =
+        signal.id !== 'passenger' && signal.dist - FINDS[signal.id].range < brakingDistance(speed) + BRAKE_MARGIN
+          ? ' · COME OFF THE BURN'
+          : '';
+      line = `${FINDS[signal.id].label} ${bars} ${formatDistance(signal.dist)}${brake}`;
+    } else if (heard > 0) {
+      line = 'NO SIGNAL AHEAD · TURN TO SEARCH';
+    } else {
+      line = 'SILENCE';
+    }
+    setHudText(hud.scanLabel, line);
+    // the bracket is the find's place; the line over the reticle already names it
+    setHudText(hud.markerLabel, '');
+  };
+
+  // Per frame, on the settled camera: the reticle, its tick toward the
+  // signal, and the bracket on a find the ship is locked on.
+  const drawReticle = () => {
+    setHudStyle(hud.scan, 'opacity', '1');
+    setHudStyle(hud.scanArc, 'stroke-dashoffset', (100 - loop.scanProgress * 100).toFixed(1));
+    const id = signal.id;
+    if (!id || loop.scanId) {
+      setHudStyle(hud.scanTick, 'opacity', '0');
+      setHudStyle(hud.marker, 'opacity', '0');
+      locked = false;
+      return;
+    }
+    markerPos
+      .copy(findPos[id])
+      .sub(camera.position)
+      .applyQuaternion(cameraInverse.copy(camera.quaternion).invert());
+    const width = container.clientWidth;
+    const height = container.clientHeight;
+    placeMarker(
+      marker,
+      markerPos.x,
+      markerPos.y,
+      markerPos.z,
+      Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2),
+      width / Math.max(1, height),
+      0.9,
+      0.9,
+    );
+    // the tick: which way round the reticle the signal is, as strong as it reads
+    setHudStyle(hud.scanTick, 'opacity', (0.25 + 0.75 * signal.strength).toFixed(2));
+    hud.scanTick.style.transform = `rotate(${(-marker.angle).toFixed(3)}rad)`;
+    locked = marker.onScreen && (signal.strength >= LOCK_STRENGTH || signal.dist < LOCK_DISTANCE);
+    if (!locked) {
+      setHudStyle(hud.marker, 'opacity', '0');
+      return;
+    }
+    setHudStyle(hud.marker, 'opacity', '1');
+    hud.marker.style.transform =
+      `translate(${((marker.x * 0.5 + 0.5) * width).toFixed(1)}px, ${((0.5 - marker.y * 0.5) * height).toFixed(1)}px)`;
+    setHudText(hud.markerGlyph, '◇');
+  };
+
   // ---- simulation loop ----
   const velocity = new THREE.Vector3();
   const steer = { x: 0, y: 0 };
   const forward = new THREE.Vector3();
   const scratch = new THREE.Vector3();
+  const scratch2 = new THREE.Vector3();
+  const scratch3 = new THREE.Vector3();
   const shipAbs = new THREE.Vector3();
+  let disposed = false;
+  // the burn that fired last frame, for the debug handle
+  let lastBoost = false;
   const rebase = new THREE.Vector3();
   // floor scratch: the radial direction in the body's local frame
   const floorDir = new THREE.Vector3();
   const floorQuat = new THREE.Quaternion();
 
   // start the camera in the chase pose — at the new world scale a swoop-in
-  // from the scene origin would cross the whole home system. Slight spawn
-  // tilt: seed with the pitch −0.04 forward direction.
-  rig.seed(scratch.set(0, -Math.sin(0.04), -Math.cos(0.04)));
+  // from the scene origin would cross the whole home system
+  rig.seed(SPAWN_HEADING);
   camera.position.copy(rig.pose.position);
   camera.quaternion.copy(rig.pose.quaternion);
 
   field.sync(shipAbs.copy(ship.position).add(origin), true);
 
-  stage.start((dt, t) => {
-    // steering — resolveSteer also clamps to ±1, which the raw pointer read
-    // never did: a captured pointer dragged past the canvas edge used to
-    // command super-unit deflection
-    resolveSteer(steer, pointer.x, pointer.y, keys);
-    const boost = pointerDown || burnKeysDown(keys);
+  stage.start((dt) => {
+    worldTime += dt;
+    if (lockTimer > 0) lockTimer -= dt;
+    // Behind the title and the end screen the ship holds its heading at
+    // cruise: the world keeps moving, and no hand is on the controls.
+    const flying = phase === 'survey' || phase === 'drift';
+    if (flying) {
+      input.readSteer(steer, dt);
+    } else {
+      steer.x = steer.y = 0;
+    }
+    const boost = flying && input.burnHeld();
+    lastBoost = boost;
     rig.steer(steer.x, steer.y, dt);
 
     // distance-proportional speed law: time-to-contact stays roughly
@@ -448,11 +953,18 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
       beaconCellKey = ''; // beacon dots are render-local — re-derive them
     }
 
-    // world updates
-    home.update?.(dt, t);
+    // world updates (the passenger rides the comet, the finds turn)
+    home.update?.(dt, worldTime);
+    placePassenger();
+    if (phase === 'survey' || phase === 'closed' || phase === 'title') {
+      const elapsed = phase === 'survey' ? elapsedOf(loop) : 0;
+      const bellLit = phase === 'survey' && isOpen('bell', elapsed, schedule) && !loop.logged.has('bell') ? 1 : 0;
+      const lightLit = phase === 'survey' && !loop.logged.has('light') ? darkness(elapsed) > 0 ? Math.min(1, 0.4 + darkness(elapsed)) : 0 : 0;
+      finds.update(dt, bellLit, lightLit);
+    }
     field.sync(shipAbs.copy(ship.position).add(origin));
     refreshBeacons();
-    field.updateContents(dt, t);
+    field.updateContents(dt, worldTime);
 
     // adaptive quality: under sustained load the governor sheds dust and
     // LOD rungs alongside pixels
@@ -478,6 +990,9 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
     dragFactor = 1;
     for (const poi of home.pois) considerPoi(poi);
     field.forEachPoi(considerPoi);
+
+    // the loop: one step of the rules, fed from this frame's measurements
+    if (phase === 'survey') stepLoopFrame(dt);
 
     // surface-horizon leveling: inside an enveloped body's ring-cue band the
     // roll leveler's reference up eases onto the local surface normal, so a
@@ -523,12 +1038,8 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
         else envelopeAnnounced.set(id, Infinity);
       }
       setHudText(hud.body, nearest.name);
-      const surface = Math.max(0, nearest.dist);
       const approach = nearest.dist < approachRange(nearest.radius) ? ' · APPROACH' : '';
-      setHudText(
-        hud.dist,
-        surface >= 10000 ? `${(surface / 1000).toFixed(2)} Mm${approach}` : `${Math.floor(surface)} km${approach}`,
-      );
+      setHudText(hud.dist, `${formatDistance(nearest.dist)}${approach}`);
       setHudText(hud.speed, `${Math.floor(velocity.length())} km/s`);
       const cell = field.currentCell();
       setHudText(
@@ -537,6 +1048,7 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
           ? 'HOME SYSTEM'
           : `${cell.content ? `${cell.content.name} · ` : ''}${cell.x}.${cell.y}.${cell.z}`,
       );
+      if (phase === 'survey') writeLoopReadouts();
     }
 
     // terrain-following soft altitude floor: probing below FLOOR_PROBE_RADII
@@ -589,6 +1101,9 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
       camera.updateProjectionMatrix();
     }
 
+    // the reticle rides the settled camera, so it never trails its target
+    if (phase === 'survey') drawReticle();
+
     // LOD after the camera settles: rung selection, dissolves, budgeted jobs
     lod.update(camera, container.clientHeight, dt);
   });
@@ -598,49 +1113,56 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
     /** Teleport to ABSOLUTE coordinates (the origin re-anchors under you). */
     warp: (x: number, y: number, z: number, lookX?: number, lookY?: number, lookZ?: number) => void;
     /** POIs of the home system + active sectors, in absolute coordinates. */
-    pois: () => Array<{ name: string; x: number; y: number; z: number; radius: number }>;
+    pois: () => Array<{ name: string; x: number; y: number; z: number; radius: number; id: string; solid: boolean; envelope: boolean }>;
+    /** The day's finds, where they are now in absolute coordinates, and whether each answers. */
+    finds: () => Array<{ id: FindId; x: number; y: number; z: number; open: boolean; logged: boolean; opensAt: number; closesAt: number }>;
+    /**
+     * The game as a player sees it, for scripted play: the phase, the loop's
+     * numbers, the speed, and the strongest signal ahead.
+     */
+    state: () => {
+      phase: EphemerisPhase;
+      timeLeft: number;
+      loop: number;
+      logged: FindId[];
+      loggedNow: FindId[];
+      scanId: FindId | null;
+      scanProgress: number;
+      tooFast: boolean;
+      /** Speed of the find being scanned, as the sim estimates it (0 with none). */
+      bodySpeed: number;
+      speed: number;
+      burning: boolean;
+      dark: number;
+      /** The strongest signal ahead; `angle` is where the reticle's tick points (radians, 0 = right, counter-clockwise). */
+      signal: { id: FindId; strength: number; dist: number; offNose: number; angle: number } | null;
+      locked: boolean;
+    };
     /** Current floating-origin offset (absolute doubles). */
     origin: () => { x: number; y: number; z: number };
     /** The ship's absolute position (origin + render-local). */
     shipAbs: () => { x: number; y: number; z: number };
-    /** Camera attitude + the roll leveler's current reference up. */
+    /** Camera attitude and lens + the roll leveler's current reference up. */
     attitude: () => {
       quaternion: { x: number; y: number; z: number; w: number };
       levelUp: { x: number; y: number; z: number };
+      fov: number;
+      aspect: number;
     };
   }
   const debugHandle: EphemerisDebug = {
     warp: (x, y, z, lookX, lookY, lookZ) => {
-      // re-anchor the origin at the containing cell corner, keep the ship at
-      // the render-local remainder, and shift every render-local root
-      rebase.set(
-        Math.floor(x / SECTOR) * SECTOR - origin.x,
-        Math.floor(y / SECTOR) * SECTOR - origin.y,
-        Math.floor(z / SECTOR) * SECTOR - origin.z,
+      placeShip(
+        x,
+        y,
+        z,
+        lookX !== undefined && lookY !== undefined && lookZ !== undefined
+          ? scratch3.set(lookX, lookY, lookZ)
+          : undefined,
       );
-      if (rebase.lengthSq() > 0) {
-        // keep the chase pose — no cross-sector swoop. The rig shifts the
-        // virtual pose (ship.position is rewritten just below anyway); the
-        // real camera shifts too so it stays the pose's mirror mid-warp.
-        rig.applyRebase(rebase);
-        camera.position.sub(rebase);
-        home.group.position.sub(rebase);
-        home.group.updateMatrixWorld(true);
-        field.applyOriginShift(rebase);
-        beaconCellKey = '';
-      }
-      ship.position.set(x - origin.x, y - origin.y, z - origin.z);
-      velocity.set(0, 0, 0);
-      envelopeAnnounced.clear(); // a warp is not an approach — start re-armed
-      if (lookX !== undefined && lookY !== undefined && lookZ !== undefined) {
-        rig.seed(scratch.set(lookX - x, lookY - y, lookZ - z).normalize());
-        camera.position.copy(rig.pose.position);
-        camera.quaternion.copy(rig.pose.quaternion);
-      }
-      field.sync(shipAbs.copy(ship.position).add(origin), true);
     },
     pois: () => {
-      const all: Array<{ name: string; x: number; y: number; z: number; radius: number }> = [];
+      const all: ReturnType<EphemerisDebug['pois']> = [];
       const collect = (poi: Poi) => {
         poi.object.getWorldPosition(poiPos);
         all.push({
@@ -649,6 +1171,9 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
           y: poiPos.y + origin.y,
           z: poiPos.z + origin.z,
           radius: poi.radius,
+          id: poi.id ?? '',
+          solid: poi.solid,
+          envelope: poi.solid && (poi.envelope ?? true),
         });
       };
       home.pois.forEach(collect);
@@ -656,6 +1181,41 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
       return all;
     },
     origin: () => ({ x: origin.x, y: origin.y, z: origin.z }),
+    finds: () => {
+      const elapsed = elapsedOf(loop);
+      return FIND_IDS.map((id) => {
+        finds.groups[id].getWorldPosition(scratchFind);
+        return {
+          id,
+          x: scratchFind.x + origin.x,
+          y: scratchFind.y + origin.y,
+          z: scratchFind.z + origin.z,
+          open: isOpen(id, elapsed, schedule),
+          opensAt: schedule[id][0],
+          closesAt: schedule[id][1],
+          logged: loop.logged.has(id),
+        };
+      });
+    },
+    state: () => ({
+      phase,
+      timeLeft: loop.timeLeft,
+      loop: loopNumber,
+      logged: FIND_IDS.filter((id) => loop.logged.has(id)),
+      loggedNow: [...loop.loggedNow],
+      scanId: loop.scanId,
+      scanProgress: loop.scanProgress,
+      tooFast: loop.tooFast,
+      bodySpeed: bodyVelocity.length(),
+      speed: velocity.length(),
+      burning: lastBoost,
+      dark: phase === 'survey' ? darkness(elapsedOf(loop)) : 0,
+      signal:
+        phase === 'survey' && signal.id
+          ? { id: signal.id, strength: signal.strength, dist: signal.dist, offNose: signal.offNose, angle: marker.angle }
+          : null,
+      locked,
+    }),
     attitude: () => ({
       quaternion: {
         x: camera.quaternion.x,
@@ -664,6 +1224,8 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
         w: camera.quaternion.w,
       },
       levelUp: { x: rig.levelUp.x, y: rig.levelUp.y, z: rig.levelUp.z },
+      fov: camera.fov,
+      aspect: camera.aspect,
     }),
     shipAbs: () => ({
       x: ship.position.x + origin.x,
@@ -674,10 +1236,13 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
   const globalHost = window as unknown as { __EPHEMERIS?: EphemerisDebug };
   globalHost.__EPHEMERIS = debugHandle;
 
-  return () => {
+  const dispose = () => {
+    if (disposed) return;
+    disposed = true;
     if (globalHost.__EPHEMERIS === debugHandle) delete globalHost.__EPHEMERIS;
-    keyTracker.dispose();
-    listeners.dispose();
+    // first: no key, button or thumb may reach a sim that is being torn down
+    input.dispose();
+    home.group.remove(findGroup);
     field.dispose(); // unregisters sector LOD bodies via onContentRemoved
     home.dispose();
     lod.dispose();
@@ -687,4 +1252,6 @@ export function createEphemeris(container: HTMLElement, hud: EphemerisHudElement
     // Home ↔ EPHEMERIS no longer forces GPU re-uploads of shared geometry.
     stage.dispose();
   };
+
+  return { start, menu, places: plan.places, schedule, dispose };
 }
