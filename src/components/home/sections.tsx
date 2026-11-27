@@ -101,11 +101,10 @@ export const About = () => (
         >
           I'm a software engineer, and I make games.
         </Text>
-        {/* Short lines, not paragraphs: one fact each. */}
-        <Flex direction="column" gap="6px" mt="20px" maxW="640px" color={tone.soft} lineHeight="1.7">
-          <Text>Hoshi Labs is my one-person studio in Japan.</Text>
-          <Text>I also build websites and an open-source Android app.</Text>
-        </Flex>
+        {/* Short lines, not paragraphs; the projects page has the rest. */}
+        <Text mt="20px" maxW="640px" color={tone.soft} lineHeight="1.7">
+          Hoshi Labs is my one-person studio in Japan.
+        </Text>
       </Reveal>
 
       <Reveal delay={0.1}>
