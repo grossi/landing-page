@@ -18,8 +18,12 @@ export const kicker = ['SOFTWARE ENGINEER', 'GAME DEVELOPER'] as const;
 
 // ---- selected work (data/projects.ts, the projects page's data) ----
 
-/** The projects shown on the home page, in this order. */
-export const SELECTED_WORK = ['hoshi-labs', 'star-survival', 'tactia-pocket', 'game-prototypes'];
+/**
+ * The projects shown on the home page, in this order: one from each group
+ * of the projects page (a released game, a playable prototype, a site, an
+ * arcade game). Hoshi Labs itself is in the about section's fact sheet.
+ */
+export const SELECTED_WORK = ['star-survival', 'mossmage', 'isuzu-portfolio', 'meridian'];
 
 const findProject = (slug: string): Project | undefined =>
   projects.find((project) => project.slug === slug);

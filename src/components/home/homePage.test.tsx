@@ -428,16 +428,49 @@ describe('the home sections', () => {
 
   it('show the selected work from the projects data, not a copy', async () => {
     const page = await openApp('/');
-    const cards = [...section(page, 'work').querySelectorAll<HTMLElement>('[data-project]')];
-    expect(cards.map((card) => card.getAttribute('data-project'))).toEqual(SELECTED_WORK);
-    for (const card of cards) {
-      const project = projects.find((p) => p.slug === card.getAttribute('data-project'))!;
-      expect(card.querySelector('h3')?.textContent).toBe(project.name);
-      expect(card.textContent).toContain(project.tagline);
-      expect(card.textContent).toContain(project.description);
-      expect([...card.querySelectorAll('a')].map((a) => a.getAttribute('href'))).toEqual(
-        project.links.map((link) => link.href),
-      );
+    // each tile is the entry's one link
+    const tiles = [...section(page, 'work').querySelectorAll<HTMLAnchorElement>('a[data-project]')];
+    expect(tiles.map((tile) => tile.getAttribute('data-project'))).toEqual(SELECTED_WORK);
+    for (const tile of tiles) {
+      const project = projects.find((p) => p.slug === tile.getAttribute('data-project'))!;
+      expect(tile.querySelector('h3')?.textContent, project.slug).toBe(project.name);
+      expect(tile.textContent, project.slug).toContain(project.line);
+      expect(tile.textContent, project.slug).toContain(project.link.label);
+      expect(tile.getAttribute('href'), project.slug).toBe(project.link.href);
+      expect(tile.querySelectorAll('a').length, project.slug).toBe(0);
+    }
+  });
+
+  it('open each selected project the way the projects page does', async () => {
+    const page = await openApp('/');
+    for (const tile of section(page, 'work').querySelectorAll<HTMLAnchorElement>('a[data-project]')) {
+      const href = tile.getAttribute('href')!;
+      if (href.startsWith('/')) {
+        // the site's own pages and the static arcade games stay in this tab
+        expect(tile.getAttribute('target'), href).toBeNull();
+      } else {
+        expect(href).toMatch(/^https:\/\//);
+        expect(tile.getAttribute('target'), href).toBe('_blank');
+        expect(tile.getAttribute('rel'), href).toContain('noopener');
+        expect(tile.getAttribute('aria-label'), href).toContain('opens in a new tab');
+      }
+    }
+  });
+
+  it('load the selected work images lazily, at the small size, in a fixed box', async () => {
+    const page = await openApp('/');
+    for (const tile of section(page, 'work').querySelectorAll<HTMLAnchorElement>('a[data-project]')) {
+      const project = projects.find((p) => p.slug === tile.getAttribute('data-project'))!;
+      const img = tile.querySelector('img');
+      if (!project.image) {
+        expect(img, project.slug).toBeNull();
+        continue;
+      }
+      expect(img?.getAttribute('src'), project.slug).toBe(project.image.small.src);
+      expect(img?.getAttribute('alt'), project.slug).toBe(project.image.alt);
+      expect(img?.getAttribute('loading'), project.slug).toBe('lazy');
+      expect(img?.getAttribute('width'), project.slug).toBe(String(project.image.small.width));
+      expect(img?.getAttribute('height'), project.slug).toBe(String(project.image.small.height));
     }
   });
 

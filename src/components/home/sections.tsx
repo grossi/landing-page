@@ -12,7 +12,7 @@ import {
   studio,
 } from 'components/home/content';
 import Section, { focusRing, label, Reveal, tone } from 'components/home/Section';
-import ProjectCard from 'components/projects/ProjectCard';
+import WorkTile from 'components/home/WorkTile';
 import { monoFont, socialLinks } from 'config/site';
 import type { Project } from 'data/projects';
 
@@ -75,13 +75,12 @@ const Fact = ({ name, children }: { name: string; children: React.ReactNode }) =
   </Grid>
 );
 
-/** A fact that names a project links to it, when the project has a public link. */
+/** A fact that names a project links to it (every project in the data has a public link). */
 const ProjectFact = ({ name, project }: { name: string; project: Project | undefined }) => {
   if (!project) return null;
-  const link = project.links[0];
   return (
     <Fact name={name}>
-      {link ? <ArrowLink href={link.href}>{project.name}</ArrowLink> : project.name}
+      <ArrowLink href={project.link.href}>{project.name}</ArrowLink>
     </Fact>
   );
 };
@@ -121,10 +120,10 @@ export const About = () => (
 
 export const SelectedWork = () => (
   <Section id="work">
-    <SimpleGrid columns={{ base: 1, md: 2 }} gap={5}>
+    <SimpleGrid columns={{ base: 1, md: 2, xl: 4 }} gap={{ base: 3, md: 4 }}>
       {selectedWork.map((project, i) => (
         <Reveal key={project.slug} delay={(i % 2) * 0.08}>
-          <ProjectCard project={project} />
+          <WorkTile project={project} />
         </Reveal>
       ))}
     </SimpleGrid>
