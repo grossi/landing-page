@@ -1,216 +1,126 @@
+<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
 <link rel="icon" href="/logo98.png">
 <title>MURMUR</title>
 <style>
-  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+  /* touch-action: the drag steers the ship; the browser must not claim it. */
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; touch-action: none; }
   canvas { display: block; }
   .hud {
     position: fixed; inset: 0; pointer-events: none; color: #fff;
     font-family: ui-monospace, "SF Mono", Menlo, monospace;
     user-select: none; -webkit-user-select: none;
   }
-  .count { position: absolute; top: 18px; left: 20px; font-size: 15px; letter-spacing: .18em; }
-  .state { position: absolute; top: 42px; left: 20px; font-size: 12px; letter-spacing: .18em; opacity: .5; }
-  .title-line {
-    position: absolute; top: 26px; left: 0; right: 0; text-align: center;
-    font-size: 13px; letter-spacing: .5em; opacity: .8;
+  .score { position: absolute; top: 18px; left: 20px; font-size: 15px; letter-spacing: .18em; }
+  .wake  { position: absolute; top: 42px; left: 20px; font-size: 12px; letter-spacing: .18em; opacity: .7; }
+  .clock { position: absolute; top: 18px; right: 20px; font-size: 15px; letter-spacing: .18em; }
+  .clock.low { animation: blink .5s steps(2) infinite; }
+  .best  { position: absolute; top: 42px; right: 20px; font-size: 12px; letter-spacing: .18em; opacity: .5; }
+  .banked {
+    position: absolute; top: 96px; left: 0; right: 0; text-align: center;
+    font-size: 13px; letter-spacing: .3em; opacity: 0;
   }
-  .hint  {
-    position: absolute; bottom: 26px; left: 0; right: 0; text-align: center;
-    font-size: 12px; letter-spacing: .28em; opacity: .45;
+  .banked.announce { animation: announce 2.6s ease-out; }
+  @keyframes announce { 0% { opacity: 0; } 10% { opacity: .95; } 70% { opacity: .95; } 100% { opacity: 0; } }
+  .flash { position: absolute; inset: 0; background: #fff; opacity: 0; }
+  .flash.hit { animation: hit .35s ease-out; }
+  @keyframes hit { 0% { opacity: .55; } 100% { opacity: 0; } }
+  /* Markers: on the target while it is on screen, on the border pointing at it when it is not. */
+  .marker {
+    position: absolute; left: 0; top: 0; text-align: center; white-space: nowrap;
+    font-size: 11px; letter-spacing: .12em; line-height: 1.25; text-shadow: 0 0 6px #000, 0 0 2px #000;
+    opacity: .55;
+  }
+  .marker b { display: block; font-size: 20px; font-weight: 400; letter-spacing: 0; }
+  /* The flock's distance hangs below its sign and the gate's sits above, so
+     both can be read when the two point the same way. */
+  #flockMark { margin-top: 9px; }
+  #gateMark { margin-top: -9px; }
+  .marker.edge { opacity: 1; }
+  .reticle {
+    position: absolute; left: 50%; top: 50%; width: 12px; height: 12px;
+    transform: translate(-50%, -50%); border: 1px solid rgba(255,255,255,.3); border-radius: 50%;
+  }
+  /* The other thumb's button. Only a touch screen shows it. */
+  .boost {
+    position: absolute; box-sizing: border-box; border: 1px solid rgba(255,255,255,.55);
+    display: none; align-items: center; justify-content: center;
+    font-size: 11px; letter-spacing: .3em; text-indent: .3em; opacity: .8;
+  }
+  .boost.on { background: rgba(255,255,255,.22); opacity: 1; }
+  .touch .boost { display: flex; }
+  .touch .reticle { display: none; }
+  @media (hover: none) and (pointer: coarse) {
+    .boost { display: flex; }
+    .reticle { display: none; }
+  }
+  /* Once the run is over only the numbers stay: no markers, no reticle, no BOOST. */
+  #flight.ended .marker, #flight.ended .boost, #flight.ended .reticle { display: none; }
+  .center {
+    position: absolute; inset: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; text-align: center; gap: 14px; padding: 0 16px;
+  }
+  /* The title leaves the middle of the screen to the flock: words above it and below it. */
+  .title-screen { justify-content: space-between; padding: 10vh 16px 12vh; }
+  .title-screen > div { display: flex; flex-direction: column; align-items: center; gap: 14px; }
+  /* The end of a run darkens the middle so the result stays legible over the birds. */
+  .result-screen { background: radial-gradient(ellipse 80% 40% at center, rgba(0,0,0,.94) 0%, rgba(0,0,0,.85) 55%, rgba(0,0,0,0) 100%); }
+  .title { font-size: clamp(28px, 8vw, 54px); letter-spacing: .32em; margin-right: -.32em; font-weight: 700; }
+  .sub   { font-size: clamp(11px, 3.1vw, 13px); letter-spacing: .16em; opacity: .6; line-height: 2; }
+  .record { font-size: 13px; letter-spacing: .3em; }
+  .blink { animation: blink 1.2s steps(2) infinite; font-size: 13px; letter-spacing: .3em; }
+  @keyframes blink { 50% { opacity: 0; } }
+  .hidden { display: none; }
+  .for-touch { display: none; }
+  @media (hover: none) and (pointer: coarse) {
+    .for-touch { display: inline; }
+    .for-mouse { display: none; }
   }
 </style>
-<div class="hud">
-  <div class="title-line">MURMUR</div>
-  <div class="count" id="count"></div>
-  <div class="state" id="state"></div>
-  <div class="hint">MOUSE STEERS &middot; FLY INTO THE FLOCK AND SCATTER IT &middot; IT ALWAYS REFORMS</div>
+<div class="hud" id="hud">
+  <div class="flash" id="flash"></div>
+  <div class="best" id="best"></div>
+  <div class="hidden" id="flight">
+    <div class="score" id="score"></div>
+    <div class="wake" id="wake"></div>
+    <div class="clock" id="clock"></div>
+    <div class="banked" id="banked"></div>
+    <div class="reticle"></div>
+    <div class="marker" id="flockMark"><b>◇</b><span id="flockFar"></span></div>
+    <div class="marker" id="gateMark"><span id="gateFar"></span><b>○</b></div>
+    <div class="boost" id="boost">BOOST</div>
+  </div>
+  <div class="center title-screen" id="menu">
+    <div>
+      <div class="title">MURMUR</div>
+      <div class="sub">DIVE THROUGH THE FLOCK TO GATHER IT<br>CARRY IT THROUGH THE GATE TO BANK IT<br>ROCKS WRECK YOU AND SCATTER YOUR WAKE</div>
+    </div>
+    <div>
+      <div class="sub">
+        <span class="for-mouse">MOUSE OR ARROWS STEER &middot; HOLD CLICK, W OR SPACE TO BOOST</span>
+        <span class="for-touch">DRAG TO STEER<br>HOLD BOOST WITH THE OTHER THUMB</span>
+      </div>
+      <div class="blink">CLICK, TAP OR PRESS A KEY</div>
+    </div>
+  </div>
+  <div class="center result-screen hidden" id="over">
+    <div class="title" id="cause"></div>
+    <div class="sub" id="result"></div>
+    <div class="record hidden" id="record">NEW BEST</div>
+    <div class="sub" id="facts"></div>
+    <div class="blink">TAP OR PRESS A KEY TO RETRY</div>
+  </div>
 </div>
 <script type="importmap">
   { "imports": { "three": "/arcade/vendor/three.module.min.js" } }
 </script>
 <script type="module">
 import * as THREE from 'three';
-import { createShipBody } from '../shared/ship.js';
-import { createInput, startLoop, setText } from '../shared/runtime.js';
+// Absolute paths: the page is also served without its trailing slash, where
+// a relative import would resolve one folder too high.
+import { createShipBody } from '/arcade/shared/ship.js';
+import { mount } from '/arcade/murmur/main.js';
 
-const flightEuler = new THREE.Euler();
-const inverseShip = new THREE.Quaternion();
-const DEMO = new URLSearchParams(location.search).has('demo');
-const scene = new THREE.Scene();
-scene.fog = new THREE.Fog(0x000000, 120, 340);
-const camera = new THREE.PerspectiveCamera(64, innerWidth / innerHeight, 0.5, 900);
-const renderer = new THREE.WebGLRenderer({ antialias: true });
-renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
-renderer.setSize(innerWidth, innerHeight);
-document.body.appendChild(renderer.domElement);
-
-// ---- flock ----
-const N = 1100;
-const pos = new Float32Array(N * 3), vel = new Float32Array(N * 3);
-for (let i = 0; i < N; i++) {
-  const v = new THREE.Vector3().randomDirection().multiplyScalar(30 + Math.random() * 80);
-  pos[i * 3] = v.x; pos[i * 3 + 1] = v.y * 0.5; pos[i * 3 + 2] = v.z - 120;
-  vel[i * 3] = (Math.random() - 0.5) * 10;
-  vel[i * 3 + 1] = (Math.random() - 0.5) * 10;
-  vel[i * 3 + 2] = (Math.random() - 0.5) * 10;
-}
-// soft round sprite for each bird
-const spriteTex = (() => {
-  const c = document.createElement('canvas'); c.width = c.height = 64;
-  const g = c.getContext('2d');
-  const grad = g.createRadialGradient(32, 32, 0, 32, 32, 32);
-  grad.addColorStop(0, 'rgba(255,255,255,1)');
-  grad.addColorStop(0.35, 'rgba(255,255,255,.85)');
-  grad.addColorStop(1, 'rgba(255,255,255,0)');
-  g.fillStyle = grad; g.fillRect(0, 0, 64, 64);
-  return new THREE.CanvasTexture(c);
-})();
-const flockGeo = new THREE.BufferGeometry();
-flockGeo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-const flock = new THREE.Points(flockGeo, new THREE.PointsMaterial({
-  color: 0xffffff, size: 2.6, map: spriteTex, transparent: true, opacity: 0.9,
-  sizeAttenuation: true, depthWrite: false, blending: THREE.AdditiveBlending
-}));
-flock.frustumCulled = false;
-scene.add(flock);
-
-// wander target the flock loosely follows
-const target = new THREE.Vector3(0, 0, -140);
-
-// stars
-{
-  const n = 500, sp = new Float32Array(n * 3);
-  for (let i = 0; i < n; i++) {
-    const v = new THREE.Vector3().randomDirection().multiplyScalar(500 + Math.random() * 250);
-    sp.set([v.x, v.y, v.z], i * 3);
-  }
-  const g = new THREE.BufferGeometry();
-  g.setAttribute('position', new THREE.BufferAttribute(sp, 3));
-  scene.add(new THREE.Points(g, new THREE.PointsMaterial({ color: 0xffffff, size: 1.3, transparent: true, opacity: 0.4, fog: false })));
-}
-// faint reference plane far below
-{
-  const positions = [];
-  for (let i = -8; i <= 8; i++) {
-    positions.push(i * 60, -160, -480, i * 60, -160, 480,
-      -480, -160, i * 60, 480, -160, i * 60);
-  }
-  const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-  scene.add(new THREE.LineSegments(geometry,
-    new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.07 })));
-}
-
-// ship
-const ship = new THREE.Group();
-const body = createShipBody(THREE); // banked visually; ship carries the control frame
-ship.add(body);
-scene.add(ship);
-
-const countEl = document.getElementById('count'), stateEl = document.getElementById('state');
-setText(countEl, N + ' BIRDS');
-
-const input = createInput();
-const { keys, pointer } = input;
-
-const shipVel = new THREE.Vector3(), yawPitch = { yaw: Math.PI, pitch: 0 };
-const fwd = new THREE.Vector3(), tmp = new THREE.Vector3(), center = new THREE.Vector3();
-let t = 0;
-
-function tick(dt, now) {
-  t += dt;
-
-  // wander target drifts on slow lissajous
-  target.set(Math.sin(t * 0.11) * 150, Math.sin(t * 0.07) * 60, -140 + Math.cos(t * 0.09) * 150);
-
-  // ---- ship flight (drift-style, gentle) ----
-  let sx = pointer.x, sy = pointer.y;
-  let boost = input.pointerDown || keys.KeyW || keys.ArrowUp || keys.Space;
-  if (DEMO) {
-    // cruise through the flock's centre, then loop around
-    tmp.copy(center).sub(ship.position);
-    const local = tmp.applyQuaternion(inverseShip.copy(ship.quaternion).invert()).normalize();
-    if (local.z > 0) { sx = local.x >= 0 ? 0.7 : -0.7; sy = 0; }
-    else {
-      sx = Math.max(-0.7, Math.min(0.7, local.x * 1.8));
-      sy = Math.max(-0.7, Math.min(0.7, -local.y * 1.8));
-    }
-    boost = true;
-  }
-  yawPitch.yaw -= sx * 2.2 * dt;
-  yawPitch.pitch -= sy * 1.7 * dt;
-  yawPitch.pitch = Math.max(-1.3, Math.min(1.3, yawPitch.pitch));
-  ship.quaternion.setFromEuler(flightEuler.set(yawPitch.pitch, yawPitch.yaw, 0, 'YXZ'));
-  body.rotation.z += ((-sx * 0.9) - body.rotation.z) * Math.min(1, dt * 8);
-  fwd.set(0, 0, -1).applyQuaternion(ship.quaternion);
-  shipVel.lerp(tmp.copy(fwd).multiplyScalar(boost ? 55 : 26), Math.min(1, dt * 2.4));
-  ship.position.addScaledVector(shipVel, dt);
-  // soft leash
-  const rr = ship.position.length();
-  if (rr > 420) ship.position.multiplyScalar(1 - (rr - 420) / rr * Math.min(1, dt * 2));
-
-  // ---- boids (neighbor sampling: i checks i+1..i+7 ring) ----
-  const sxp = ship.position.x, syp = ship.position.y, szp = ship.position.z;
-  let scattered = 0;
-  center.set(0, 0, 0);
-  for (let i = 0; i < N; i++) {
-    const ix = i * 3;
-    let px = pos[ix], py = pos[ix + 1], pz = pos[ix + 2];
-    let vx = vel[ix], vy = vel[ix + 1], vz = vel[ix + 2];
-
-    let cx = 0, cy = 0, cz = 0, ax = 0, ay = 0, az = 0, sepx = 0, sepy = 0, sepz = 0;
-    for (let k = 1; k <= 7; k++) {
-      const j = ((i + k * 151) % N) * 3;
-      const dx = pos[j] - px, dy = pos[j + 1] - py, dz = pos[j + 2] - pz;
-      cx += dx; cy += dy; cz += dz;
-      ax += vel[j]; ay += vel[j + 1]; az += vel[j + 2];
-      const d2 = dx * dx + dy * dy + dz * dz;
-      if (d2 < 36 && d2 > 0.001) { const w = 1 / d2; sepx -= dx * w; sepy -= dy * w; sepz -= dz * w; }
-    }
-    vx += (cx * 0.0034 + ax * 0.0045 + sepx * 3.2) * 60 * dt;
-    vy += (cy * 0.0034 + ay * 0.0045 + sepy * 3.2) * 60 * dt;
-    vz += (cz * 0.0034 + az * 0.0045 + sepz * 3.2) * 60 * dt;
-    // pull to wander target
-    vx += (target.x - px) * 0.028 * 60 * dt * 0.016;
-    vy += (target.y - py) * 0.028 * 60 * dt * 0.016;
-    vz += (target.z - pz) * 0.028 * 60 * dt * 0.016;
-    // flee the ship
-    const fx = px - sxp, fy = py - syp, fz = pz - szp;
-    const fd2 = fx * fx + fy * fy + fz * fz;
-    if (fd2 < 900) {
-      const fd = Math.sqrt(fd2) || 1, w = (1 - fd / 30) * 130 * dt;
-      vx += fx / fd * w; vy += fy / fd * w; vz += fz / fd * w;
-      scattered++;
-    }
-    // speed limits
-    const sp = Math.sqrt(vx * vx + vy * vy + vz * vz) || 1;
-    const max = 30, min = 9;
-    if (sp > max) { vx *= max / sp; vy *= max / sp; vz *= max / sp; }
-    if (sp < min) { vx *= min / sp; vy *= min / sp; vz *= min / sp; }
-
-    px += vx * dt; py += vy * dt; pz += vz * dt;
-    pos[ix] = px; pos[ix + 1] = py; pos[ix + 2] = pz;
-    vel[ix] = vx; vel[ix + 1] = vy; vel[ix + 2] = vz;
-    center.x += px; center.y += py; center.z += pz;
-  }
-  center.multiplyScalar(1 / N);
-  flockGeo.attributes.position.needsUpdate = true;
-
-  setText(stateEl, scattered > 20 ? 'SCATTERING' : 'MURMURATION');
-
-  // chase camera
-  const camTarget = tmp.set(0, 2.4, 9).applyQuaternion(ship.quaternion).add(ship.position);
-  camera.position.lerp(camTarget, Math.min(1, dt * 5));
-  camera.quaternion.slerp(ship.quaternion, Math.min(1, dt * 6));
-  renderer.render(scene, camera);
-}
-startLoop(tick);
-
-addEventListener('resize', () => {
-  camera.aspect = innerWidth / innerHeight;
-  camera.updateProjectionMatrix();
-  renderer.setSize(innerWidth, innerHeight);
-});
+mount({ THREE, createShipBody });
 </script>
