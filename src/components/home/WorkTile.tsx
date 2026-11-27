@@ -80,7 +80,7 @@ const WorkTile = ({ project }: { project: Project }) => {
       <Box
         aspectRatio="16 / 10"
         flexShrink={0}
-        w={{ base: '112px', md: '100%' }}
+        w={{ base: '88px', md: '100%' }}
         alignSelf={{ base: 'center', md: 'stretch' }}
         ml={{ base: 3, md: 0 }}
         bg="#111"
@@ -102,8 +102,19 @@ const WorkTile = ({ project }: { project: Project }) => {
         )}
       </Box>
       <Flex direction="column" gap="6px" minW={0} flex="1" p={{ base: 3, md: 4 }}>
-        <Flex align="baseline" justify="space-between" gap={3}>
-          <Text as="h3" fontFamily={monoFont} fontSize={{ base: '13px', md: '14px' }} fontWeight="bold" letterSpacing=".14em" textTransform="uppercase">
+        {/* Wraps, so on a narrow phone the label drops under the name
+            instead of running past the tile's edge. */}
+        <Flex align="baseline" justify="space-between" columnGap={3} rowGap="2px" wrap="wrap">
+          <Text
+            as="h3"
+            minW={0}
+            overflowWrap="anywhere"
+            fontFamily={monoFont}
+            fontSize={{ base: '13px', md: '14px' }}
+            fontWeight="bold"
+            letterSpacing=".14em"
+            textTransform="uppercase"
+          >
             {project.name}
           </Text>
           <Text as="span" flexShrink={0} fontFamily={monoFont} fontSize="11px" fontWeight="bold" letterSpacing=".2em">

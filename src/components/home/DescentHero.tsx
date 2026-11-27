@@ -15,8 +15,13 @@ const mono = {
   color: 'white',
 } as const;
 
-/** Room for the name, the links and the bottom row, in px. */
-const HERO_MIN_HEIGHT = 380;
+/**
+ * Room for the name, the links and the bottom row, in px: enough for the
+ * content (about 260px at the name's largest), small enough that a phone on
+ * its side (328px under the header) shows the whole hero, PLAY included,
+ * without scrolling.
+ */
+const HERO_MIN_HEIGHT = 320;
 
 export interface DescentHeroHandle {
   /** Leaves play for the title screen; a no-op on the title screen. */
@@ -236,6 +241,11 @@ const DescentHero = ({ ref, headerHeight, onFlightChange, onPlay }: DescentHeroP
         onClick={(e) => {
           e.currentTarget.blur();
           handleRef.current?.exit();
+        }}
+        // Space on the focused button presses it (on key up). It must not
+        // also reach the game's key tracker, where held Space is the burn.
+        onKeyDown={(e) => {
+          if (e.code === 'Space') e.stopPropagation();
         }}
         // Escape works too; a phone has no Esc key, so the label leaves it out
         aria-label="Exit the flight game"

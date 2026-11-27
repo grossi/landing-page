@@ -471,7 +471,9 @@ describe('the home sections', () => {
       } else {
         expect(href).toMatch(/^https:\/\//);
         expect(tile.getAttribute('target'), href).toBe('_blank');
-        expect(tile.getAttribute('rel'), href).toContain('noopener');
+        const rel = (tile.getAttribute('rel') ?? '').split(/\s+/);
+        expect(rel, href).toContain('noopener');
+        expect(rel, href).toContain('noreferrer');
         expect(tile.getAttribute('aria-label'), href).toContain('opens in a new tab');
       }
     }
@@ -575,6 +577,11 @@ describe('the hero', () => {
 
   it('does not repeat the header: no section links under the name', async () => {
     const page = await openApp('/');
+    // neither as a link nor as a button
+    const controls = [...hero(page).querySelectorAll<HTMLElement>('a, button')].map((el) =>
+      (el.textContent ?? '').replace(/[^A-Z]/g, ''),
+    );
+    for (const item of navSections) expect(controls, item.id).not.toContain(item.nav);
     const inHero = [...hero(page).querySelectorAll<HTMLAnchorElement>('a')];
     for (const item of navSections) {
       expect(inHero.map((a) => a.textContent), item.id).not.toContain(item.nav);
@@ -649,6 +656,23 @@ describe('the field under the hero', () => {
     }
     await setMode('title');
     expect(locked()).toEqual(['', false, false]);
+  });
+
+  it('keeps Space on a focused EXIT from reaching the game, where held Space is the burn', async () => {
+    const page = await openApp('/');
+    await setMode('engage');
+    await setMode('play');
+    const exit = hero(page).querySelector<HTMLButtonElement>('button[aria-label="Exit the flight game"]')!;
+    const reached: string[] = [];
+    const listen = (e: KeyboardEvent) => reached.push(e.code);
+    // the game's key tracker listens on the window
+    window.addEventListener('keydown', listen);
+    exit.focus();
+    exit.dispatchEvent(new KeyboardEvent('keydown', { code: 'Space', key: ' ', bubbles: true }));
+    exit.dispatchEvent(new KeyboardEvent('keydown', { code: 'ArrowLeft', key: 'ArrowLeft', bubbles: true }));
+    window.removeEventListener('keydown', listen);
+    // Space stops at the button; other keys still steer
+    expect(reached).toEqual(['ArrowLeft']);
   });
 
   it('gives up its minimum height while it is a game, so EXIT stays on a short screen', async () => {
