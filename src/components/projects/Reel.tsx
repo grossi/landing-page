@@ -12,7 +12,8 @@ import ProjectLink from 'components/projects/ProjectLink';
 // its 1280 px file, so it is never scaled up and soft; the name, line and
 // link sit on a solid band over its lower edge.
 // Phone: a 16:10 image cannot fill a tall screen, so the frame stacks the
-// image edge to edge over the text, centred in the screen.
+// image edge to edge right under the bar, the text under it and the spare
+// height below.
 
 const total = projects.length;
 const pad = (n: number) => String(n).padStart(2, '0');
@@ -211,9 +212,13 @@ html:has(.reel) { scroll-padding-top: 122px; }
 @media (max-width: 47.99em) {
   .reel-bar { padding: 0 16px; gap: 2px; }
   .reel-bar h1 { margin-right: 0; }
-  .reel-frame { padding: 0; align-items: center; }
+  .reel-frame { padding: 0; align-items: flex-start; }
+  /* The last frame leaves room for the end strip, so the end screen shows
+     the whole last project above it. */
+  section.reel-group:last-of-type .reel-frame:last-child { height: calc(var(--reel-h) - 160px); }
   .reel-card { width: 100%; }
   .reel-shot {
+    border-top: 0;
     border-left: 0;
     border-right: 0;
   }
