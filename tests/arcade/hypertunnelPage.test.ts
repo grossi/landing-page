@@ -63,10 +63,14 @@ function calm() {
   const opened = open();
   send(window, 'keydown', { code: 'Enter' });
   send(window, 'keyup', { code: 'Enter' });
+  // Rings and the sections they close, so the speed never steps mid-test either.
+  for (const section of new Set(opened.game.rings.map(ring => ring.section))) section.end += 1e6;
   for (const ring of opened.game.rings) ring.d += 1e6;
   opened.game.angle = 0; opened.game.spin = 0;
   return opened;
 }
+/** The angle on the screen at which a tunnel angle is drawn, through the camera's roll. */
+const drawn = (angle: number) => wrap(angle - page!.view.roll);
 afterEach(() => { page?.dispose(); page = undefined; });
 
 describe('HYPERTUNNEL page', () => {
@@ -111,18 +115,16 @@ describe('HYPERTUNNEL page', () => {
     const { game, values } = open(100);
     send(window, 'keydown', { code: 'Enter' });
     send(window, 'keyup', { code: 'Enter' });
-    for (let i = 0; i < 6; i++) cross(game);
-    cross(game, Math.PI); // the shield takes it
-    expect(game.state).toBe('play');
+    for (let i = 0; i < 4; i++) cross(game);
     cross(game, Math.PI);
     expect(game.state).toBe('over');
     page!.tick(1 / 60);
-    const score = 20 + 30 + 40 + 50 + 60 + 70;
+    const score = 20 + 30 + 40 + 50;
     expect([hidden('menu'), hidden('flight'), hidden('over'), hidden('record')]).toEqual([true, false, false, false]);
     expect(text('cause')).toBe('WRECKED');
     expect(text('result')).toBe('SCORE ' + score);
     expect(text('score')).toBe('SCORE ' + score);
-    expect(text('facts')).toBe('DEPTH 1 · BEST CHAIN 6');
+    expect(text('facts')).toBe('DEPTH 1 · BEST CHAIN 4');
     expect(text('best')).toBe('BEST ' + score);
     expect(values.get(BEST_KEY)).toBe(String(score));
     expect(document.getElementById('flash')!.classList.contains('hit')).toBe(true);
@@ -185,11 +187,12 @@ describe('HYPERTUNNEL page', () => {
     ticks(0.5);
     expect(document.getElementById('flash')!.classList.contains('soft')).toBe(false);
 
-    cross(game); cross(game);
+    // On to the end of this section: its bonus, and the next depth announced.
+    const depth = game.depth;
+    while (game.depth === depth) cross(game);
     page!.tick(1 / 60);
-    expect(game.depth).toBe(2);
-    expect(text('note')).toBe('SECTION CLEAR +100');
-    expect(text('depth')).toBe('DEPTH 2 · ZIGZAG');
+    expect(text('note')).toBe(`SECTION CLEAR +${TUNE.SECTION * depth}`);
+    expect(text('depth')).toBe(`DEPTH ${depth + 1} · ${game.pattern}`);
     expect(document.getElementById('depth')!.classList.contains('announce')).toBe(true);
   });
 
@@ -424,7 +427,7 @@ describe('the mouse', () => {
     mouse(2.6);
     ticks(2, DT);
     expect(view.follow).toBe(false);
-    expect(game.angle).toBeCloseTo(2.6, 3);
+    expect(drawn(game.angle) - 2.6).toBeCloseTo(0, 3);
   });
 
   it('does not take the stick from a key that is still held, and needs a new move once it is let go', () => {
@@ -447,7 +450,7 @@ describe('the mouse', () => {
     mouse(-2, 340);
     ticks(3, DT);
     expect(view.follow).toBe(false);
-    expect(wrap(game.angle + 2)).toBeCloseTo(0, 3);
+    expect(wrap(drawn(game.angle) + 2)).toBeCloseTo(0, 3);
   });
 
   it('comes back to the stick pointing nowhere until it points somewhere new', () => {
@@ -467,7 +470,7 @@ describe('the mouse', () => {
     expect(game.angle).toBe(left);
     mouse(-1);
     ticks(2, DT);
-    expect(game.angle).toBeCloseTo(-1, 3);
+    expect(wrap(drawn(game.angle) + 1)).toBeCloseTo(0, 3);
   });
 
   it('steers the ship behind the title too, where nothing is at stake', () => {
@@ -476,13 +479,152 @@ describe('the mouse', () => {
     mouse(0.4);
     ticks(3);
     expect(game.state).toBe('menu');
-    expect(wrap(game.angle - 0.4)).toBeCloseTo(0, 2);
+    expect(wrap(drawn(game.angle) - 0.4)).toBeCloseTo(0, 2);
     // The run starts where the ship is, so its first gap is under the pointer.
     mouse(0.4, 300, 'pointerdown');
     expect(game.state).toBe('play');
-    expect(wrap(nextRing(game).cross - 0.4)).toBeCloseTo(0, 2);
+    expect(wrap(drawn(nextRing(game).cross) - 0.4)).toBeCloseTo(0, 2);
     ticks(2.3);
     expect(game).toMatchObject({ state: 'play', chain: 1 });
+  });
+});
+
+describe('one device steers at a time', () => {
+  // The user, after playing the first build: "I dont like how moving the mouse
+  // and using the keyboard at the same time works, it feels buggy". It was the
+  // camera: a key turned the whole tunnel to bring the ship to the bottom, and
+  // the mouse taking back turned it back to level while the ship crossed the
+  // tunnel to the pointer, drawn up to 2.4 rad away from it on the way.
+  /** A run steered by the mouse to `angle` on the screen, then by `code` for `seconds`. */
+  function mouseThenKey(angle: number, code: string, seconds: number) {
+    const opened = calm();
+    mouse(angle);
+    ticks(1.5, DT);
+    send(window, 'keydown', { code });
+    ticks(seconds, DT);
+    return opened;
+  }
+  const frame = (game: Game) => ({ angle: game.angle, spin: game.spin, roll: page!.view.roll });
+
+  it('a key held with the mouse lying still: the key steers, and the mouse does nothing', () => {
+    const { game } = mouseThenKey(0.6, 'ArrowRight', 1);
+    expect(game.spin).toBeGreaterThan(SHIP.TURN * 0.97);
+    send(window, 'keydown', { code: 'ArrowLeft' }); // and the other key, for good measure: keys only
+    send(window, 'keyup', { code: 'ArrowRight' });
+    ticks(1, DT);
+    expect(game.spin).toBeLessThan(-SHIP.TURN * 0.97);
+  });
+
+  it('a key let go with the mouse lying still: the ship stays where the keys left it', () => {
+    const { game } = mouseThenKey(0.6, 'ArrowRight', 0.8);
+    send(window, 'keyup', { code: 'ArrowRight' });
+    ticks(1, DT);
+    const left = game.angle;
+    expect(Math.abs(wrap(drawn(left) - 0.6))).toBeGreaterThan(1);
+    // The pointer still points 0.6 on the screen, nowhere near the ship: no pull back, ever.
+    for (let i = 0; i < 6; i++) {
+      ticks(1, DT);
+      expect(game.angle).toBeCloseTo(left, 6);
+      expect(game.spin).toBeCloseTo(0, 6);
+    }
+  });
+
+  it('the mouse moved after the keys: the ship eases to the pointer, and the tunnel does not turn', () => {
+    const { game, view } = mouseThenKey(0.6, 'ArrowRight', 0.8);
+    send(window, 'keyup', { code: 'ArrowRight' });
+    ticks(2, DT);
+    expect(view.follow).toBe(true);
+    const held = view.roll;
+    // Far round the tunnel from the ship, which the keys left at the bottom of the screen.
+    expect(wrap(drawn(game.angle) + Math.PI / 2)).toBeCloseTo(0, 2);
+    mouse(0.9);
+    let last = frame(game), worstStep = 0, worstKick = 0, seconds = 0, full = 0;
+    for (let i = 0; i < 3 / DT; i++) {
+      page!.tick(DT);
+      seconds += DT;
+      const now = frame(game);
+      // Never a jump in one frame: the ship moves at most the top turn rate, and
+      // its turn changes no faster than the ship can brake.
+      worstStep = Math.max(worstStep, Math.abs(now.angle - last.angle));
+      worstKick = Math.max(worstKick, Math.abs(now.spin - last.spin));
+      if (!full && Math.abs(now.spin) > SHIP.TURN * 0.9) full = seconds;
+      // The camera holds still from the moment the mouse has the stick.
+      expect(now.roll).toBe(held);
+      last = now;
+    }
+    expect(worstStep).toBeLessThanOrEqual(SHIP.TURN * DT + 1e-9);
+    expect(worstKick).toBeLessThanOrEqual(SHIP.TURN * (1 - Math.exp(-SHIP.BRAKE * DT)) + 1e-9);
+    // The turn builds up: it takes the ship a fifth of a second to reach nine tenths of it.
+    expect(full).toBeGreaterThan(0.2);
+    // And the ship ends where the pointer is drawn.
+    expect(wrap(drawn(game.angle) - 0.9)).toBeCloseTo(0, 3);
+  });
+
+  it('both at once: the keys win, however the mouse moves', () => {
+    const { game, view } = mouseThenKey(0.6, 'KeyD', 0.6);
+    for (let i = 0; i < 90; i++) {
+      // The mouse sweeps round the screen, far more than the wake distance each frame.
+      mouse(i * 0.4, 280 + (i % 2) * 40);
+      page!.tick(DT);
+      expect(game.spin).toBeGreaterThan(SHIP.TURN * 0.9);
+      expect(view.follow).toBe(true);
+    }
+  });
+
+  it('a key tap turns the tunnel once to put the ship at the bottom; the mouse taking back never turns it', () => {
+    const { game, view } = calm();
+    mouse(0.6);
+    ticks(1.5, DT);
+    expect(view.roll).toBe(0);
+    send(window, 'keydown', { code: 'ArrowLeft' });
+    ticks(0.15, DT);
+    send(window, 'keyup', { code: 'ArrowLeft' });
+    ticks(1.5, DT);
+    // Under the keys the ship sits at the bottom of the screen, so right is right.
+    expect(wrap(drawn(game.angle) + Math.PI / 2)).toBeCloseTo(0, 2);
+    const rolled = view.roll;
+    mouse(0.9);
+    ticks(2, DT);
+    expect(view.roll).toBe(rolled);
+    expect(wrap(drawn(game.angle) - 0.9)).toBeCloseTo(0, 3);
+  });
+});
+
+describe('the thumbs against the keys', () => {
+  it('a key wins over a thumb, either way round, and every change of hand eases in', () => {
+    const { game } = calm();
+    // A thumb on the left, then the right-hand key: the key wins, from its first nudge.
+    touch('pointerdown', 1, innerWidth * 0.2);
+    ticks(1, DT);
+    expect(game.spin).toBeLessThan(-SHIP.TURN * 0.97);
+    send(window, 'keydown', { code: 'ArrowRight' });
+    // The turn swings over, not across in a frame: from nine tenths of it one
+    // way to nine tenths the other takes a quarter of a second or more.
+    let last = game.spin, swung = 0;
+    for (let t = 0; t < 1; t += DT) {
+      page!.tick(DT);
+      expect(Math.abs(game.spin - last)).toBeLessThan(2 * SHIP.TURN * (1 - Math.exp(-SHIP.BRAKE * DT)));
+      if (!swung && game.spin > SHIP.TURN * 0.9) swung = t + DT;
+      last = game.spin;
+    }
+    expect(swung).toBeGreaterThan(0.25);
+    expect(game.spin).toBeGreaterThan(SHIP.TURN * 0.97);
+    // A second thumb on the right, and the first one lifted: the key still has it, untouched.
+    touch('pointerdown', 2, innerWidth * 0.8);
+    touch('pointerup', 1, innerWidth * 0.2);
+    ticks(0.3, DT);
+    expect(game.spin).toBeGreaterThan(SHIP.TURN * 0.97);
+    touch('pointerup', 2, innerWidth * 0.8);
+    // The key let go while a thumb is down on the left: the thumb steers, from its first nudge.
+    touch('pointerdown', 3, innerWidth * 0.2);
+    send(window, 'keyup', { code: 'ArrowRight' });
+    page!.tick(DT);
+    expect(game.spin).toBeGreaterThan(0); // still running out the key's turn
+    ticks(1, DT);
+    expect(game.spin).toBeLessThan(-SHIP.TURN * 0.97);
+    touch('pointerup', 3, innerWidth * 0.2);
+    ticks(1, DT);
+    expect(game.spin).toBeCloseTo(0, 6);
   });
 });
 
@@ -498,11 +640,11 @@ describe('starting with the mouse', () => {
       expect(game.state).toBe('over');
     }
     // The pointer comes from nowhere to the far side of the tunnel and clicks at once.
-    const aim = game.angle + 2.8;
+    const aim = drawn(game.angle) + 2.8;
     mouse(aim);
     mouse(aim, 300, 'pointerdown');
     expect(game.state).toBe('play');
-    expect(wrap(nextRing(game).cross - aim)).toBeCloseTo(0, 9);
+    expect(wrap(drawn(nextRing(game).cross) - aim)).toBeCloseTo(0, 9);
     // Nothing more from the hand: the ship arrives and takes the first ring dead centre.
     ticks(2.3);
     expect(game).toMatchObject({ state: 'play', chain: 1, score: 20 });

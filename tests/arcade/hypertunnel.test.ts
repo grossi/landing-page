@@ -50,9 +50,10 @@ const safe = (gap: { width: number }) => gap.width / 2 - SHIP.HULL;
 
 describe('the tunnel', () => {
   it('escalates by depth and reaches every limit at the last one', () => {
-    expect(depthSpec(1)).toMatchObject({ speed: 40, gap: 1.35, beat: 2 });
-    expect(depthSpec(2).speed).toBe(46);
-    expect(depthSpec(2).gap).toBeCloseTo(1.29, 9);
+    expect(depthSpec(1)).toMatchObject({ speed: 58, gap: 1.17 });
+    expect(depthSpec(1).beat).toBeCloseTo(1.7, 9);
+    expect(depthSpec(2).speed).toBe(65);
+    expect(depthSpec(2).gap).toBeCloseTo(1.11, 9);
     for (let depth = 2; depth <= TUNNEL.DEPTHS + 5; depth++) {
       const now = depthSpec(depth), before = depthSpec(depth - 1);
       expect(now.speed).toBeGreaterThanOrEqual(before.speed);
@@ -66,6 +67,37 @@ describe('the tunnel', () => {
     expect(depthSpec(TUNNEL.DEPTHS + 5)).toEqual(depthSpec(TUNNEL.DEPTHS));
     const early = depthSpec(TUNNEL.DEPTHS - 1);
     expect(early.speed < 110 || early.beat > 1.1 + 1e-9).toBe(true);
+  });
+
+  it('puts pressure on inside 20 s and gets visibly harder every section', () => {
+    // The user, after playing the first tuning: "its too easy at the start and,
+    // it takes too long for the difficulty to increase". The run opens where the
+    // first tuning's fourth depth was, and climbs about every ten seconds.
+    const first = depthSpec(1);
+    expect(first.speed).toBeGreaterThanOrEqual(55);
+    expect(first.gap).toBeLessThanOrEqual(1.2);
+    expect(first.beat).toBeLessThanOrEqual(1.75);
+    for (let seed = 1; seed <= 60; seed++) {
+      const sections = tunnel(seed);
+      // At least nine rings inside the first 20 s, and the second pattern started.
+      expect(sections.flatMap(section => section.rings).filter(ring => ring.at <= 20).length).toBeGreaterThanOrEqual(9);
+      expect(sections[1].rings[0].at).toBeLessThan(15);
+      sections.forEach((section, index) => {
+        if (index === 0) return;
+        const before = sections[index - 1];
+        // A new depth every 12 s or sooner...
+        expect(section.rings[0].at - before.rings[0].at).toBeLessThan(12 * (section.pattern === 'PINCH' || before.pattern === 'PINCH' ? 1.4 : 1));
+        // ...and every one faster than the last, until the cap.
+        if (before.speed < TUNNEL.SPEED_MAX) expect(section.speed - before.speed).toBeGreaterThanOrEqual(3);
+        // Narrower and closer too, until their limits.
+        const now = depthSpec(section.depth), then = depthSpec(before.depth);
+        if (then.gap > TUNNEL.GAP_MIN) expect(then.gap - now.gap).toBeGreaterThanOrEqual(0.01);
+        if (then.beat > TUNNEL.BEAT_MIN) expect(then.beat - now.beat).toBeGreaterThan(0.05);
+      });
+      // A full clear takes about a minute and a half.
+      expect(sections.at(-1)!.tEnd).toBeGreaterThan(80);
+      expect(sections.at(-1)!.tEnd).toBeLessThan(100);
+    }
   });
 
   it('puts the first ring within 2.5 s, its gap where the ship already is', () => {
@@ -107,9 +139,9 @@ describe('the tunnel', () => {
       const names = tunnel(seed).map(section => section.pattern);
       expect(names.slice(0, 2)).toEqual(['SPIRAL', 'ZIGZAG']);
       for (let i = 1; i < names.length; i++) expect(names[i]).not.toBe(names[i - 1]);
-      // Every five depths after the opening hold each pattern once.
+      // The five depths after the opening hold each pattern once, and the rest draw a new bag.
       expect([...names.slice(2, 7)].sort()).toEqual([...PATTERNS].sort());
-      expect([...names.slice(7, 12)].sort()).toEqual([...PATTERNS].sort());
+      expect(new Set(names.slice(7)).size).toBe(names.length - 7);
       expect(tunnel(seed).map(section => section.pattern)).toEqual(names);
       seen.add(names.join());
     }
@@ -160,7 +192,7 @@ describe('the tunnel', () => {
     const world = createWorld(mulberry32(2));
     world.reseed(0, true);
     const sections = Array.from({ length: 40 }, () => world.next());
-    expect(sections.every(section => section.depth === 1 && section.speed === 40)).toBe(true);
+    expect(sections.every(section => section.depth === 1 && section.speed === TUNNEL.SPEED0)).toBe(true);
     expect(sections.slice(0, 5).map(section => section.pattern)).toEqual(PATTERNS);
   });
 });
@@ -168,7 +200,7 @@ describe('the tunnel', () => {
 describe('the PERFECT zone', () => {
   const EDGE = 1e-9;
   it('is the middle third of a gap; the rest of the gap is safe; past the hull margin is a hit', () => {
-    for (const depth of [1, 2, 5, 13]) {
+    for (const depth of [1, 2, 5, TUNNEL.DEPTHS]) {
       const section = tunnel(3)[depth - 1];
       const ring = section.rings[4], [gap] = section.gaps;
       const centre = gapAt(ring);
@@ -329,9 +361,9 @@ describe('the end of the tunnel', () => {
     expect(game).toMatchObject({
       state: 'over', cause: 'CLEARED', depth: TUNNEL.DEPTHS, bestChain: rings, score, newBest: true,
     });
-    // About four minutes, however it is flown: speed is set by depth, not by the pilot.
-    expect(game.time).toBeGreaterThan(225);
-    expect(game.time).toBeLessThan(250);
+    // About a minute and a half, however it is flown: speed is set by depth, not by the pilot.
+    expect(game.time).toBeGreaterThan(80);
+    expect(game.time).toBeLessThan(100);
   });
 
   it('kills the hands-off run on the second ring', () => {
@@ -369,8 +401,8 @@ describe('a run from start to game over to retry', () => {
         if (ring.state === PASSED) through++;
       }
     }
-    expect(game).toMatchObject({ state: 'menu', score: 0, chain: 0, shield: false, depth: 1, speed: 40 });
-    expect(game.dist).toBeGreaterThan(40 * 230);
+    expect(game).toMatchObject({ state: 'menu', score: 0, chain: 0, shield: false, depth: 1, speed: TUNNEL.SPEED0 });
+    expect(game.dist).toBeGreaterThan(TUNNEL.SPEED0 * 230);
     // The title's pilot makes its gaps: the backdrop shows the game being played.
     expect(through / seen.size).toBeGreaterThan(0.97);
     expect(game.rings.length).toBeLessThan(40);
@@ -966,7 +998,7 @@ describe('the picture', () => {
         }
       }
     };
-    for (let i = 0; i < 60; i++) {
+    for (let i = 0; i < 60 && game.state === 'play'; i++) {
       cross(game); view.render(renderer as any, 1 / 60); watch();
       for (const slot of view.slots) {
         expect(disposed.has(slot.walls.geometry)).toBe(false);
@@ -1106,7 +1138,7 @@ describe('the picture', () => {
     view.dispose();
   });
 
-  it('rolls the camera after the ship under the keys, and holds it level under the mouse', () => {
+  it('rolls the camera after the ship under the keys, and holds it still under the mouse', () => {
     const game = running(4);
     const view = createView({ THREE, createShipBody, game, aspect: 1.6 });
     const renderer = new Renderer();
@@ -1131,14 +1163,18 @@ describe('the picture', () => {
     const swing = wrap(onScreen() + Math.PI / 2);
     expect(swing).toBeGreaterThan(0.3);
     expect(swing).toBeLessThan(0.55);
-    // Mouse: the camera levels out, and the ship is drawn at the angle it has,
-    // which is the angle the pointer is at.
+    // Mouse: the camera holds still wherever the keys left it, so the tunnel
+    // never turns when the mouse takes the stick; the ship is drawn at its
+    // angle less the roll, which is where `view.roll` tells the mouse it is.
     view.follow = false;
+    const held = view.camera.rotation.z;
+    expect(wrap(held)).not.toBeCloseTo(0, 1);
+    expect(view.roll).toBe(held);
     for (const angle of [game.angle, 0.3, -2.2, Math.PI]) {
       game.angle = angle; game.spin = 0;
       for (let i = 0; i < 240; i++) view.render(renderer as any, 1 / 60);
-      expect(wrap(view.camera.rotation.z)).toBeCloseTo(0, 3);
-      expect(wrap(onScreen() - angle)).toBeCloseTo(0, 3);
+      expect(view.camera.rotation.z).toBe(held);
+      expect(wrap(onScreen() - (angle - view.roll))).toBeCloseTo(0, 3);
     }
     view.dispose();
   });

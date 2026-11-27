@@ -37,7 +37,7 @@ export function mount({ THREE, createShipBody, storage = safeStorage(), random =
   const axis = createKeyAxis();
   /** Thumbs that are down, by pointer id, and where across the screen each one is. */
   const thumbs = new Map();
-  /** The mouse, as an offset from the screen centre, and what it points at. */
+  /** The mouse, as an offset from the screen centre, and the angle on the screen it points at. */
   const mouse = { x: 0, y: 0 };
   let aim = null;
   // The stick belongs to whoever acted last: 'keys' (keys or thumbs) or 'mouse'.
@@ -69,7 +69,7 @@ export function mount({ THREE, createShipBody, storage = safeStorage(), random =
     // Under the mouse the ship is on its way to the pointer: the run's first gap
     // stands there. A steering key or a thumb takes the stick with the same
     // press, so then the gap stands where the ship is.
-    onPress: () => { game.press(owner === 'mouse' && aim !== null && !held() ? aim : undefined); },
+    onPress: () => { game.press(owner === 'mouse' && aim !== null && !held() ? aim + view.roll : undefined); },
   });
 
   /** The direction the keys or the thumbs hold: −1, 0 or 1. */
@@ -95,7 +95,8 @@ export function mount({ THREE, createShipBody, storage = safeStorage(), random =
     // The key axis always runs, so a key let go eases out even as the mouse takes over.
     const keyed = axis.step(dt, direction);
     view.follow = owner !== 'mouse';
-    if (owner === 'mouse') return aim === null ? null : chase(aim, game.angle);
+    // The ship goes where the pointer is drawn: the screen angle, turned by the camera's roll.
+    if (owner === 'mouse') return aim === null ? null : chase(aim + view.roll, game.angle);
     // Behind the title a key starts the run, so nobody holds the stick there.
     return game.state === 'menu' ? null : keyed;
   }

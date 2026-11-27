@@ -168,9 +168,12 @@ export function createView({ THREE, createShipBody, game, aspect }) {
   const view = {
     scene, camera, ship, body, shield, slots,
     /** True while keys or thumbs steer: the camera rolls after the ship, so right
-     *  is always right. False under the mouse: the pointer and the ring must stay
-     *  lined up, so the camera stays level. */
+     *  is always right. False under the mouse: the camera holds still wherever it
+     *  is, so the tunnel never turns when the mouse takes the stick, and the
+     *  pointer and the ring stay lined up. */
     follow: true,
+    /** How far the camera is rolled: what is drawn at screen angle a stands at tunnel angle a + roll. */
+    get roll() { return roll; },
     render, resize, dispose,
     /** Ring drawings alive right now. */
     get drawings() { return drawings.size; },
@@ -186,8 +189,7 @@ export function createView({ THREE, createShipBody, game, aspect }) {
     body.rotation.z = -game.spin * 0.15;
     shield.visible = game.shield;
     shield.scale.setScalar(1 + Math.sin(game.time * 9) * 0.04);
-    const level = view.follow ? game.angle + Math.PI / 2 : 0;
-    roll += wrap(level - roll) * Math.min(1, dt * FOLLOW);
+    if (view.follow) roll += wrap(game.angle + Math.PI / 2 - roll) * Math.min(1, dt * FOLLOW);
     camera.rotation.z = roll;
     renderer.render(scene, camera);
   }

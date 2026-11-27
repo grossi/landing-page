@@ -30,20 +30,22 @@ export const SHIP = {
 
 export const TUNNEL = {
   /** Rings in a section, and sections in the tunnel. The last depth is the one
-   *  where speed, gap and spacing have all reached their limits. */
-  RINGS: 10, DEPTHS: 13,
-  SPEED0: 40, SPEED_STEP: 6, SPEED_MAX: 110,
-  /** Gap width (rad). The middle third of a gap is its PERFECT zone. */
-  GAP0: 1.35, GAP_STEP: 0.06, GAP_MIN: 0.7,
-  /** Seconds of flight between rings. */
-  BEAT0: 2, BEAT_STEP: 0.075, BEAT_MIN: 1.1,
+   *  where speed, gap and spacing have all reached their limits. A section is
+   *  short, so the tunnel gets harder every ten seconds or so. */
+  RINGS: 6, DEPTHS: 9,
+  /** Each depth is faster, narrower and closer than the one before: speed (units/s), */
+  SPEED0: 58, SPEED_STEP: 7, SPEED_MAX: 110,
+  /** gap width (rad; the middle third of a gap is its PERFECT zone), */
+  GAP0: 1.17, GAP_STEP: 0.06, GAP_MIN: 0.7,
+  /** and seconds of flight between rings. */
+  BEAT0: 1.7, BEAT_STEP: 0.075, BEAT_MIN: 1.1,
   /** Seconds to the run's first ring, and of clear tunnel added between sections. */
-  FIRST: 2.2, CLEAR: 1.5,
+  FIRST: 2.2, CLEAR: 1,
   /** PINCH and TWIN's narrow gap: this share of the depth's gap, never under
    *  NARROW_MIN. PINCH rings stand PINCH_BEAT beats apart. */
   NARROW: 0.62, NARROW_MIN: 0.52, PINCH_BEAT: 1.5,
   /** ROTOR spin (rad/s): at depth 1, gained per depth, and its cap. */
-  ROTOR0: 0.3, ROTOR_STEP: 0.025, ROTOR_MAX: 0.6,
+  ROTOR0: 0.38, ROTOR_STEP: 0.03, ROTOR_MAX: 0.6,
   /** A calm hand: it takes REACT seconds to answer a ring, and is never asked
    *  for more than CALM of the ship's top turn rate over the rest of the beat. */
   REACT: 0.3, CALM: 0.5,
