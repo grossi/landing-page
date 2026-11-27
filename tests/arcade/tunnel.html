@@ -1,0 +1,21 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>HYPERTUNNEL browser verification</title>
+<script type="module">
+  // Dev-server-only fixture: the shipped page's own markup, styles and modules,
+  // mounted with a handle on `window.hypertunnel` so a script can read the game
+  // while it plays with real input. `?seed=<n>` makes the run repeatable.
+  // The modules are loaded by URL at run time: Vite refuses to bundle imports
+  // of files under public/, and these must be the files exactly as shipped.
+  const load = path => import(/* @vite-ignore */ location.origin + path);
+  const [THREE, { createShipBody }, { mount }, { mulberry32 }] = await Promise.all([
+    load('/arcade/vendor/three.module.min.js'), load('/arcade/shared/ship.js'),
+    load('/arcade/tunnel/main.js'), load('/arcade/tunnel/world.js'),
+  ]);
+  const page = await (await fetch('/arcade/tunnel/index.html')).text();
+  document.head.insertAdjacentHTML('beforeend', page.match(/<style>[\s\S]*?<\/style>/)[0]);
+  document.body.insertAdjacentHTML('afterbegin', page.match(/<div class="hud">[\s\S]*?(?=<script)/)[0]);
+  const seed = new URLSearchParams(location.search).get('seed');
+  window.hypertunnel = mount({ THREE, createShipBody, random: seed ? mulberry32(+seed) : Math.random });
+</script>
