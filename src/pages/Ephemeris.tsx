@@ -8,7 +8,20 @@ import {
   type EphemerisPhase,
   type SurveyResult,
 } from 'components/ephemeris/createEphemeris';
-import { readBests, resolveSeed, TUNE, formatClock, type StorageLike } from 'components/ephemeris/survey';
+import {
+  FIND_IDS,
+  findNote,
+  FINDS,
+  formatClock,
+  readCharted,
+  readLog,
+  resolveSeed,
+  TUNE,
+  type DayLog,
+  type FindId,
+  type Places,
+  type StorageLike,
+} from 'components/ephemeris/survey';
 import { monoFont } from 'config/site';
 
 const hudFont = {
@@ -62,6 +75,22 @@ const hudCss = `
 .eph-blink { animation: eph-blink 1.2s steps(2) infinite; }
 .eph-warn[data-warn="on"] { animation: eph-blink .5s steps(2) infinite; }
 .eph-fade { animation: eph-fade .5s ease-out forwards; }
+/* the dark: closes in from the edges from 3:00, black at 4:00 (the sim sets
+   --dark). Space is black already, so its edge is drawn: a faint line that
+   shrinks toward the ship, and black beyond it. */
+.eph-dark {
+  --dark: 0;
+  --edge: calc((1 - var(--dark)) * 72%);
+  background:
+    radial-gradient(circle at 50% 50%,
+      transparent var(--edge),
+      rgba(255, 255, 255, .28) calc(var(--edge) + .15%),
+      rgba(255, 255, 255, .28) calc(var(--edge) + .3%),
+      rgba(0, 0, 0, .9) calc(var(--edge) + .6%),
+      #000 calc(var(--edge) + 12%)),
+    rgba(0, 0, 0, calc(max(0, var(--dark) - 0.8) * 5));
+  opacity: calc(var(--dark) * 6);
+}
 @media (prefers-reduced-motion: reduce) {
   .eph-blink, .eph-warn[data-warn="on"] { animation: none; }
 }
@@ -76,19 +105,19 @@ const HUD_KEYS: Record<HudKey, true> = {
   sector: true,
   contacts: true,
   ping: true,
-  best: true,
+  loop: true,
   clock: true,
-  fuelFill: true,
-  fuelLabel: true,
   scan: true,
   scanArc: true,
+  scanTick: true,
   scanLabel: true,
   marker: true,
   markerGlyph: true,
   markerLabel: true,
+  dark: true,
 };
 
-/** Storage that is blocked or missing (private mode, site data off) means no bests kept. */
+/** Storage that is blocked or missing (private mode, site data off) means no log kept. */
 function safeStorage(): StorageLike | null {
   try {
     return window.localStorage;
@@ -100,6 +129,30 @@ function safeStorage(): StorageLike | null {
 /** `20261126` reads as `2026-11-26`. */
 const dayText = (label: string) => `${label.slice(0, 4)}-${label.slice(4, 6)}-${label.slice(6, 8)}`;
 
+/**
+ * The day's log, as the title and end screens show it: the finds logged by
+ * name, then one line for each find a logged one's note points at.
+ */
+function LogLines({ logged, places }: { logged: readonly FindId[]; places: Places | null }) {
+  const clues = FIND_IDS.filter((id) => {
+    const teller = FINDS[id].toldBy;
+    return !logged.includes(id) && teller !== null && logged.includes(teller);
+  });
+  if (logged.length === 0) return null;
+  return (
+    <Text {...overlayLine}>
+      {logged.map((id) => FINDS[id].label).join(' · ')}
+      {places &&
+        clues.map((id) => (
+          <span key={id}>
+            <br />
+            {findNote(FINDS[id].toldBy!, places)}
+          </span>
+        ))}
+    </Text>
+  );
+}
+
 // Fullscreen three.js simulation; the sim writes HUD text straight into the
 // ref'd elements every frame, so React re-renders only when the phase
 // changes (title, survey, closed, free drift).
@@ -110,6 +163,7 @@ const Ephemeris = () => {
   const gameRef = useRef<EphemerisGame | null>(null);
   const [phase, setPhase] = useState<EphemerisPhase>('title');
   const [result, setResult] = useState<SurveyResult | null>(null);
+  const [places, setPlaces] = useState<Places | null>(null);
   // counts flights started, so each one replays the fade from black
   const [run, setRun] = useState(0);
   // The BURN zone and the touch wording show once a finger is involved.
@@ -120,7 +174,9 @@ const Ephemeris = () => {
   const seed = useMemo(() => resolveSeed(window.location.search, new Date()), []);
   const storage = useMemo(safeStorage, []);
   // read again whenever the title or the result comes up
-  const bests = useMemo(() => readBests(storage, seed.label), [storage, seed, phase]);
+  const log: DayLog = useMemo(() => readLog(storage, seed.label), [storage, seed, phase]);
+  const daysCharted = useMemo(() => readCharted(storage), [storage, phase]);
+  const charted = log.logged.length === FIND_IDS.length;
 
   const bind = (key: HudKey) => (node: HTMLElement | SVGElement | null) => {
     hudRefs.current[key] = node;
@@ -141,6 +197,7 @@ const Ephemeris = () => {
       },
     });
     gameRef.current = game;
+    setPlaces(game.places);
     return () => {
       gameRef.current = null;
       game.dispose();
@@ -158,9 +215,7 @@ const Ephemeris = () => {
   const flying = phase === 'survey' || phase === 'drift';
   const surveying = phase === 'survey';
   const systemLine = seed.daily ? `SYSTEM OF ${dayText(seed.label)} UTC` : `SYSTEM ${seed.label.toUpperCase()}`;
-  const bestWord = seed.daily ? "TODAY'S BEST" : 'SYSTEM BEST';
-  const bestsLine =
-    bests.allTime > 0 ? `${bestWord} ${bests.seed} · ALL-TIME ${bests.allTime}` : '';
+  const loops = (n: number) => `${n} LOOP${n === 1 ? '' : 'S'}`;
   const freeDrift = (
     <Box
       as="button"
@@ -188,6 +243,8 @@ const Ephemeris = () => {
       {/* touch-action: a drag steers the ship; the browser must not claim it */}
       <Box position="relative" flex="1" overflow="hidden" cursor="crosshair" touchAction="none">
         <Box ref={containerRef} position="absolute" inset={0} />
+        {/* the dark sits over the world and under the HUD */}
+        <Box className="eph-dark" position="absolute" inset={0} pointerEvents="none" ref={bind('dark')} />
         {flying && (
           <Box key={run} className="eph-fade" position="absolute" inset={0} bg="black" pointerEvents="none" />
         )}
@@ -230,7 +287,7 @@ const Ephemeris = () => {
           <Box position="absolute" top="18px" right="20px" maxW={{ base: '42%', md: '40%' }} textAlign="right">
             <Text {...readout} ref={bind('speed')} />
             <Text {...readout} ref={bind('sector')} />
-            {/* the score in a survey, the discovery tally in free drift */}
+            {/* the log in a loop, the discovery tally in free drift */}
             <Text
               {...readout}
               fontSize={surveying ? '15px' : '12px'}
@@ -238,7 +295,7 @@ const Ephemeris = () => {
               ref={bind('contacts')}
             />
             <Box display={surveying ? 'block' : 'none'}>
-              <Text {...readout} ref={bind('best')} />
+              <Text {...readout} ref={bind('loop')} />
               <Text
                 {...hudFont}
                 className="eph-warn"
@@ -248,16 +305,6 @@ const Ephemeris = () => {
                 lineHeight="28px"
                 ref={bind('clock')}
               />
-              <Box
-                mt="8px"
-                ml="auto"
-                w="min(140px, 100%)"
-                h="8px"
-                border="1px solid rgba(255,255,255,.55)"
-              >
-                <Box h="100%" w="100%" bg="white" ref={bind('fuelFill')} />
-              </Box>
-              <Text {...readout} className="eph-warn" fontSize="11px" ref={bind('fuelLabel')} />
             </Box>
           </Box>
 
@@ -289,7 +336,7 @@ const Ephemeris = () => {
             EPHEMERIS
           </Text>
 
-          {/* scan ring: fills while an unscanned body is in range at scan speed */}
+          {/* the reticle: the signal's tick on its rim, the scan's arc round it */}
           <Flex
             position="absolute"
             inset={0}
@@ -300,34 +347,44 @@ const Ephemeris = () => {
             display={surveying ? 'flex' : 'none'}
             ref={bind('scan')}
           >
-            <svg width="132" height="132" viewBox="0 0 132 132" style={{ transform: 'rotate(-90deg)' }}>
-              <circle cx="66" cy="66" r="62" fill="none" stroke="rgba(255,255,255,.25)" strokeWidth="1" />
-              <circle
-                cx="66"
-                cy="66"
-                r="62"
-                fill="none"
-                stroke="#fff"
-                strokeWidth="3"
-                pathLength={100}
-                strokeDasharray="100"
-                strokeDashoffset="100"
-                ref={bind('scanArc')}
-              />
-            </svg>
+            <Box position="relative" w="132px" h="132px">
+              <svg width="132" height="132" viewBox="0 0 132 132" style={{ transform: 'rotate(-90deg)' }}>
+                <circle cx="66" cy="66" r="62" fill="none" stroke="rgba(255,255,255,.22)" strokeWidth="1" />
+                <circle
+                  cx="66"
+                  cy="66"
+                  r="62"
+                  fill="none"
+                  stroke="#fff"
+                  strokeWidth="3"
+                  pathLength={100}
+                  strokeDasharray="100"
+                  strokeDashoffset="100"
+                  ref={bind('scanArc')}
+                />
+              </svg>
+              {/* rotated round the centre toward the signal; its child sits on the rim */}
+              <Box position="absolute" top="50%" left="50%" w={0} h={0} opacity={0} ref={bind('scanTick')}>
+                <Box position="absolute" left="56px" top="-1px" w="14px" h="2px" bg="white" />
+              </Box>
+            </Box>
+            {/* above the reticle: below it sits the ship */}
             <Text
               {...hudFont}
-              mt="12px"
+              position="absolute"
+              bottom="calc(50% + 78px)"
+              left={0}
+              right={0}
               px="20px"
               textAlign="center"
               fontSize="12px"
-              letterSpacing=".22em"
+              letterSpacing=".2em"
               textShadow="0 0 8px #000"
               ref={bind('scanLabel')}
             />
           </Flex>
 
-          {/* target marker: on the nearest unscanned contact, or an arrow toward it */}
+          {/* bracket on a find the ship is locked on */}
           <Box
             position="absolute"
             top={0}
@@ -397,7 +454,7 @@ const Ephemeris = () => {
           </Flex>
         </Box>
 
-        {/* title: the world drifts behind it; any press on the game starts a survey */}
+        {/* title: the world drifts behind it; any press on the game starts a loop */}
         {phase === 'title' && (
           <Flex {...overlay}>
             <Flex {...overlayGroup}>
@@ -413,27 +470,38 @@ const Ephemeris = () => {
               </Text>
               <Text {...overlayLine}>{systemLine}</Text>
               <Text {...overlayLine} opacity={0.9}>
-                FLY CLOSE AND SLOW TO SCAN
+                POINT AT A SIGNAL UNTIL IT IS STRONG, THEN GO
                 <br />
-                BURNING COSTS FUEL, SCANS REFUEL
+                SLOW DOWN NEAR A FIND TO LOG IT
                 <br />
-                SURVEY WINDOW {formatClock(TUNE.WINDOW_SECONDS)}
+                AT {formatClock(TUNE.WINDOW_SECONDS)} THE DARK COMES IN. THE LOG STAYS.
               </Text>
             </Flex>
             <Flex {...overlayGroup}>
-              {bestsLine && <Text {...overlayLine}>{bestsLine}</Text>}
+              {charted ? (
+                <Text {...overlayLine} opacity={0.9}>
+                  CHARTED · BEST {loops(log.best)}
+                </Text>
+              ) : (
+                log.loops > 0 && (
+                  <Text {...overlayLine} opacity={0.9}>
+                    LOG {log.logged.length}/{FIND_IDS.length} AFTER {loops(log.loops)}
+                  </Text>
+                )
+              )}
+              {!charted && <LogLines logged={log.logged} places={places} />}
               <Text {...overlayLine}>
                 {touch ? 'DRAG TO STEER · HOLD BURN' : 'MOUSE OR WASD STEERS · HOLD / SPACE = BURN'}
               </Text>
               <Text {...hudFont} className="eph-blink" fontSize="13px" letterSpacing=".3em">
-                CLICK, TAP OR PRESS A KEY
+                {charted ? 'PRESS TO CHART IT AGAIN' : 'CLICK, TAP OR PRESS A KEY'}
               </Text>
               {freeDrift}
             </Flex>
           </Flex>
         )}
 
-        {/* the window has closed: any press after the lock flies the same system again */}
+        {/* the loop is over: any press after the lock starts the next one */}
         {phase === 'closed' && result && (
           <Flex {...overlay}>
             <Flex {...overlayGroup}>
@@ -445,37 +513,37 @@ const Ephemeris = () => {
                 letterSpacing=".28em"
                 mr="-.28em"
               >
-                SURVEY CLOSED
+                {result.charted ? 'SYSTEM CHARTED' : 'THE DARK CAME IN'}
               </Text>
               <Text {...hudFont} fontSize="20px" letterSpacing=".3em" mr="-.3em">
-                SCORE {result.score}
+                LOG {result.logged.length}/{FIND_IDS.length}
               </Text>
-              {result.bests.newSeedBest && (
+              {result.charted ? (
                 <Text {...hudFont} fontSize="13px" letterSpacing=".3em" mr="-.3em">
-                  NEW BEST
+                  IN {loops(result.charted.loops)}
+                  {result.charted.newBest ? ' · NEW BEST' : ` · BEST ${loops(result.charted.best)}`}
+                </Text>
+              ) : (
+                <Text {...overlayLine}>
+                  {result.loggedNow.length === 0
+                    ? `LOOP ${result.loop} · NOTHING NEW`
+                    : `LOOP ${result.loop} · ${result.loggedNow.map((id) => FINDS[id].label).join(' · ')}`}
                 </Text>
               )}
+            </Flex>
+            <Flex {...overlayGroup}>
+              {!result.charted && <LogLines logged={result.logged} places={places} />}
               <Text {...overlayLine}>
-                {result.contacts === 0
-                  ? 'NO CONTACTS SCANNED'
-                  : `${result.contacts} CONTACT${result.contacts === 1 ? '' : 'S'} SCANNED`}
-                {result.rarest && (
+                {systemLine}
+                {daysCharted > 0 && (
                   <>
                     <br />
-                    RAREST · {result.rarest.name}
-                    {result.rarest.name.includes(result.rarest.kind) ? '' : ` · ${result.rarest.kind}`}
+                    DAYS CHARTED {daysCharted}
                   </>
                 )}
               </Text>
-            </Flex>
-            <Flex {...overlayGroup}>
-              <Text {...overlayLine}>
-                {systemLine}
-                <br />
-                {bestWord} {result.bests.seed} · ALL-TIME {result.bests.allTime}
-              </Text>
               <Text {...hudFont} className="eph-blink" fontSize="13px" letterSpacing=".3em">
-                TAP OR PRESS A KEY TO RETRY
+                {result.charted ? 'TAP OR PRESS A KEY TO CHART IT AGAIN' : 'TAP OR PRESS A KEY FOR THE NEXT LOOP'}
               </Text>
               {freeDrift}
             </Flex>

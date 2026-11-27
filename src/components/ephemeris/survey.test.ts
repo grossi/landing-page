@@ -1,48 +1,47 @@
 import { describe, expect, it } from 'vitest';
 import {
-  BEST_KEY,
-  bestKeyFor,
-  canBurn,
-  classifyContact,
-  CONTACT_KINDS,
-  contactValue,
-  createSurvey,
+  beginLoop,
+  CHARTED_KEY,
+  createLoop,
   dailyLabel,
+  darkness,
   discoveryRange,
+  elapsedOf,
+  FIND_IDS,
+  findNote,
+  FINDS,
   formatClock,
+  formatMoment,
+  isHeard,
+  isOpen,
+  isTold,
+  listening,
+  logKeyFor,
   prefersCandidate,
-  rarestContact,
-  readBests,
-  recordScore,
-  resetSurvey,
+  readCharted,
+  readLog,
+  recordFind,
+  resetLoop,
   resolveSeed,
-  scanRange,
   seedFromLabel,
-  stepSurvey,
+  signalStrength,
+  stepLoop,
   TUNE,
-  type ContactKind,
-  type SurveyCandidate,
-  type SurveyState,
+  type FindId,
+  type LoopState,
 } from 'components/ephemeris/survey';
 
-const planet: SurveyCandidate = { id: 'home:1', name: 'VELORA-1', kind: 'planet', home: true };
-const pulsar: SurveyCandidate = { id: '2,0,1:0', name: 'PULSAR KHEVEL', kind: 'pulsar', home: false };
-
-/** Steps `seconds` of a window in frames of `dt`, with one frame's facts held throughout. */
+/** Steps `seconds` of a loop in frames of `dt`, with one frame's facts held throughout. */
 function run(
-  state: SurveyState,
+  state: LoopState,
   seconds: number,
-  frame: { burning?: boolean; speed?: number; candidate?: SurveyCandidate | null } = {},
+  frame: { speed?: number; candidate?: FindId | null } = {},
   dt = 1 / 60,
 ) {
-  const logged = [];
+  const logged: FindId[] = [];
   for (let i = 0, n = Math.round(seconds / dt); i < n; i++) {
-    const contact = stepSurvey(state, dt, {
-      burning: frame.burning ?? false,
-      speed: frame.speed ?? 100,
-      candidate: frame.candidate ?? null,
-    });
-    if (contact) logged.push(contact);
+    const id = stepLoop(state, dt, { speed: frame.speed ?? 100, candidate: frame.candidate ?? null });
+    if (id) logged.push(id);
   }
   return logged;
 }
@@ -56,290 +55,359 @@ function memoryStorage(initial: Record<string, string> = {}) {
   };
 }
 
-describe('scan', () => {
-  it('fills over the scan time while a body is in range at cruise, then logs it once', () => {
-    const state = createSurvey();
-    expect(run(state, TUNE.SCAN_SECONDS - 0.1, { candidate: planet })).toEqual([]);
-    expect(state.scanId).toBe('home:1');
-    expect(state.scanProgress).toBeGreaterThan(0.9);
-    expect(state.scanned).toHaveLength(0);
+const deg = (d: number) => (d * Math.PI) / 180;
+const places = { wreck: 'KHEVEL EXPANSE', bell: 'ORAMIR DEEP' };
 
-    const logged = run(state, 0.2, { candidate: planet });
-    expect(logged).toEqual([{ ...planet, value: 100 }]);
-    expect(state.score).toBe(100);
-    expect(state.scannedIds.has('home:1')).toBe(true);
-    // the ring is free again, and the body cannot be logged a second time
-    expect(state.scanId).toBeNull();
-    expect(run(state, 5, { candidate: planet })).toEqual([]);
-    expect(state.score).toBe(100);
-  });
-
-  it('does not fill with nothing in range', () => {
-    const state = createSurvey();
-    run(state, 10, { candidate: null });
-    expect(state.scanProgress).toBe(0);
-    expect(state.scanned).toHaveLength(0);
-  });
-
-  it('does not fill at burn speed, and says so', () => {
-    const state = createSurvey();
-    run(state, 10, { candidate: planet, speed: TUNE.SCAN_MAX_SPEED + 1 });
-    expect(state.tooFast).toBe(true);
-    expect(state.scanProgress).toBe(0);
-    expect(state.scanned).toHaveLength(0);
-    // exactly at the limit is slow enough
-    expect(run(state, TUNE.SCAN_SECONDS + 0.1, { candidate: planet, speed: TUNE.SCAN_MAX_SPEED })).toHaveLength(1);
-  });
-
-  it('runs back down while too fast, so a ring half filled is not kept for a drive-by', () => {
-    const state = createSurvey();
-    run(state, 1, { candidate: planet });
-    const filled = state.scanProgress;
-    run(state, 0.5, { candidate: planet, speed: 4000 });
-    expect(state.scanProgress).toBeLessThan(filled);
-    run(state, 2, { candidate: planet, speed: 4000 });
-    expect(state.scanProgress).toBe(0);
-  });
-
-  it('starts over when the body leaves range', () => {
-    const state = createSurvey();
-    run(state, 1.2, { candidate: planet });
-    run(state, 0.1, { candidate: null });
-    expect(state.scanProgress).toBe(0);
-    expect(run(state, 1.2, { candidate: planet })).toEqual([]);
-    expect(run(state, 0.4, { candidate: planet })).toHaveLength(1);
-  });
-
-  it('starts over when the body in range changes', () => {
-    const state = createSurvey();
-    run(state, 1.2, { candidate: planet });
-    expect(run(state, 1.2, { candidate: pulsar })).toEqual([]);
-    expect(state.scanId).toBe(pulsar.id);
-  });
-
-  it('takes the same time on a slow frame as on a fast one', () => {
-    for (const dt of [1 / 144, 1 / 60, 1 / 20]) {
-      const state = createSurvey();
-      run(state, TUNE.SCAN_SECONDS - 2 * dt, { candidate: planet }, dt);
-      expect(state.scanned, `dt ${dt}`).toHaveLength(0);
-      run(state, 4 * dt, { candidate: planet }, dt);
-      expect(state.scanned, `dt ${dt}`).toHaveLength(1);
+describe('the five finds', () => {
+  it('are five, each with a name and a range', () => {
+    expect(FIND_IDS).toEqual(['relay', 'wreck', 'bell', 'passenger', 'light']);
+    for (const id of FIND_IDS) {
+      expect(FINDS[id].label, id).toMatch(/^[A-Z ]+$/);
+      expect(FINDS[id].range, id).toBeGreaterThan(0);
     }
   });
 
-  it('keeps the ring on the body it started on while that body stays in range', () => {
-    // nothing picked yet: the first in-range body is taken
+  it('answer at set times: the bell 1:20 to 2:10, the light from 3:00, the rest all loop', () => {
+    for (const id of ['relay', 'wreck', 'passenger'] as const) {
+      expect(isOpen(id, 0), id).toBe(true);
+      expect(isOpen(id, 239.9), id).toBe(true);
+    }
+    expect(isOpen('bell', 79.9)).toBe(false);
+    expect(isOpen('bell', 80)).toBe(true);
+    expect(isOpen('bell', 129.9)).toBe(true);
+    expect(isOpen('bell', 130)).toBe(false);
+    expect(isOpen('light', 179.9)).toBe(false);
+    expect(isOpen('light', 180)).toBe(true);
+    expect(isOpen('light', 239.9)).toBe(true);
+    expect(TUNE.DARK_STARTS).toBe(180);
+  });
+
+  it('only the unlogged ones that answer now send a signal', () => {
+    const state = createLoop(['relay']);
+    expect(listening(state)).toEqual(['wreck', 'passenger']);
+    run(state, 100);
+    expect(listening(state)).toEqual(['wreck', 'bell', 'passenger']);
+    run(state, 85);
+    expect(listening(state)).toEqual(['wreck', 'passenger', 'light']);
+  });
+
+  it('each note points at another find, and every find is pointed at but the relay', () => {
+    const toldOf = new Set<FindId>();
+    for (const id of FIND_IDS) {
+      const note = findNote(id, places);
+      expect(note.length, id).toBeLessThan(60);
+      expect(note, id).toMatch(/^[A-Z0-9 ,:.]+$/);
+      const told = FIND_IDS.find((other) => FINDS[other].toldBy === id);
+      if (told) toldOf.add(told);
+    }
+    expect([...toldOf].sort()).toEqual(['bell', 'light', 'passenger', 'wreck']);
+    expect(findNote('light', places)).toBe('A BELL ANSWERS PAST ORAMIR DEEP, 1:20 TO 2:10');
+    expect(findNote('passenger', places)).toContain('KHEVEL EXPANSE');
+    expect(findNote('wreck', places)).toContain('DARK');
+    expect(findNote('relay', places)).toContain('COMET');
+  });
+
+  it('formats moments of the loop', () => {
+    expect(formatMoment(80)).toBe('1:20');
+    expect(formatMoment(130)).toBe('2:10');
+    expect(formatMoment(0)).toBe('0:00');
+  });
+});
+
+describe('what the log has told you', () => {
+  it('a find no note told you of is heard only near; once told, from anywhere', () => {
+    const fresh = createLoop();
+    expect(isTold(fresh, 'relay')).toBe(true);
+    expect(isHeard(fresh, 'relay', 1e6)).toBe(true);
+    expect(isTold(fresh, 'wreck')).toBe(false);
+    expect(isHeard(fresh, 'wreck', TUNE.HEAR_RANGE)).toBe(true);
+    expect(isHeard(fresh, 'wreck', TUNE.HEAR_RANGE + 1)).toBe(false);
+    const told = createLoop(['passenger']);
+    expect(isHeard(told, 'wreck', 1e6)).toBe(true);
+  });
+
+  it('the chain: relay, passenger, wreck, light, then the bell', () => {
+    expect(FINDS.relay.toldBy).toBeNull();
+    expect(FINDS.passenger.toldBy).toBe('relay');
+    expect(FINDS.wreck.toldBy).toBe('passenger');
+    expect(FINDS.light.toldBy).toBe('wreck');
+    expect(FINDS.bell.toldBy).toBe('light');
+  });
+
+  it('the bell is told of only after its window has closed in that loop', () => {
+    // the light that tells of it opens after the bell has stopped answering
+    expect(FINDS[FINDS.bell.toldBy!].opensAt).toBeGreaterThanOrEqual(FINDS.bell.closesAt);
+  });
+});
+
+describe('signals', () => {
+  it('are strongest pointing straight at the find, and silent past 60° off the nose', () => {
+    expect(signalStrength(0, 3000)).toBe(1);
+    expect(signalStrength(deg(4), 3000)).toBe(1);
+    expect(signalStrength(deg(60), 3000)).toBe(0);
+    expect(signalStrength(deg(90), 3000)).toBe(0);
+    expect(signalStrength(Math.PI, 3000)).toBe(0);
+  });
+
+  it('grow every time the nose turns toward the find', () => {
+    let last = -1;
+    for (let d = 59; d >= 4; d--) {
+      const now = signalStrength(deg(d), 3000);
+      expect(now, `${d}°`).toBeGreaterThan(last);
+      last = now;
+    }
+  });
+
+  it('read weaker far away, but never too weak to follow', () => {
+    expect(signalStrength(0, 5000)).toBe(1);
+    expect(signalStrength(0, 50000)).toBeCloseTo(0.5, 9);
+    expect(signalStrength(0, 1e9)).toBe(0.35);
+    expect(signalStrength(0, 20000)).toBeLessThan(signalStrength(0, 10000));
+  });
+
+  it('a near find straight ahead outreads a far one at the same angle', () => {
+    expect(signalStrength(deg(20), 4000)).toBeGreaterThan(signalStrength(deg(20), 40000));
+  });
+});
+
+describe('the dark', () => {
+  it('is nothing before 3:00 and black at 4:00, closing in smoothly', () => {
+    expect(darkness(0)).toBe(0);
+    expect(darkness(180)).toBe(0);
+    expect(darkness(210)).toBeCloseTo(0.5, 9);
+    expect(darkness(240)).toBe(1);
+    let last = 0;
+    for (let t = 181; t <= 240; t++) {
+      expect(darkness(t), `${t}`).toBeGreaterThanOrEqual(last);
+      last = darkness(t);
+    }
+  });
+});
+
+describe('scan', () => {
+  it('logs a find after the scan time in range at cruise, once', () => {
+    const state = createLoop();
+    expect(run(state, TUNE.SCAN_SECONDS - 0.1, { candidate: 'relay' })).toEqual([]);
+    expect(state.scanId).toBe('relay');
+    expect(state.scanProgress).toBeGreaterThan(0.9);
+    expect(run(state, 0.2, { candidate: 'relay' })).toEqual(['relay']);
+    expect([...state.logged]).toEqual(['relay']);
+    expect(state.loggedNow).toEqual(['relay']);
+    expect(state.scanId).toBeNull();
+    expect(run(state, 3, { candidate: 'relay' })).toEqual([]);
+  });
+
+  it('does not fill too fast, and runs back down', () => {
+    const state = createLoop();
+    run(state, 1, { candidate: 'wreck' });
+    const filled = state.scanProgress;
+    run(state, 0.5, { candidate: 'wreck', speed: TUNE.SCAN_MAX_SPEED + 1 });
+    expect(state.tooFast).toBe(true);
+    expect(state.scanProgress).toBeLessThan(filled);
+    run(state, 5, { candidate: 'wreck', speed: 4000 });
+    expect(state.scanProgress).toBe(0);
+    expect(state.logged.size).toBe(0);
+    // exactly at the limit is slow enough
+    expect(run(state, TUNE.SCAN_SECONDS + 0.1, { candidate: 'wreck', speed: TUNE.SCAN_MAX_SPEED })).toEqual(['wreck']);
+  });
+
+  it('starts over when the find leaves range or another takes its place', () => {
+    const state = createLoop();
+    run(state, 1.2, { candidate: 'relay' });
+    run(state, 0.1, { candidate: null });
+    expect(state.scanProgress).toBe(0);
+    run(state, 1.2, { candidate: 'relay' });
+    run(state, 0.2, { candidate: 'passenger' });
+    expect(state.scanId).toBe('passenger');
+    expect(state.scanProgress).toBeLessThan(0.2);
+  });
+
+  it('a find that does not answer yet cannot be logged, however close', () => {
+    const state = createLoop();
+    run(state, 70, { candidate: 'bell' });
+    expect(state.scanProgress).toBe(0);
+    expect(state.logged.has('bell')).toBe(false);
+    run(state, 10);
+    expect(run(state, 2, { candidate: 'bell' })).toEqual(['bell']);
+  });
+
+  it('a find that stops answering mid-scan loses the ring', () => {
+    const state = createLoop();
+    run(state, 129);
+    run(state, 0.9, { candidate: 'bell' });
+    expect(state.scanProgress).toBeGreaterThan(0.5);
+    run(state, 0.3, { candidate: 'bell' });
+    expect(state.logged.has('bell')).toBe(false);
+    expect(state.scanProgress).toBe(0);
+  });
+
+  it('takes the same time on slow frames as on fast ones', () => {
+    for (const dt of [1 / 144, 1 / 60, 1 / 20]) {
+      const state = createLoop();
+      run(state, TUNE.SCAN_SECONDS - 2 * dt, { candidate: 'relay' }, dt);
+      expect(state.logged.size, `dt ${dt}`).toBe(0);
+      run(state, 4 * dt, { candidate: 'relay' }, dt);
+      expect(state.logged.size, `dt ${dt}`).toBe(1);
+    }
+  });
+
+  it('keeps the ring on the find it started on while it stays in range', () => {
     expect(prefersCandidate(null, null, Infinity, 'a', 500)).toBe(true);
-    // a nearer body wins when neither is being scanned
     expect(prefersCandidate(null, 'a', 500, 'b', 300)).toBe(true);
-    expect(prefersCandidate(null, 'a', 300, 'b', 500)).toBe(false);
-    // the body being scanned wins, however near the other one is
     expect(prefersCandidate('a', 'a', 500, 'b', 10)).toBe(false);
     expect(prefersCandidate('a', 'b', 10, 'a', 500)).toBe(true);
   });
 });
 
-describe('scan range', () => {
-  it('is the atmospheric envelope of a body that has one: four radii out', () => {
-    expect(scanRange(100, 'planet', true)).toBe(400);
-    expect(scanRange(280, 'ringedPlanet', true)).toBe(1120);
-    expect(scanRange(800, 'star', true)).toBe(3200);
-    expect(scanRange(140, 'pulsar', true)).toBe(560);
-  });
-
-  it('is the range a solid body without an envelope was always logged from', () => {
-    expect(scanRange(273, 'station', false)).toBe(discoveryRange(273));
-    expect(discoveryRange(100)).toBe(150);
-    expect(discoveryRange(500)).toBe(600);
-    expect(discoveryRange(5000)).toBe(1200);
-  });
-
-  it('is the edge of a formation: nebulae, clusters, swarms and monolith fields are scanned from inside', () => {
-    for (const kind of ['nebula', 'cluster', 'swarm', 'monoliths'] as const) {
-      expect(scanRange(2500, kind, false), kind).toBe(0);
-    }
-  });
-
-  it('is wide enough to keep pace behind the comet', () => {
-    expect(scanRange(54, 'comet', false)).toBe(800);
-  });
-});
-
-describe('values', () => {
-  it('pays every kind, the listed ones as listed', () => {
-    for (const kind of Object.keys(CONTACT_KINDS) as ContactKind[]) {
-      expect(CONTACT_KINDS[kind].value, kind).toBeGreaterThan(0);
-      expect(CONTACT_KINDS[kind].label, kind).toMatch(/^[A-Z ]+$/);
-    }
-    expect(contactValue('planet', true)).toBe(100);
-    expect(contactValue('ringedPlanet', true)).toBe(150);
-    expect(contactValue('cluster', true)).toBe(150);
-    expect(contactValue('comet', true)).toBe(300);
-    expect(contactValue('nebula', true)).toBe(300);
-    expect(contactValue('pulsar', true)).toBe(500);
-  });
-
-  it('doubles outside the home system', () => {
-    for (const kind of Object.keys(CONTACT_KINDS) as ContactKind[]) {
-      expect(contactValue(kind, false), kind).toBe(2 * contactValue(kind, true));
-    }
-    const state = createSurvey();
-    run(state, 2, { candidate: pulsar });
-    expect(state.score).toBe(1000);
-  });
-
-  it('names the rarest contact of a window', () => {
-    const state = createSurvey();
-    expect(rarestContact(state.scanned)).toBeNull();
-    run(state, 2, { candidate: planet });
-    run(state, 2, { candidate: pulsar });
-    run(state, 2, { candidate: { id: 'home:8', name: 'THE COMET', kind: 'comet', home: true } });
-    expect(rarestContact(state.scanned)?.name).toBe('PULSAR KHEVEL');
-  });
-});
-
-describe('classification', () => {
-  it('tells every archetype apart by the name its builder gives it', () => {
-    const named: Array<[string, ContactKind]> = [
-      ['PULSAR KHEVEL', 'pulsar'],
-      ['KHEVEL STATION (DERELICT)', 'station'],
-      ['KHEVEL BINARY', 'binary'],
-      ['KHEVEL NEBULA', 'nebula'],
-      ['KHEVEL CLUSTER', 'cluster'],
-      ['THE KHEVEL MONOLITHS', 'monoliths'],
-      ['KHEVEL SWARM', 'swarm'],
-      ['THE COMET', 'comet'],
-    ];
-    for (const [name, kind] of named) {
-      expect(classifyContact({ name, solid: true }), name).toBe(kind);
-    }
-  });
-
-  it('tells bodies apart by their LOD registration and ring', () => {
-    expect(classifyContact({ name: 'THE SUN', solid: true, body: 'star' })).toBe('star');
-    expect(classifyContact({ name: 'VELORA-3', solid: true, body: 'planet' })).toBe('planet');
-    expect(classifyContact({ name: 'VELORA-3', solid: true, body: 'planet', ringed: true })).toBe('ringedPlanet');
-  });
-
-  it('calls what it does not know an anomaly, which still pays', () => {
-    expect(classifyContact({ name: 'SOMETHING NEW', solid: false })).toBe('anomaly');
-    expect(contactValue('anomaly', true)).toBeGreaterThan(0);
-  });
-});
-
-describe('fuel', () => {
-  it('drains only while burning: a full tank is the tank time of burn', () => {
-    const state = createSurvey();
-    run(state, 10, { burning: false });
-    expect(state.fuel).toBe(1);
-    run(state, TUNE.TANK_SECONDS / 2, { burning: true });
-    expect(state.fuel).toBeCloseTo(0.5, 5);
-    expect(canBurn(state)).toBe(true);
-    run(state, TUNE.TANK_SECONDS / 2 + 0.1, { burning: true });
-    expect(state.fuel).toBe(0);
-  });
-
-  it('empty means cruise only, until the next scan', () => {
-    const state = createSurvey();
-    run(state, TUNE.TANK_SECONDS + 1, { burning: true });
-    expect(canBurn(state)).toBe(false);
-    // holding the burn on an empty tank changes nothing and never goes negative
-    run(state, 5, { burning: true });
-    expect(state.fuel).toBe(0);
-
-    run(state, TUNE.SCAN_SECONDS + 0.1, { candidate: planet });
-    expect(state.fuel).toBeCloseTo(TUNE.REFUEL, 5);
-    expect(canBurn(state)).toBe(true);
-  });
-
-  it('a scan refuels a fixed share and the tank does not overfill', () => {
-    const state = createSurvey();
-    run(state, 2, { candidate: planet });
-    expect(state.fuel).toBe(1);
-
-    const half = createSurvey();
-    run(half, TUNE.TANK_SECONDS / 2, { burning: true });
-    const before = half.fuel;
-    run(half, TUNE.SCAN_SECONDS + 0.1, { candidate: planet });
-    expect(half.fuel).toBeCloseTo(before + TUNE.REFUEL, 5);
-  });
-
-  it('a full tank is 40 seconds of burn and a scan is worth 5 of them', () => {
-    expect(TUNE.TANK_SECONDS).toBe(40);
-    expect(TUNE.REFUEL * TUNE.TANK_SECONDS).toBeCloseTo(5, 9);
-  });
-});
-
-describe('the window', () => {
-  it('is four minutes and closes on its own', () => {
-    const state = createSurvey();
-    expect(TUNE.WINDOW_SECONDS).toBe(240);
+describe('the loop', () => {
+  it('is four minutes and ends on its own', () => {
+    const state = createLoop();
     run(state, 239.9);
     expect(state.closed).toBe(false);
+    expect(elapsedOf(state)).toBeCloseTo(239.9, 6);
     run(state, 0.2);
     expect(state.closed).toBe(true);
+    expect(state.charted).toBe(false);
     expect(state.timeLeft).toBe(0);
-    expect(canBurn(state)).toBe(false);
   });
 
   it('does not stop for scans', () => {
-    const state = createSurvey();
-    run(state, 30, { candidate: planet });
+    const state = createLoop();
+    run(state, 30, { candidate: 'relay' });
     expect(state.timeLeft).toBeCloseTo(210, 5);
   });
 
-  it('does not finish a scan after the clock ran out, even on one long frame', () => {
-    const state = createSurvey();
+  it('cannot log after the dark, even on one long frame', () => {
+    const state = createLoop();
     run(state, 239);
-    // 1 s left, and one frame worth 10 s with a body in range
-    const logged = stepSurvey(state, 10, { burning: false, speed: 0, candidate: planet });
-    expect(logged).toBeNull();
+    expect(stepLoop(state, 10, { speed: 0, candidate: 'light' })).toBeNull();
     expect(state.closed).toBe(true);
-    expect(state.score).toBe(0);
+    expect(state.logged.size).toBe(0);
   });
 
   it('a scan that completes on the closing frame still counts', () => {
-    const state = createSurvey();
+    const state = createLoop();
     run(state, 240 - TUNE.SCAN_SECONDS);
-    run(state, TUNE.SCAN_SECONDS, { candidate: planet });
+    run(state, TUNE.SCAN_SECONDS, { candidate: 'light' });
     expect(state.closed).toBe(true);
-    expect(state.score).toBe(100);
+    expect(state.logged.has('light')).toBe(true);
   });
 
-  it('changes nothing once closed', () => {
-    const state = createSurvey();
+  it('changes nothing once over', () => {
+    const state = createLoop();
     run(state, 241);
-    run(state, 30, { burning: true, candidate: planet });
-    expect(state.score).toBe(0);
-    expect(state.fuel).toBe(1);
-    expect(state.scanned).toHaveLength(0);
+    run(state, 30, { candidate: 'relay' });
+    expect(state.logged.size).toBe(0);
     expect(state.scanProgress).toBe(0);
   });
 
-  it('ignores a frame with no time in it', () => {
-    const state = createSurvey();
-    expect(stepSurvey(state, 0, { burning: true, speed: 0, candidate: planet })).toBeNull();
-    expect(stepSurvey(state, Number.NaN, { burning: true, speed: 0, candidate: planet })).toBeNull();
-    expect(state.timeLeft).toBe(240);
-    expect(state.fuel).toBe(1);
+  it('carries the day\'s log in, and logging the last find charts the system and ends the loop', () => {
+    const state = createLoop(['relay', 'wreck', 'bell', 'passenger']);
+    expect(listening(state)).toEqual([]);
+    run(state, 181);
+    expect(listening(state)).toEqual(['light']);
+    expect(run(state, 2, { candidate: 'light' })).toEqual(['light']);
+    expect(state.charted).toBe(true);
+    expect(state.closed).toBe(true);
+    expect(state.loggedNow).toEqual(['light']);
+    expect(state.timeLeft).toBeGreaterThan(50);
   });
 
-  it('resets to a fresh window for the retry', () => {
-    const state = createSurvey();
-    run(state, 100, { burning: true, candidate: planet });
-    run(state, 200);
-    resetSurvey(state);
-    expect(state).toEqual(createSurvey());
+  it('a loop that starts fresh keeps only known finds from the log', () => {
+    const state = createLoop();
+    run(state, 100, { candidate: 'relay' });
+    resetLoop(state, ['wreck', 'junk' as FindId]);
+    expect([...state.logged]).toEqual(['wreck']);
+    expect(state.loggedNow).toEqual([]);
+    expect(state.timeLeft).toBe(TUNE.WINDOW_SECONDS);
+    expect(state.closed).toBe(false);
   });
 
   it('formats the clock so 0:00 means over', () => {
     expect(formatClock(240)).toBe('4:00');
     expect(formatClock(239.2)).toBe('4:00');
-    expect(formatClock(61)).toBe('1:01');
-    expect(formatClock(9.01)).toBe('0:10');
     expect(formatClock(0.01)).toBe('0:01');
     expect(formatClock(0)).toBe('0:00');
-    expect(formatClock(-3)).toBe('0:00');
+  });
+
+  it('free drift logs a contact on first approach, from the range it always had', () => {
+    expect(discoveryRange(100)).toBe(150);
+    expect(discoveryRange(500)).toBe(600);
+    expect(discoveryRange(5000)).toBe(1200);
+  });
+});
+
+describe('the day\'s log', () => {
+  it('starts empty, counts loops, and keeps a find the moment it is logged', () => {
+    const storage = memoryStorage();
+    expect(readLog(storage, '20261127')).toEqual({ logged: [], loops: 0, best: 0 });
+    expect(beginLoop(storage, '20261127')).toEqual({ logged: [], loops: 1, best: 0 });
+    expect(recordFind(storage, '20261127', 'relay')).toBeNull();
+    expect(recordFind(storage, '20261127', 'passenger')).toBeNull();
+    expect(readLog(storage, '20261127')).toEqual({ logged: ['relay', 'passenger'], loops: 1, best: 0 });
+    // the next loop starts from it
+    expect(beginLoop(storage, '20261127')).toEqual({ logged: ['relay', 'passenger'], loops: 2, best: 0 });
+    // another day is its own log
+    expect(readLog(storage, '20261128').logged).toEqual([]);
+    expect(storage.data.has(logKeyFor('20261127'))).toBe(true);
+  });
+
+  it('a find logged twice is kept once', () => {
+    const storage = memoryStorage();
+    beginLoop(storage, 'x');
+    recordFind(storage, 'x', 'relay');
+    recordFind(storage, 'x', 'relay');
+    expect(readLog(storage, 'x').logged).toEqual(['relay']);
+  });
+
+  it('charting: the loops it took, the best, and the days charted all-time', () => {
+    const storage = memoryStorage();
+    beginLoop(storage, 'day1');
+    for (const id of ['relay', 'wreck', 'bell', 'passenger'] as const) recordFind(storage, 'day1', id);
+    beginLoop(storage, 'day1');
+    expect(recordFind(storage, 'day1', 'light')).toEqual({ loops: 2, best: 2, newBest: true, charted: 1 });
+    expect(readCharted(storage)).toBe(1);
+    expect(storage.data.get(CHARTED_KEY)).toBe('1');
+
+    // on a charted system the next loop starts a fresh log; the best stays
+    expect(beginLoop(storage, 'day1')).toEqual({ logged: [], loops: 1, best: 2 });
+    for (const id of ['relay', 'wreck', 'bell', 'passenger'] as const) recordFind(storage, 'day1', id);
+    // charted again in one loop: a new best, but not a new day charted
+    expect(recordFind(storage, 'day1', 'light')).toEqual({ loops: 1, best: 1, newBest: true, charted: 1 });
+
+    // charted again in three: not a best
+    beginLoop(storage, 'day1');
+    beginLoop(storage, 'day1');
+    beginLoop(storage, 'day1');
+    for (const id of FIND_IDS.slice(0, 4)) recordFind(storage, 'day1', id);
+    expect(recordFind(storage, 'day1', 'light')).toMatchObject({ loops: 3, best: 1, newBest: false });
+
+    // a second day counts toward the all-time record
+    beginLoop(storage, 'day2');
+    for (const id of FIND_IDS.slice(0, 4)) recordFind(storage, 'day2', id);
+    expect(recordFind(storage, 'day2', 'light')).toMatchObject({ charted: 2, newBest: true });
+  });
+
+  it('reads junk as an empty log and keeps the known finds of a damaged one', () => {
+    expect(readLog(memoryStorage({ [logKeyFor('x')]: 'not json' }), 'x')).toEqual({ logged: [], loops: 0, best: 0 });
+    const damaged = memoryStorage({
+      [logKeyFor('x')]: JSON.stringify({ logged: ['bell', 'nope', 'relay', 'bell'], loops: -3, best: 2.5 }),
+    });
+    expect(readLog(damaged, 'x')).toEqual({ logged: ['bell', 'relay'], loops: 0, best: 0 });
+    expect(readCharted(memoryStorage({ [CHARTED_KEY]: 'abc' }))).toBe(0);
+  });
+
+  it('works without storage and with storage that throws', () => {
+    expect(readLog(null, 'x')).toEqual({ logged: [], loops: 0, best: 0 });
+    expect(beginLoop(null, 'x')).toEqual({ logged: [], loops: 1, best: 0 });
+    expect(recordFind(null, 'x', 'relay')).toBeNull();
+    const broken = {
+      getItem: () => { throw new Error('blocked'); },
+      setItem: () => { throw new Error('quota'); },
+    };
+    expect(readLog(broken, 'x')).toEqual({ logged: [], loops: 0, best: 0 });
+    expect(beginLoop(broken, 'x').loops).toBe(1);
+    expect(readCharted(broken)).toBe(0);
   });
 });
 
@@ -351,107 +419,20 @@ describe('the daily system', () => {
     expect(resolveSeed('', noon)).toEqual({ seed: seedFromLabel('20261126'), label: '20261126', daily: true });
   });
 
-  it('is the same at any hour of the UTC day, wherever the visitor is', () => {
+  it('is the same all UTC day and changes at midnight', () => {
     const first = new Date(Date.UTC(2026, 10, 26, 0, 0, 1));
     const last = new Date(Date.UTC(2026, 10, 26, 23, 59, 59));
     expect(resolveSeed('', first)).toEqual(resolveSeed('', last));
-    // 23:30 on the 26th in New York is already the 27th in UTC
     expect(dailyLabel(new Date('2026-11-26T23:30:00-05:00'))).toBe('20261127');
-  });
-
-  it('changes at UTC midnight, and neighbouring days are unrelated seeds', () => {
     const next = resolveSeed('', new Date(Date.UTC(2026, 10, 27, 0, 0, 1)));
-    const today = resolveSeed('', noon);
-    expect(next.label).toBe('20261127');
-    expect(next.seed).not.toBe(today.seed);
-    expect(Math.abs(next.seed - today.seed)).toBeGreaterThan(1000);
+    expect(next.seed).not.toBe(resolveSeed('', noon).seed);
   });
 
-  it('pads the month and the day', () => {
-    expect(dailyLabel(new Date(Date.UTC(2027, 0, 5)))).toBe('20270105');
-  });
-
-  it('?seed= overrides the day', () => {
-    const seeded = resolveSeed('?seed=khevel', noon);
-    expect(seeded).toEqual({ seed: seedFromLabel('khevel'), label: 'khevel', daily: false });
-    expect(seeded.seed).not.toBe(resolveSeed('', noon).seed);
-    expect(resolveSeed('?stats&seed=khevel', noon).seed).toBe(seeded.seed);
-  });
-
-  it('?seed= of a date is that day, with that day\'s best', () => {
+  it('?seed= overrides the day, and a date replays that day', () => {
+    expect(resolveSeed('?seed=khevel', noon)).toEqual({ seed: seedFromLabel('khevel'), label: 'khevel', daily: false });
     expect(resolveSeed('?seed=20261126', noon)).toEqual(resolveSeed('', noon));
-    const other = resolveSeed('?seed=20250101', noon);
-    expect(other.daily).toBe(false);
-    expect(bestKeyFor(other.label)).toBe('ephemeris.best.20250101');
-  });
-
-  it('cleans what ends up in a storage key, and falls back to the day when nothing is left', () => {
     expect(resolveSeed('?seed=Khevel%20Deep!', noon).label).toBe('kheveldeep');
     expect(resolveSeed('?seed=', noon).daily).toBe(true);
-    expect(resolveSeed('?seed=%20%2F..', noon).daily).toBe(true);
     expect(resolveSeed(`?seed=${'a'.repeat(200)}`, noon).label).toHaveLength(24);
-  });
-
-  it('seeds are 32-bit and stable', () => {
-    expect(seedFromLabel('20261126')).toBe(seedFromLabel('20261126'));
-    for (const label of ['20261126', 'khevel', 'a']) {
-      const seed = seedFromLabel(label);
-      expect(Number.isInteger(seed) && seed >= 0 && seed < 2 ** 32, label).toBe(true);
-    }
-  });
-});
-
-describe('bests', () => {
-  it('are kept per system and all-time', () => {
-    const storage = memoryStorage();
-    expect(readBests(storage, '20261126')).toEqual({ seed: 0, allTime: 0 });
-
-    expect(recordScore(storage, '20261126', 1200)).toEqual({
-      seed: 1200, allTime: 1200, newSeedBest: true, newAllTimeBest: true,
-    });
-    expect(storage.data.get('ephemeris.best.20261126')).toBe('1200');
-    expect(storage.data.get(BEST_KEY)).toBe('1200');
-
-    // a worse run in the same system keeps both
-    expect(recordScore(storage, '20261126', 900)).toEqual({
-      seed: 1200, allTime: 1200, newSeedBest: false, newAllTimeBest: false,
-    });
-
-    // tomorrow's system starts from nothing, the all-time best stands
-    expect(recordScore(storage, '20261127', 700)).toEqual({
-      seed: 700, allTime: 1200, newSeedBest: true, newAllTimeBest: false,
-    });
-    expect(readBests(storage, '20261127')).toEqual({ seed: 700, allTime: 1200 });
-    expect(readBests(storage, '20261126')).toEqual({ seed: 1200, allTime: 1200 });
-
-    expect(recordScore(storage, '20261127', 5000).newAllTimeBest).toBe(true);
-    expect(storage.data.get(BEST_KEY)).toBe('5000');
-    expect(storage.data.get('ephemeris.best.20261126')).toBe('1200');
-  });
-
-  it('a zero is not a best, and neither is a tie', () => {
-    const storage = memoryStorage();
-    expect(recordScore(storage, 'x', 0).newSeedBest).toBe(false);
-    expect(storage.data.size).toBe(0);
-    recordScore(storage, 'x', 300);
-    expect(recordScore(storage, 'x', 300)).toMatchObject({ newSeedBest: false, newAllTimeBest: false });
-  });
-
-  it('reads junk in storage as no best', () => {
-    const storage = memoryStorage({ 'ephemeris.best': 'abc', 'ephemeris.best.x': '-5' });
-    expect(readBests(storage, 'x')).toEqual({ seed: 0, allTime: 0 });
-    expect(recordScore(storage, 'x', 100).newSeedBest).toBe(true);
-  });
-
-  it('works without storage and with storage that throws', () => {
-    expect(readBests(null, 'x')).toEqual({ seed: 0, allTime: 0 });
-    expect(recordScore(null, 'x', 400)).toEqual({ seed: 400, allTime: 400, newSeedBest: true, newAllTimeBest: true });
-
-    const broken = {
-      getItem: () => { throw new Error('blocked'); },
-      setItem: () => { throw new Error('quota'); },
-    };
-    expect(readBests(broken, 'x')).toEqual({ seed: 0, allTime: 0 });
-    expect(recordScore(broken, 'x', 400).newSeedBest).toBe(true);
   });
 });

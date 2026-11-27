@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import type { EphemerisHudElements, EphemerisPhase } from 'components/ephemeris/createEphemeris';
-import type { ContactKind } from 'components/ephemeris/survey';
+import type { FindId } from 'components/ephemeris/survey';
 import { createGovernorState, qualityForLevel } from 'engine/core/governor';
 import { createResourceTracker } from 'engine/render/resourceTracker';
 import type { Stage, StageOptions } from 'engine/render/stage';
@@ -24,6 +24,7 @@ export interface FakeStage {
 
 export function createFakeStage(container: HTMLElement, opts: StageOptions = {}): FakeStage {
   const scene = new THREE.Scene();
+  if (opts.fogDensity !== undefined) scene.fog = new THREE.FogExp2(0x000000, opts.fogDensity);
   const camera = new THREE.PerspectiveCamera(opts.fov, VIEW.width / VIEW.height, opts.near, opts.far);
   const canvas = document.createElement('canvas');
   container.appendChild(canvas);
@@ -79,8 +80,8 @@ export function createHost(): HTMLElement {
 
 const HUD_KEYS: Record<keyof EphemerisHudElements, true> = {
   body: true, dist: true, speed: true, sector: true, contacts: true, ping: true,
-  best: true, clock: true, fuelFill: true, fuelLabel: true,
-  scan: true, scanArc: true, scanLabel: true, marker: true, markerGlyph: true, markerLabel: true,
+  loop: true, clock: true, scan: true, scanArc: true, scanTick: true, scanLabel: true,
+  marker: true, markerGlyph: true, markerLabel: true, dark: true,
 };
 
 /** One detached element per HUD slot. */
@@ -99,20 +100,22 @@ export interface EphemerisDebug extends PilotWorld {
     fov: number;
     aspect: number;
   };
-  pois(): Array<{ name: string; x: number; y: number; z: number; radius: number; id: string; kind: ContactKind; solid: boolean; envelope: boolean }>;
+  finds(): Array<{ id: FindId; x: number; y: number; z: number; open: boolean; logged: boolean }>;
   state(): {
     phase: EphemerisPhase;
     timeLeft: number;
-    fuel: number;
-    score: number;
-    scanned: string[];
-    scanId: string | null;
+    loop: number;
+    logged: FindId[];
+    loggedNow: FindId[];
+    scanId: FindId | null;
     scanProgress: number;
     tooFast: boolean;
     bodySpeed: number;
     speed: number;
     burning: boolean;
-    marker: { x: number; y: number; onScreen: boolean; dist: number } | null;
+    dark: number;
+    signal: { id: FindId; strength: number; dist: number; offNose: number; angle: number } | null;
+    locked: boolean;
   };
 }
 

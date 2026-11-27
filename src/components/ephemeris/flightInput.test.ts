@@ -1,6 +1,12 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createFlightInput, STICK_RADIUS, type FlightInput } from 'components/ephemeris/flightInput';
+import {
+  createFlightInput,
+  KEY_RAMP_SECONDS,
+  STEER_SLEW,
+  STICK_RADIUS,
+  type FlightInput,
+} from 'components/ephemeris/flightInput';
 import { KEY_STEER } from 'engine/core/flight';
 
 const VIEW = { width: 400, height: 800 };
@@ -11,8 +17,13 @@ let container: HTMLElement;
 let burnZone: HTMLElement;
 let input: FlightInput;
 const steer = { x: 0, y: 0 };
+/**
+ * The steer once it has settled: a second of frames, so key ramps and the
+ * slew limit have run their course. The ramps themselves are pinned in
+ * 'feel', below.
+ */
 const read = () => {
-  input.readSteer(steer);
+  for (let i = 0; i < 10; i++) input.readSteer(steer, 0.1);
   // `+ 0` folds the engine's −0 (a flipped zero) into 0 for toEqual
   return { x: steer.x + 0, y: steer.y + 0 };
 };
@@ -529,5 +540,93 @@ describe('presses', () => {
     key('keydown', 'Escape');
     expect(escapes).toBe(1);
     expect(presses).toBe(0);
+  });
+});
+
+describe('feel', () => {
+  /** Steps `seconds` of 60 Hz frames and returns every steer the ship got. */
+  const frames = (seconds: number) => {
+    const out: Array<{ x: number; y: number }> = [];
+    for (let i = 0; i < Math.round(seconds * 60); i++) {
+      input.readSteer(steer, 1 / 60);
+      out.push({ x: steer.x + 0, y: steer.y + 0 });
+    }
+    return out;
+  };
+  const most = (list: Array<{ x: number; y: number }>, axis: 'x' | 'y') =>
+    Math.max(...list.map((s) => Math.abs(s[axis])));
+
+  it('a 100 ms tap is a nudge: about a quarter of the key\'s full turn, then back to straight', () => {
+    expect(KEY_RAMP_SECONDS).toBe(0.4);
+    key('keydown', 'KeyD');
+    const held = frames(0.1);
+    key('keyup', 'KeyD');
+    const after = frames(0.5);
+    const peak = most([...held, ...after], 'x');
+    expect(peak).toBeGreaterThan(0.1);
+    expect(peak).toBeLessThan(0.22);
+    expect(after.at(-1)).toEqual({ x: 0, y: 0 });
+  });
+
+  it('a 300 ms hold is a turn: three quarters of the way; full after 400 ms', () => {
+    key('keydown', 'ArrowLeft');
+    const held = frames(0.3);
+    expect(held.at(-1)!.x).toBeLessThan(-0.45);
+    expect(held.at(-1)!.x).toBeGreaterThan(-0.6);
+    frames(0.2);
+    expect(steer.x).toBeCloseTo(-KEY_STEER, 9);
+  });
+
+  it('pitch keys ramp the same way', () => {
+    key('keydown', 'KeyW');
+    expect(frames(0.1).at(-1)!.y).toBeGreaterThan(-0.22);
+    expect(frames(0.4).at(-1)!.y).toBeCloseTo(-KEY_STEER, 9);
+  });
+
+  it('a key reversed mid-turn starts its ramp again on the other side', () => {
+    key('keydown', 'KeyD');
+    frames(0.5);
+    key('keyup', 'KeyD');
+    key('keydown', 'KeyA');
+    const turn = frames(0.1);
+    // from full right to a little left, never more than the slew allows per frame
+    expect(turn.at(-1)!.x).toBeGreaterThan(-0.22);
+    expect(turn.at(-1)!.x).toBeLessThan(0.3);
+  });
+
+  it('nothing reaches the ship faster than the slew limit, whoever steers', () => {
+    const step = STEER_SLEW / 60 + 1e-9;
+    const jumps = (list: Array<{ x: number; y: number }>) =>
+      list.slice(1).every((s, i) => Math.abs(s.x - list[i].x) <= step && Math.abs(s.y - list[i].y) <= step);
+    // a mouse flicked from one edge to the other
+    mouse('pointermove', 400, 0);
+    const flick = frames(0.3);
+    mouse('pointermove', 0, 800);
+    flick.push(...frames(0.5));
+    expect(jumps(flick)).toBe(true);
+    expect(flick.at(-1)).toEqual({ x: -1, y: 1 });
+    // a handover from the mouse, full right, to a key pushing left
+    mouse('pointermove', 400, 400);
+    const handover = frames(0.4);
+    key('keydown', 'KeyA');
+    handover.push(...frames(0.6));
+    expect(jumps(handover)).toBe(true);
+    expect(handover.at(-1)!.x).toBeCloseTo(-KEY_STEER, 9);
+    // and back to the mouse, which is still full right
+    key('keyup', 'KeyA');
+    mouse('pointermove', 399, 400);
+    const back = frames(0.6);
+    expect(jumps(back)).toBe(true);
+    // a thumb taking the stick
+    touchDown(100, 600);
+    touchMove(156, 544);
+    const thumb = frames(0.6);
+    expect(jumps([...back.slice(-1), ...thumb])).toBe(true);
+  });
+
+  it('a long frame cannot jump either: the step is capped at 100 ms', () => {
+    mouse('pointermove', 400, 400);
+    input.readSteer(steer, 5);
+    expect(steer.x).toBeCloseTo(STEER_SLEW * 0.1, 9);
   });
 });

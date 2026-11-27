@@ -1,30 +1,37 @@
 import * as THREE from 'three';
-import { contactKind, isHomeContact } from 'components/ephemeris/contacts';
+import { buildFinds, planFinds, type FindPlan, type Keepout } from 'components/ephemeris/finds';
 import { createFlightInput } from 'components/ephemeris/flightInput';
 import { formatDistance, placeMarker, type MarkerPlacement } from 'components/ephemeris/marker';
 import {
+  beginLoop,
+  createLoop,
+  darkness,
   discoveryRange,
-  canBurn,
-  CONTACT_KINDS,
-  contactValue,
-  createSurvey,
+  elapsedOf,
+  FIND_IDS,
+  findNote,
+  FINDS,
   formatClock,
+  isHeard,
+  isOpen,
+  isTold,
+  listening,
   prefersCandidate,
-  rarestContact,
-  readBests,
-  recordScore,
-  resetSurvey,
-  scanRange,
-  stepSurvey,
+  readLog,
+  recordFind,
+  resetLoop,
+  signalStrength,
+  stepLoop,
   TUNE,
-  type ContactKind,
-  type RecordedScore,
+  type ChartResult,
+  type FindId,
+  type Places,
   type StorageLike,
-  type SurveyCandidate,
   type SurveySeed,
 } from 'components/ephemeris/survey';
 import {
   CRUISE_FOV,
+  DECEL_RATE,
   easeUpVector,
   FORWARD,
   speedResponseRate,
@@ -72,67 +79,72 @@ export interface EphemerisHudElements {
   speed: HTMLElement;
   /** Current sector, e.g. "KHEVEL EXPANSE · 2.0.-1". */
   sector: HTMLElement;
-  /** "SCORE 450" in a survey; in FREE DRIFT the discovery tally, e.g. "5 CONTACTS LOGGED". */
+  /** "LOG 2/5" in a loop; in FREE DRIFT the discovery tally, e.g. "5 CONTACTS LOGGED". */
   contacts: HTMLElement;
-  /** Transient "NEW CONTACT" banner; the sim drives its opacity. */
+  /** Transient banner (a find logged, a new signal, the dark); the sim drives its opacity. */
   ping: HTMLElement;
-  /** Best in this system, e.g. "BEST 1200". */
-  best: HTMLElement;
-  /** Survey clock, e.g. "3:42". */
+  /** "LOOP 2". */
+  loop: HTMLElement;
+  /** Loop clock, e.g. "3:42". */
   clock: HTMLElement;
-  /** Fuel bar fill; the sim drives its width. */
-  fuelFill: HTMLElement;
-  /** Line under the fuel bar: "FUEL", or what an empty tank means. */
-  fuelLabel: HTMLElement;
-  /** The scan ring's wrapper at screen centre; the sim drives its opacity. */
+  /** The reticle at screen centre; the sim drives its opacity. */
   scan: HTMLElement;
-  /** The ring's progress arc: any element whose `stroke-dashoffset` runs 100 (empty) to 0 (full). */
+  /** The reticle's progress arc: any element whose `stroke-dashoffset` runs 100 (empty) to 0 (full). */
   scanArc: HTMLElement | SVGElement;
-  /** Line under the ring: what is being scanned, or why it is not filling. */
+  /** A tick on the reticle toward the signal; the sim drives its rotation and opacity. */
+  scanTick: HTMLElement;
+  /** Line under the reticle: the signal, the scan, or what to do. */
   scanLabel: HTMLElement;
-  /** Target marker; the sim drives its transform and opacity. */
+  /** Bracket on a find the ship is pointed at; the sim drives its transform and opacity. */
   marker: HTMLElement;
-  /** The marker's glyph: a bracket on the target, an arrow on the edge. */
+  /** The bracket's glyph. */
   markerGlyph: HTMLElement;
-  /** The marker's kind and distance on two lines, e.g. "PLANET" over "1420 km". */
+  /** The find's name and distance on two lines, e.g. "RELAY" over "1420 km". */
   markerLabel: HTMLElement;
+  /** Full-screen layer for the dark; the sim drives its `--dark` (0..1). */
+  dark: HTMLElement;
 }
 
 /**
- * - `title`: the world drifts behind the title screen; any press starts a survey.
- * - `survey`: the timed window.
- * - `closed`: the window has closed; any press after the lock retries.
- * - `drift`: FREE DRIFT, the experience as it was before the survey: no
- *   clock, no fuel, contacts logged on first approach.
+ * - `title`: the world drifts behind the title screen; any press starts a loop.
+ * - `survey`: the four-minute loop.
+ * - `closed`: the loop is over (the dark came in, or the log is complete);
+ *   any press after the lock starts the next loop.
+ * - `drift`: FREE DRIFT, the experience as it was before the loop: no clock,
+ *   no dark, contacts logged on first approach.
  */
 export type EphemerisPhase = 'title' | 'survey' | 'closed' | 'drift';
 
 /** What the end screen shows. */
 export interface SurveyResult {
-  score: number;
-  /** Contacts scanned in the window. */
-  contacts: number;
-  /** The most valuable contact scanned, e.g. "PULSAR KHEVEL". */
-  rarest: { name: string; kind: string } | null;
-  bests: RecordedScore;
+  /** Which loop of the day's log this was. */
+  loop: number;
+  /** Finds logged in this loop. */
+  loggedNow: FindId[];
+  /** Finds logged today, this loop included. */
+  logged: FindId[];
+  /** Set when this loop completed the log. */
+  charted: ChartResult | null;
 }
 
 export interface EphemerisOptions {
   /** The system to fly. Default: a new random one per mount. */
   seed?: SurveySeed;
-  /** Where bests are kept. Default: none kept. */
+  /** Where the day's log is kept. Default: nowhere. */
   storage?: StorageLike | null;
   /** The BURN zone for the second thumb on a phone (see createFlightInput). */
   burnZone?: HTMLElement | null;
-  /** Phase changes, with the result when a window closes. Not called per frame. */
+  /** Phase changes, with the result when a loop ends. Not called per frame. */
   onPhase?: (phase: EphemerisPhase, result: SurveyResult | null) => void;
 }
 
 export interface EphemerisGame {
-  /** Starts a survey (from the same start, every time) or FREE DRIFT (from where the ship is). */
+  /** Starts a loop (from the same start, every time) or FREE DRIFT (from the spawn, the world clock running). */
   start(mode: 'survey' | 'drift'): void;
-  /** Back to the title screen. A survey in flight is abandoned and not scored. */
+  /** Back to the title screen. A loop in flight is abandoned; finds it logged stay logged. */
   menu(): void;
+  /** Names of the places the finds' notes point at. */
+  places: Places;
   /** Stops the loop, removes listeners and frees all GPU resources. */
   dispose(): void;
 }
@@ -187,29 +199,47 @@ const BOOST_FACTOR = 40;
 const approachRange = (radius: number) => Math.max(60, radius * 0.5);
 /** Points in the home comet's trail (engine/world/sectorContent builds it). */
 const COMET_TRAIL = 70;
-/** The fuel bar is drawn in this many steps, so its width changes a few times a second at most. */
-const FUEL_CELLS = 20;
 /** The clock blinks through its last seconds. */
 const CLOCK_WARN_SECONDS = 20;
-/** The fuel bar blinks under this share of a tank. */
-const FUEL_WARN = 0.25;
+/** Fog density of the world, and what the dark thickens it to at the end of a loop. */
+const FOG_DENSITY = 0.000055;
+const FOG_DARK = 0.0006;
+/** Starfield opacity (createStarfield below), faded out by the dark. */
+const STAR_OPACITY = 0.55;
+/** Cells in the signal meter under the reticle. */
+const SIGNAL_CELLS = 8;
 /**
- * The target marker stays this many CSS pixels inside the game area, so its
- * two-line label is never cut off and it keeps clear of the control hint.
- * On a phone the vertical margin grows to clear the BURN zone as well.
+ * The bracket on a find shows once the ship points at it this well, or once
+ * it is this close: a lock, not a marker on everything.
  */
-const MARKER_MARGIN_X = 84;
-const MARKER_MARGIN_Y = 110;
+const LOCK_STRENGTH = 0.75;
+const LOCK_DISTANCE = 3000;
+/**
+ * How far the ship coasts, off the burn, from `speed` down to scan speed:
+ * the flight law eases speed toward cruise at DECEL_RATE (about 3,000 km
+ * from a full burn). The readout says to come off the burn when a find is
+ * this close, plus a margin to react.
+ */
+const brakingDistance = (speed: number) => {
+  const excess = speed - CRUISE_SPEED;
+  const goal = TUNE.SCAN_MAX_SPEED - CRUISE_SPEED;
+  if (excess <= goal) return 0;
+  const seconds = Math.log(excess / goal) / DECEL_RATE;
+  return (excess - goal) / DECEL_RATE + CRUISE_SPEED * seconds;
+};
+const BRAKE_MARGIN = 1500;
+/** The passenger rides this far above the comet's centre (the comet's radius is 54). */
+const PASSENGER_LIFT = 70;
 
 /**
  * Mounts the EPHEMERIS solar-system simulation into `container` and starts
  * its render loop. The world opens drifting behind a title screen; the
  * returned handle starts a survey or FREE DRIFT and disposes the mount.
  *
- * The survey's rules (clock, fuel, scan progress, values, bests) live in
- * components/ephemeris/survey and know nothing of this file. Here they are
- * fed from the nearest-body pass: which unscanned body is in range, how
- * fast the ship is going and whether a burn is firing.
+ * The loop's rules (clock, finds and their windows, signal strength, the
+ * scan, the dark, the day's log) live in components/ephemeris/survey and know
+ * nothing of this file. Here they are fed what the sim measures: which find
+ * is in range, how fast the ship is going past it, where the nose points.
  *
  * Space is truly unbounded: ship physics run in JS doubles as absolute
  * position = floating origin + render-local position, and the whole scene is
@@ -276,6 +306,7 @@ export function createEphemeris(
   home.group.updateMatrixWorld(true);
   home.lodBodies.forEach((body) => lod.register(body));
 
+  const scratchFind = new THREE.Vector3();
   // stars — attached to the ship's position each frame so the backdrop is
   // infinite (they only rotate with the camera, never translate past you);
   // the 20–40k shell spans the beacon band, inside the far plane
@@ -369,16 +400,43 @@ export function createEphemeris(
   ship.position.copy(SPAWN);
   scene.add(ship);
 
+  // ---- the day's finds (components/ephemeris/finds) ----
+  // The late light keeps clear of the planets that cross the belt; planets
+  // move a few kilometres a second, so where they are at the start is where
+  // they are all loop.
+  const beltRadius = 4700 * HOME_LAYOUT.orbitStretch;
+  const keepouts: Keepout[] = home.pois.map((poi) => {
+    poi.object.getWorldPosition(scratchFind);
+    return { x: scratchFind.x, z: scratchFind.z, reach: poi.radius * (1 + HOME_LAYOUT.moonReachRadii) + 200 };
+  });
+  const plan: FindPlan = planFinds(worldSeed, SECTOR, SPAWN, SPAWN_HEADING, beltRadius, keepouts);
+  const finds = buildFinds(tracker);
+  // parented to the home group, the finds ride the floating origin with it
+  const findGroup = new THREE.Group();
+  for (const id of ['relay', 'wreck', 'bell', 'light'] as const) {
+    finds.groups[id].position.set(plan[id].x, plan[id].y, plan[id].z);
+  }
+  for (const id of FIND_IDS) findGroup.add(finds.groups[id]);
+  home.group.add(findGroup);
+  // the passenger rides the comet: the home system's last POI
+  const comet = home.pois.find((poi) => poi.name === 'THE COMET')!.object;
+  const placePassenger = () => {
+    finds.groups.passenger.position.copy(comet.position);
+    finds.groups.passenger.position.y += PASSENGER_LIFT;
+  };
+  placePassenger();
+  home.group.updateMatrixWorld(true);
+
   // ---- phase ----
   let phase: EphemerisPhase = 'title';
   // seconds of the end screen's input lock still to run
   let lockTimer = 0;
   // Clock of the world's own motion (orbits, the comet). The stage's clock
-  // only ever runs forward; this one goes back to zero with every survey,
-  // so each attempt at a system finds its bodies where the last one did.
+  // only ever runs forward; this one goes back to zero with every loop, so
+  // each attempt at a system finds its bodies where the last one did.
   let worldTime = 0;
-  const survey = createSurvey();
-  let bests = readBests(storage, seedLabel);
+  const loop = createLoop(readLog(storage, seedLabel).logged);
+  let loopNumber = 0;
 
   // ---- input (components/ephemeris/flightInput) ----
   const input = createFlightInput(container, {
@@ -433,46 +491,34 @@ export function createEphemeris(
   let hudTimer = 0;
   setHudText(hud.contacts, '0 CONTACTS LOGGED');
 
-  // ---- survey ----
-  // The in-range, unscanned body of this frame's POI pass (the scan), and
-  // the nearest unscanned one whatever its range (the marker).
-  let pickPoi: Poi | null = null;
+  // ---- the loop ----
+  // Where each find is this frame, render-local (the passenger moves).
+  const findPos: Record<FindId, THREE.Vector3> = {
+    relay: new THREE.Vector3(),
+    wreck: new THREE.Vector3(),
+    bell: new THREE.Vector3(),
+    passenger: new THREE.Vector3(),
+    light: new THREE.Vector3(),
+  };
+  // the find in range and slow enough to scan, and the strongest signal
+  let pick: FindId | null = null;
   let pickDist = Infinity;
-  const pickCenter = new THREE.Vector3();
-  // Where the body being scanned was a frame ago, in absolute coordinates
+  const signal = { id: null as FindId | null, strength: 0, dist: Infinity, offNose: 0 };
+  // how many finds can be heard from here at all, ahead or not
+  let heard = 0;
+  // Where the find being scanned was a frame ago, in absolute coordinates
   // (a rebase must not read as motion): its velocity is what the ship's
-  // speed is measured against. Almost every body is at rest next to a
-  // ship; the home comet is not.
+  // speed is measured against. Every find is at rest but the passenger.
   const scanPrev = new THREE.Vector3();
   let scanPrevId = '';
   const bodyVelocity = new THREE.Vector3();
-  // The POI pass reads world matrices, which are those of the last render:
-  // the world as the PREVIOUS frame's update left it. So the step between
-  // two samples of a body took the previous frame's dt, not this one's.
-  let previousDt = 0;
-  // POI kinds, by id: ids are stable across sector rebuilds, and classifying
-  // reads names and decorations, which is not per-frame work
-  const kinds = new Map<string, ContactKind>();
-  const kindOf = (poi: Poi): ContactKind => {
-    const id = poi.id ?? poi.name;
-    let kind = kinds.get(id);
-    if (!kind) {
-      kind = contactKind(poi);
-      kinds.set(id, kind);
-    }
-    return kind;
-  };
-  let targetPoi: Poi | null = null;
-  let targetDist = Infinity;
-  const targetCenter = new THREE.Vector3();
-  // handed to the rules; reused, and refilled only when the body changes
-  const candidate: SurveyCandidate = { id: '', name: '', kind: 'anomaly', home: true };
+  // one-shot pings of the loop's set times
+  let bellAnnounced = false;
+  let darkAnnounced = false;
   const marker: MarkerPlacement = { x: 0, y: 0, onScreen: false, angle: 0 };
-  // the marker's target as of the last 10 Hz pass: its label is on the HUD
-  let markerDist = Infinity;
   const cameraInverse = new THREE.Quaternion();
   const markerPos = new THREE.Vector3();
-  let markerMarginY = MARKER_MARGIN_Y;
+  let locked = false;
 
   // Nearest bodies of the last completed HUD pass (one frame stale —
   // <50 units at max speed). `nearest` spans BOTH kinds and drives the HUD;
@@ -533,33 +579,24 @@ export function createEphemeris(
       // inside a diffuse volume — the deepest overlapping one sets the drag
       dragFactor = Math.min(dragFactor, diffuseDrag(d, poi.radius));
     }
-    if (!poi.id) return;
-    if (phase === 'drift') {
-      // FREE DRIFT: the first close approach logs the contact, as it always did
-      if (d < discoveryRange(poi.radius) && !discoveredIds.has(poi.id)) {
-        discoveredIds.add(poi.id);
-        pingTimer = 4;
-        setHudText(hud.ping, `NEW CONTACT · ${poi.name}`);
-        setHudText(hud.contacts, `${discoveredIds.size} CONTACT${discoveredIds.size === 1 ? '' : 'S'} LOGGED`);
-      }
-    } else if (phase === 'survey' && !survey.scannedIds.has(poi.id)) {
-      if (d < targetDist) {
-        targetDist = d;
-        targetPoi = poi;
-        targetCenter.copy(poiPos);
-      }
-      if (
-        d < scanRange(poi.radius, kindOf(poi), poi.solid && (poi.envelope ?? true)) &&
-        prefersCandidate(survey.scanId, pickPoi?.id ?? null, pickDist, poi.id, d)
-      ) {
-        pickPoi = poi;
-        pickDist = d;
-        pickCenter.copy(poiPos);
-      }
+    // FREE DRIFT: the first close approach logs the contact, as it always did
+    if (phase === 'drift' && poi.id && d < discoveryRange(poi.radius) && !discoveredIds.has(poi.id)) {
+      discoveredIds.add(poi.id);
+      pingTimer = 4;
+      setHudText(hud.ping, `NEW CONTACT · ${poi.name}`);
+      setHudText(hud.contacts, `${discoveredIds.size} CONTACT${discoveredIds.size === 1 ? '' : 'S'} LOGGED`);
     }
   };
 
   // ---- phase changes ----
+  // The dark belongs to the loop: anything else is lit as it always was.
+  const setDark = (amount: number) => {
+    const fog = scene.fog as THREE.FogExp2 | null;
+    if (fog) fog.density = FOG_DENSITY + (FOG_DARK - FOG_DENSITY) * amount;
+    stars.material.opacity = STAR_OPACITY * (1 - amount);
+    setHudStyle(hud.dark, '--dark', amount.toFixed(3));
+  };
+
   const setPhase = (next: EphemerisPhase, result: SurveyResult | null = null) => {
     phase = next;
     // whatever was held belongs to the phase that just ended
@@ -568,7 +605,11 @@ export function createEphemeris(
     pingTimer = 0;
     hud.ping.style.opacity = '0';
     setHudStyle(hud.scan, 'opacity', '0');
+    setHudStyle(hud.scanTick, 'opacity', '0');
     setHudStyle(hud.marker, 'opacity', '0');
+    // the finds are part of the loop's world; FREE DRIFT is the world as it was
+    findGroup.visible = next !== 'drift';
+    if (next !== 'closed') setDark(0);
     options.onPhase?.(next, result);
   };
 
@@ -614,23 +655,25 @@ export function createEphemeris(
     rig.shipBody.rotation.z = 0;
     placeShip(SPAWN.x, SPAWN.y, SPAWN.z, scratch3.copy(SPAWN).add(SPAWN_HEADING));
     if (mode === 'survey') {
-      // and a survey finds the world as the last attempt did: its clock
-      // goes back to zero, so the bodies are where they were
-      resetSurvey(survey);
-      markerDist = Infinity;
+      // and a loop finds the world as the last one did: its clock goes back
+      // to zero, so the bodies, the comet and its passenger are where they were
+      const log = beginLoop(storage, seedLabel);
+      loopNumber = log.loops;
+      resetLoop(loop, log.logged);
       scanPrevId = '';
+      bellAnnounced = darkAnnounced = false;
       worldTime = 0;
-      // the orbiters read the clock, so move them now: the first frame's
-      // nearest-body pass must not see the last run's positions
-      // (the comet drags a trail of its last COMET_TRAIL positions; that
-      // many steps lay the whole trail back on the comet, as on a fresh
-      // mount, so no line is drawn across the system to where it was)
+      // the orbiters read the clock, so move them now: the first frame must
+      // not see the last loop's positions (the comet drags a trail of its
+      // last COMET_TRAIL positions; that many steps lay the whole trail back
+      // on the comet, as on a fresh mount, so no line crosses the system)
       for (let i = 0; i < COMET_TRAIL; i++) home.update?.(0, 0);
       field.updateContents(0, 0);
+      placePassenger();
+      finds.update(0, 0, 0);
       scene.updateMatrixWorld(true);
-      bests = readBests(storage, seedLabel);
-      setHudText(hud.contacts, 'SCORE 0');
-      setHudText(hud.best, `BEST ${bests.seed}`);
+      setHudText(hud.contacts, `LOG ${loop.logged.size}/${FIND_IDS.length}`);
+      setHudText(hud.loop, `LOOP ${loopNumber}`);
     } else {
       setHudText(hud.contacts, '0 CONTACTS LOGGED');
     }
@@ -642,120 +685,148 @@ export function createEphemeris(
     setPhase('title');
   }
 
-  const closeSurvey = () => {
-    const recorded = recordScore(storage, seedLabel, survey.score);
-    bests = recorded;
-    const rarest = rarestContact(survey.scanned);
-    lockTimer = TUNE.RETRY_LOCK_SECONDS;
-    setHudText(hud.clock, formatClock(0));
-    setPhase('closed', {
-      score: survey.score,
-      contacts: survey.scanned.length,
-      rarest: rarest && { name: rarest.name, kind: CONTACT_KINDS[rarest.kind].label },
-      bests: recorded,
-    });
-  };
-
-  // ---- survey frame ----
+  // ---- the loop, per frame ----
   // Hands the rules this frame's facts and puts what they decide on the HUD.
-  const stepSurveyFrame = (dt: number, burning: boolean) => {
-    const pick: Poi | null = pickPoi;
-    if (pick && pick.id !== candidate.id) {
-      candidate.id = pick.id ?? '';
-      candidate.name = pick.name;
-      candidate.kind = kindOf(pick);
-      candidate.home = isHomeContact(candidate.id);
+  const stepLoopFrame = (dt: number) => {
+    const elapsed = elapsedOf(loop);
+    for (const id of FIND_IDS) finds.groups[id].getWorldPosition(findPos[id]);
+
+    // (getWorldPosition brings the matrices up to date: these are this
+    // frame's positions, after the world update, so the passenger's step
+    // between two samples took this frame's dt)
+
+    // which find is in range to scan; which signal is strongest ahead
+    forward.copy(FORWARD).applyQuaternion(ship.quaternion);
+    pick = null;
+    pickDist = Infinity;
+    signal.id = null;
+    signal.strength = 0;
+    heard = 0;
+    for (const id of listening(loop)) {
+      scratchFind.copy(findPos[id]).sub(ship.position);
+      const d = scratchFind.length();
+      if (d < FINDS[id].range && prefersCandidate(loop.scanId, pick, pickDist, id, d)) {
+        pick = id;
+        pickDist = d;
+      }
+      if (!isHeard(loop, id, d)) continue;
+      heard += 1;
+      const offNose = d > 1e-6 ? Math.acos(Math.max(-1, Math.min(1, forward.dot(scratchFind) / d))) : 0;
+      const strength = signalStrength(offNose, d);
+      if (strength > signal.strength) {
+        signal.id = id;
+        signal.strength = strength;
+        signal.dist = d;
+        signal.offNose = offNose;
+      }
     }
-    // the body's own velocity, from where it was a frame ago
+
+    // the find's own velocity, from where it was a frame ago
     bodyVelocity.set(0, 0, 0);
     if (pick) {
-      scratch.copy(pickCenter).add(origin);
-      if (scanPrevId === candidate.id && previousDt > 0) {
-        bodyVelocity.copy(scratch).sub(scanPrev).divideScalar(previousDt);
+      scratch.copy(findPos[pick]).add(origin);
+      if (scanPrevId === pick && dt > 0) {
+        bodyVelocity.copy(scratch).sub(scanPrev).divideScalar(dt);
       }
       scanPrev.copy(scratch);
-      scanPrevId = candidate.id;
+      scanPrevId = pick;
     } else {
       scanPrevId = '';
     }
-    bodyMoving = bodyVelocity.lengthSq() > TUNE.SCAN_MAX_SPEED ** 2;
-    const logged = stepSurvey(survey, dt, {
-      burning,
+    const logged = stepLoop(loop, dt, {
       speed: scratch.copy(velocity).sub(bodyVelocity).length(),
-      candidate: pick ? candidate : null,
+      candidate: pick,
     });
+
     if (logged) {
+      const charted = recordFind(storage, seedLabel, logged);
+      pingTimer = 5;
+      setHudText(hud.ping, `${FINDS[logged].label} LOGGED · ${findNote(logged, plan.places)}`);
+      setHudText(hud.contacts, `LOG ${loop.logged.size}/${FIND_IDS.length}`);
+      if (loop.closed) {
+        closeLoop(charted);
+        return;
+      }
+    }
+    if (loop.closed) {
+      closeLoop(null);
+      return;
+    }
+
+    // the set times: a signal that starts mid-loop, and the dark
+    if (!bellAnnounced && elapsed >= FINDS.bell.opensAt && !loop.logged.has('bell')) {
+      bellAnnounced = true;
       pingTimer = 4;
-      setHudText(hud.ping, `LOGGED · ${logged.name} · ${CONTACT_KINDS[logged.kind].label} +${logged.value}`);
-      setHudText(hud.contacts, `SCORE ${survey.score}`);
-      // the body just logged is still this frame's marker target
-      if (targetPoi === pick) targetPoi = null;
+      // told of it, the bell can be followed; not, it is something to look for
+      setHudText(hud.ping, isTold(loop, 'bell') ? 'THE BELL IS ANSWERING' : 'SOMETHING FAR OFF IS ANSWERING');
     }
-    if (survey.closed) {
-      closeSurvey();
-      return;
+    if (!darkAnnounced && elapsed >= TUNE.DARK_STARTS) {
+      darkAnnounced = true;
+      pingTimer = 4;
+      setHudText(hud.ping, 'THE DARK IS COMING IN');
     }
-    // the ring: shown while a body is in range, filling at scan speed
-    if (survey.scanId) {
-      setHudStyle(hud.scan, 'opacity', '1');
-      setHudStyle(hud.scanArc, 'stroke-dashoffset', (100 - survey.scanProgress * 100).toFixed(1));
-      setHudText(
-        hud.scanLabel,
-        survey.tooFast
-          ? bodyMoving
-            ? 'TOO FAST · KEEP PACE WITH IT'
-            : `TOO FAST · SLOW BELOW ${TUNE.SCAN_MAX_SPEED} km/s`
-          : `SCANNING · ${candidate.name} · +${contactValue(candidate.kind, candidate.home)}`,
-      );
+    setDark(darkness(elapsed));
+  };
+
+  const closeLoop = (charted: ChartResult | null) => {
+    lockTimer = TUNE.RETRY_LOCK_SECONDS;
+    setHudText(hud.clock, formatClock(loop.timeLeft));
+    setPhase('closed', {
+      loop: loopNumber,
+      loggedNow: [...loop.loggedNow],
+      logged: FIND_IDS.filter((id) => loop.logged.has(id)),
+      charted,
+    });
+    // the end screen sits in the dark, or in the light of a charted system
+    setDark(loop.charted ? 0 : 1);
+  };
+
+  // The 10 Hz readouts of a loop: clock and the line under the reticle.
+  const writeLoopReadouts = () => {
+    setHudText(hud.clock, formatClock(loop.timeLeft));
+    setHudWarn(hud.clock, loop.timeLeft <= CLOCK_WARN_SECONDS);
+    const speed = velocity.length();
+    let line: string;
+    if (loop.scanId) {
+      // a moving find (the passenger) is matched, not stopped at: say which way
+      const chasing = bodyVelocity.lengthSq() > 1;
+      line = !loop.tooFast
+        ? `LOGGING · ${FINDS[loop.scanId].label}`
+        : chasing && velocity.dot(bodyVelocity) < bodyVelocity.lengthSq()
+          ? 'TOO SLOW · BURN TO KEEP PACE'
+          : 'TOO FAST · COME OFF THE BURN';
+    } else if (signal.id) {
+      const cells = Math.max(1, Math.round(signal.strength * SIGNAL_CELLS));
+      const bars = '▮'.repeat(cells) + '▯'.repeat(SIGNAL_CELLS - cells);
+      const brake =
+        signal.id !== 'passenger' && signal.dist - FINDS[signal.id].range < brakingDistance(speed) + BRAKE_MARGIN
+          ? ' · COME OFF THE BURN'
+          : '';
+      line = `${FINDS[signal.id].label} ${bars} ${formatDistance(signal.dist)}${brake}`;
+    } else if (heard > 0) {
+      line = 'NO SIGNAL AHEAD · TURN TO SEARCH';
     } else {
-      setHudStyle(hud.scan, 'opacity', '0');
+      line = 'SILENCE';
     }
+    setHudText(hud.scanLabel, line);
+    // the bracket is the find's place; the line over the reticle already names it
+    setHudText(hud.markerLabel, '');
   };
 
-  // The 10 Hz readouts of a survey: clock, fuel and what the marker says.
-  const writeSurveyReadouts = () => {
-    setHudText(hud.clock, formatClock(survey.timeLeft));
-    setHudWarn(hud.clock, survey.timeLeft <= CLOCK_WARN_SECONDS);
-    const cells = Math.ceil(survey.fuel * FUEL_CELLS - 1e-9);
-    setHudStyle(hud.fuelFill, 'width', `${(cells / FUEL_CELLS) * 100}%`);
-    setHudText(hud.fuelLabel, survey.fuel > 0 ? 'FUEL' : 'FUEL OUT · SCAN TO REFUEL');
-    setHudWarn(hud.fuelLabel, survey.fuel < FUEL_WARN);
-
-    // keep the marker above the BURN zone while that is on screen
-    const zone = options.burnZone?.getBoundingClientRect();
-    markerMarginY = Math.max(
-      MARKER_MARGIN_Y,
-      zone && zone.height > 0 ? container.getBoundingClientRect().bottom - zone.top + 28 : 0,
-    );
-
-    // what the marker says: the nearest unscanned body in the streamed
-    // window (27 sectors around the ship, so there is always one)
-    const target: Poi | null = targetPoi;
-    markerDist = target ? targetDist : Infinity;
-    if (target) labelMarker(target);
-  };
-
-  // The marker's two lines, and which body they were written for.
-  let markerLabelId = '';
-  const labelMarker = (target: Poi) => {
-    markerLabelId = target.id ?? '';
-    setHudText(hud.markerLabel, `${CONTACT_KINDS[kindOf(target)].label}\n${formatDistance(targetDist)}`);
-  };
-
-  // Per frame: where the marker sits. Bodies orbit and the camera turns,
-  // so the position is this frame's. The label waits for the 10 Hz pass,
-  // except when the target changes: a marker never names the body before.
-  const drawMarker = () => {
-    // nothing to point at, or the target is the body under the scan ring,
-    // which already names it at screen centre
-    const target: Poi | null = targetPoi;
-    if (!target || markerDist === Infinity || target.id === survey.scanId) {
+  // Per frame, on the settled camera: the reticle, its tick toward the
+  // signal, and the bracket on a find the ship is locked on.
+  const drawReticle = () => {
+    setHudStyle(hud.scan, 'opacity', '1');
+    setHudStyle(hud.scanArc, 'stroke-dashoffset', (100 - loop.scanProgress * 100).toFixed(1));
+    const id = signal.id;
+    if (!id || loop.scanId) {
+      setHudStyle(hud.scanTick, 'opacity', '0');
       setHudStyle(hud.marker, 'opacity', '0');
+      locked = false;
       return;
     }
-    if (target.id !== markerLabelId) labelMarker(target);
     markerPos
-      .copy(targetCenter)
+      .copy(findPos[id])
       .sub(camera.position)
       .applyQuaternion(cameraInverse.copy(camera.quaternion).invert());
     const width = container.clientWidth;
@@ -767,16 +838,21 @@ export function createEphemeris(
       markerPos.z,
       Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2),
       width / Math.max(1, height),
-      Math.max(0.1, 1 - (2 * MARKER_MARGIN_X) / Math.max(1, width)),
-      Math.max(0.1, 1 - (2 * markerMarginY) / Math.max(1, height)),
+      0.9,
+      0.9,
     );
+    // the tick: which way round the reticle the signal is, as strong as it reads
+    setHudStyle(hud.scanTick, 'opacity', (0.25 + 0.75 * signal.strength).toFixed(2));
+    hud.scanTick.style.transform = `rotate(${(-marker.angle).toFixed(3)}rad)`;
+    locked = marker.onScreen && (signal.strength >= LOCK_STRENGTH || signal.dist < LOCK_DISTANCE);
+    if (!locked) {
+      setHudStyle(hud.marker, 'opacity', '0');
+      return;
+    }
     setHudStyle(hud.marker, 'opacity', '1');
     hud.marker.style.transform =
       `translate(${((marker.x * 0.5 + 0.5) * width).toFixed(1)}px, ${((0.5 - marker.y * 0.5) * height).toFixed(1)}px)`;
-    // a bracket on the target itself, an arrow toward it on the edge
-    // (CSS rotation is clockwise and screen y runs down: hence the minus)
-    setHudText(hud.markerGlyph, marker.onScreen ? '◇' : '▶');
-    hud.markerGlyph.style.transform = marker.onScreen ? '' : `rotate(${(-marker.angle).toFixed(3)}rad)`;
+    setHudText(hud.markerGlyph, '◇');
   };
 
   // ---- simulation loop ----
@@ -788,8 +864,6 @@ export function createEphemeris(
   const scratch3 = new THREE.Vector3();
   const shipAbs = new THREE.Vector3();
   let disposed = false;
-  // the body being scanned is itself moving too fast to scan from rest
-  let bodyMoving = false;
   // the burn that fired last frame, for the debug handle
   let lastBoost = false;
   const rebase = new THREE.Vector3();
@@ -812,12 +886,11 @@ export function createEphemeris(
     // cruise: the world keeps moving, and no hand is on the controls.
     const flying = phase === 'survey' || phase === 'drift';
     if (flying) {
-      input.readSteer(steer);
+      input.readSteer(steer, dt);
     } else {
       steer.x = steer.y = 0;
     }
-    // an empty tank cruises until the next scan refuels it
-    const boost = flying && input.burnHeld() && (phase === 'drift' || canBurn(survey));
+    const boost = flying && input.burnHeld();
     lastBoost = boost;
     rig.steer(steer.x, steer.y, dt);
 
@@ -862,8 +935,15 @@ export function createEphemeris(
       beaconCellKey = ''; // beacon dots are render-local — re-derive them
     }
 
-    // world updates
+    // world updates (the passenger rides the comet, the finds turn)
     home.update?.(dt, worldTime);
+    placePassenger();
+    if (phase === 'survey' || phase === 'closed' || phase === 'title') {
+      const elapsed = phase === 'survey' ? elapsedOf(loop) : 0;
+      const bellLit = phase === 'survey' && isOpen('bell', elapsed) && !loop.logged.has('bell') ? 1 : 0;
+      const lightLit = phase === 'survey' && !loop.logged.has('light') ? darkness(elapsed) > 0 ? Math.min(1, 0.4 + darkness(elapsed)) : 0 : 0;
+      finds.update(dt, bellLit, lightLit);
+    }
     field.sync(shipAbs.copy(ship.position).add(origin));
     refreshBeacons();
     field.updateContents(dt, worldTime);
@@ -890,16 +970,11 @@ export function createEphemeris(
     nearestSolid.lod = null as Poi['lod'] | null;
     nearestSolid.anchor = null as THREE.Object3D | null;
     dragFactor = 1;
-    pickPoi = null;
-    pickDist = Infinity;
-    targetPoi = null;
-    targetDist = Infinity;
     for (const poi of home.pois) considerPoi(poi);
     field.forEachPoi(considerPoi);
 
-    // the survey: one step of the rules, fed from the pass above
-    if (phase === 'survey') stepSurveyFrame(dt, boost);
-    previousDt = dt;
+    // the loop: one step of the rules, fed from this frame's measurements
+    if (phase === 'survey') stepLoopFrame(dt);
 
     // surface-horizon leveling: inside an enveloped body's ring-cue band the
     // roll leveler's reference up eases onto the local surface normal, so a
@@ -955,7 +1030,7 @@ export function createEphemeris(
           ? 'HOME SYSTEM'
           : `${cell.content ? `${cell.content.name} · ` : ''}${cell.x}.${cell.y}.${cell.z}`,
       );
-      if (phase === 'survey') writeSurveyReadouts();
+      if (phase === 'survey') writeLoopReadouts();
     }
 
     // terrain-following soft altitude floor: probing below FLOOR_PROBE_RADII
@@ -1008,8 +1083,8 @@ export function createEphemeris(
       camera.updateProjectionMatrix();
     }
 
-    // the marker rides the settled camera, so it never trails its target
-    if (phase === 'survey') drawMarker();
+    // the reticle rides the settled camera, so it never trails its target
+    if (phase === 'survey') drawReticle();
 
     // LOD after the camera settles: rung selection, dissolves, budgeted jobs
     lod.update(camera, container.clientHeight, dt);
@@ -1020,26 +1095,30 @@ export function createEphemeris(
     /** Teleport to ABSOLUTE coordinates (the origin re-anchors under you). */
     warp: (x: number, y: number, z: number, lookX?: number, lookY?: number, lookZ?: number) => void;
     /** POIs of the home system + active sectors, in absolute coordinates. */
-    pois: () => Array<{ name: string; x: number; y: number; z: number; radius: number; id: string; kind: ContactKind; solid: boolean; envelope: boolean }>;
+    pois: () => Array<{ name: string; x: number; y: number; z: number; radius: number; id: string; solid: boolean; envelope: boolean }>;
+    /** The day's finds, where they are now in absolute coordinates, and whether each answers. */
+    finds: () => Array<{ id: FindId; x: number; y: number; z: number; open: boolean; logged: boolean }>;
     /**
-     * The game as a player sees it, for scripted play: the phase, the
-     * survey's numbers, the speed, and the marker (NDC, y up) with its
-     * target's distance.
+     * The game as a player sees it, for scripted play: the phase, the loop's
+     * numbers, the speed, and the strongest signal ahead.
      */
     state: () => {
       phase: EphemerisPhase;
       timeLeft: number;
-      fuel: number;
-      score: number;
-      scanned: string[];
-      scanId: string | null;
+      loop: number;
+      logged: FindId[];
+      loggedNow: FindId[];
+      scanId: FindId | null;
       scanProgress: number;
       tooFast: boolean;
-      /** Speed of the body being scanned, as the sim estimates it (0 with none). */
+      /** Speed of the find being scanned, as the sim estimates it (0 with none). */
       bodySpeed: number;
       speed: number;
       burning: boolean;
-      marker: { x: number; y: number; onScreen: boolean; dist: number } | null;
+      dark: number;
+      /** The strongest signal ahead; `angle` is where the reticle's tick points (radians, 0 = right, counter-clockwise). */
+      signal: { id: FindId; strength: number; dist: number; offNose: number; angle: number } | null;
+      locked: boolean;
     };
     /** Current floating-origin offset (absolute doubles). */
     origin: () => { x: number; y: number; z: number };
@@ -1075,7 +1154,6 @@ export function createEphemeris(
           z: poiPos.z + origin.z,
           radius: poi.radius,
           id: poi.id ?? '',
-          kind: kindOf(poi),
           solid: poi.solid,
           envelope: poi.solid && (poi.envelope ?? true),
         });
@@ -1085,22 +1163,38 @@ export function createEphemeris(
       return all;
     },
     origin: () => ({ x: origin.x, y: origin.y, z: origin.z }),
+    finds: () => {
+      const elapsed = elapsedOf(loop);
+      return FIND_IDS.map((id) => {
+        finds.groups[id].getWorldPosition(scratchFind);
+        return {
+          id,
+          x: scratchFind.x + origin.x,
+          y: scratchFind.y + origin.y,
+          z: scratchFind.z + origin.z,
+          open: isOpen(id, elapsed),
+          logged: loop.logged.has(id),
+        };
+      });
+    },
     state: () => ({
       phase,
-      timeLeft: survey.timeLeft,
-      fuel: survey.fuel,
-      score: survey.score,
-      scanned: survey.scanned.map((contact) => contact.id),
-      scanId: survey.scanId,
-      scanProgress: survey.scanProgress,
-      tooFast: survey.tooFast,
+      timeLeft: loop.timeLeft,
+      loop: loopNumber,
+      logged: FIND_IDS.filter((id) => loop.logged.has(id)),
+      loggedNow: [...loop.loggedNow],
+      scanId: loop.scanId,
+      scanProgress: loop.scanProgress,
+      tooFast: loop.tooFast,
       bodySpeed: bodyVelocity.length(),
       speed: velocity.length(),
       burning: lastBoost,
-      marker:
-        phase === 'survey' && targetPoi && markerDist < Infinity
-          ? { x: marker.x, y: marker.y, onScreen: marker.onScreen, dist: markerDist }
+      dark: phase === 'survey' ? darkness(elapsedOf(loop)) : 0,
+      signal:
+        phase === 'survey' && signal.id
+          ? { id: signal.id, strength: signal.strength, dist: signal.dist, offNose: signal.offNose, angle: marker.angle }
           : null,
+      locked,
     }),
     attitude: () => ({
       quaternion: {
@@ -1128,6 +1222,7 @@ export function createEphemeris(
     if (globalHost.__EPHEMERIS === debugHandle) delete globalHost.__EPHEMERIS;
     // first: no key, button or thumb may reach a sim that is being torn down
     input.dispose();
+    home.group.remove(findGroup);
     field.dispose(); // unregisters sector LOD bodies via onContentRemoved
     home.dispose();
     lod.dispose();
@@ -1138,5 +1233,5 @@ export function createEphemeris(
     stage.dispose();
   };
 
-  return { start, menu, dispose };
+  return { start, menu, places: plan.places, dispose };
 }

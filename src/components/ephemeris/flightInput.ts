@@ -1,4 +1,4 @@
-import { burnKeysDown, resolveSteer } from 'engine/core/flight';
+import { burnKeysDown, KEY_STEER, resolveSteer } from 'engine/core/flight';
 import { createKeyTracker } from 'engine/core/keyTracker';
 import { createListenerGroup } from 'engine/core/listenerGroup';
 import { pointerToNdc } from 'engine/core/pointerNdc';
@@ -7,8 +7,22 @@ import { pointerToNdc } from 'engine/core/pointerNdc';
 export const STICK_RADIUS = 56;
 /** A thumb this many CSS pixels outside the BURN zone's border still burns. */
 export const BURN_ZONE_SLOP = 12;
+/**
+ * Seconds a held steering key takes to reach full deflection. A tap is a
+ * nudge (100 ms: a quarter of the way), a hold is a turn (300 ms: three
+ * quarters). The user, after the first arcade game: "pressing right
+ * immediately changes the speed and goes too fast to the right".
+ */
+export const KEY_RAMP_SECONDS = 0.4;
+/** A released key's deflection falls back to zero in this many seconds. */
+export const KEY_RELEASE_SECONDS = 0.15;
+/**
+ * Fastest change of the steer the ship receives, per second, whoever steers.
+ * A mouse flicked across the screen or a handover from the mouse to the keys
+ * reaches the ship as a ramp (0 to full in a fifth of a second), never a jump.
+ */
+export const STEER_SLEW = 5;
 
-const STEER_KEYS = ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'KeyA', 'KeyD', 'KeyW', 'KeyS'];
 /** Keys that never start or retry a run: they belong to the browser and the page. */
 const PASSIVE_KEYS = /^(Tab|Escape|CapsLock|NumLock|ScrollLock|ContextMenu|Shift|Control|Alt|Meta|OS|F\d+)/;
 
@@ -29,8 +43,12 @@ export interface FlightInputOptions {
 }
 
 export interface FlightInput {
-  /** Writes the frame's steer into `out`: both axes in [-1, 1], positive y is nose down. */
-  readSteer(out: { x: number; y: number }): void;
+  /**
+   * Writes the frame's steer into `out`: both axes in [-1, 1], positive y is
+   * nose down. `dt` is the frame's length in seconds: keys ramp, and every
+   * change is rate limited (`STEER_SLEW`), so call it once per frame.
+   */
+  readSteer(out: { x: number; y: number }, dt: number): void;
   /** A burn is held: the mouse button, Space, or a thumb on the BURN zone. */
   burnHeld(): boolean;
   /** Drops everything held (keys, button, thumbs) and centres the stick. */
@@ -76,6 +94,14 @@ export function createFlightInput(container: HTMLElement, options: FlightInputOp
   let burnTouch: number | null = null;
   // the pointer that steers when the keys do not: the last of the two to act
   let touchSteers = false;
+  // how far each key axis has ramped, 0..1, and which way it last pushed
+  const keyRamp = { x: 0, y: 0 };
+  const keyDir = { x: 0, y: 0 };
+  // the steer the ship got last frame, which the next one moves on from
+  const current = { x: 0, y: 0 };
+  // scratch: what the device that steers asks for this frame
+  const target = { x: 0, y: 0 };
+  const NO_KEYS: Record<string, boolean> = {};
 
   // Keys that were down at a release. They count again after a key-up or a
   // fresh press: the keyboard's auto-repeat of a key that started a run (or
@@ -100,6 +126,9 @@ export function createFlightInput(container: HTMLElement, options: FlightInputOp
     parked.x = parked.y = 0;
     keysSteer = false;
     touchSteers = false;
+    keyRamp.x = keyRamp.y = 0;
+    keyDir.x = keyDir.y = 0;
+    current.x = current.y = 0;
   };
 
   const listeners = createListenerGroup();
@@ -252,23 +281,46 @@ export function createFlightInput(container: HTMLElement, options: FlightInputOp
   listeners.add(document, 'visibilitychange', onVisibilityChange);
 
   return {
-    readSteer(out) {
-      let keyHeld = false;
-      for (const code of STEER_KEYS) {
-        if (keys[code]) { keyHeld = true; break; }
-      }
-      if (keyHeld) {
+    readSteer(out, dt) {
+      const step = Math.max(0, Math.min(dt, 0.1));
+      const kx = (keys.ArrowRight || keys.KeyD ? 1 : 0) - (keys.ArrowLeft || keys.KeyA ? 1 : 0);
+      // positive steer y is nose down: S and ArrowDown
+      const ky = (keys.ArrowDown || keys.KeyS ? 1 : 0) - (keys.ArrowUp || keys.KeyW ? 1 : 0);
+      if (kx || ky) {
         keysSteer = true;
         parked.x = pointer.x;
         parked.y = pointer.y;
       } else if (keysSteer && (pointer.x !== parked.x || pointer.y !== parked.y)) {
         keysSteer = false;
       }
+      // each key axis ramps up while held and falls back once released; a
+      // reversal starts the ramp again from zero on the new side
+      for (const axis of ['x', 'y'] as const) {
+        const held = axis === 'x' ? kx : ky;
+        if (held !== 0) {
+          if (held !== keyDir[axis]) keyRamp[axis] = 0;
+          keyDir[axis] = held;
+          keyRamp[axis] = Math.min(1, keyRamp[axis] + step / KEY_RAMP_SECONDS);
+        } else {
+          keyRamp[axis] = Math.max(0, keyRamp[axis] - step / KEY_RELEASE_SECONDS);
+        }
+      }
       // resolveSteer takes NDC (y up) and owns the flip to the screen-down
       // steer sense, so the stick's screen-down y goes in negated
-      if (keysSteer) resolveSteer(out, 0, 0, keys);
-      else if (touchSteers) resolveSteer(out, stick.x, -stick.y, keys);
-      else resolveSteer(out, pointer.x, pointer.y, keys);
+      if (keysSteer) {
+        target.x = keyDir.x * keyRamp.x * KEY_STEER;
+        target.y = keyDir.y * keyRamp.y * KEY_STEER;
+      } else if (touchSteers) {
+        resolveSteer(target, stick.x, -stick.y, NO_KEYS);
+      } else {
+        resolveSteer(target, pointer.x, pointer.y, NO_KEYS);
+      }
+      // whoever steers, the ship's steer moves at most STEER_SLEW per second
+      const most = STEER_SLEW * step;
+      current.x += Math.max(-most, Math.min(most, target.x - current.x));
+      current.y += Math.max(-most, Math.min(most, target.y - current.y));
+      out.x = current.x;
+      out.y = current.y;
     },
     burnHeld: () => mouseDown || burnTouch !== null || burnKeysDown(keys),
     release,
