@@ -207,7 +207,9 @@ export function createView({ THREE, createShipBody, game, aspect }) {
     updateTowers();
     updateGates();
     ship.position.set(game.x, game.y, 0);
-    ship.rotation.z = -game.vx / game.vxMax * 0.67; // the same bank at any sideways speed
+    // The same bank at any sideways speed in a run; the title glide's own motion
+    // does not depend on the dial, so neither does its bank.
+    ship.rotation.z = -game.vx / (game.state === 'menu' ? TUNE.VX : game.vxMax) * 0.67;
     ship.rotation.x = game.vy * 0.006;
     const ease = rate => Math.min(1, dt * rate);
     camera.position.x += (game.x - camera.position.x) * ease(5);

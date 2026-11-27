@@ -5,7 +5,7 @@ import { CONTROL, createKeyAxis, curve } from '../../public/arcade/meridian/cont
 import { BEST_KEY, TUNE, VX_DIAL, createGame, sidewaysSpeedFrom } from '../../public/arcade/meridian/game.js';
 import { createView } from '../../public/arcade/meridian/view.js';
 import {
-  BLEND, CITY, HALF, LANES, LANE_W, ROW_D, SEA, SECTORS, SHARDS, SPAN, createWorld, laneX, mulberry32, walkStep,
+  BLEND, CITY, HALF, LANES, LANE_W, ROW_D, SEA, SECTORS, SHARDS, SPAN, createWorld, laneX, layCity, mulberry32, walkStep,
 } from '../../public/arcade/meridian/world.js';
 
 const CENTRE = { x: 0, y: 0 }, UP = { x: 0, y: -1 }, DOWN = { x: 0, y: 1 };
@@ -474,7 +474,7 @@ describe('steering', () => {
       }
     });
 
-  it.each([30, 36, 48, 64])('at any dial speed (%i) a player who moves when the next lane opens clears every city', vx => {
+  it.each([30, 36, 48, 64, 80])('at any dial speed (%i) a player who moves when the next lane opens clears every city', vx => {
     for (const lap of [1, 3, 5, 9]) {
       for (let seed = 1; seed <= 40; seed++) {
         const { game, row } = flyCity(lap, seed, 'open', vx);
@@ -495,6 +495,30 @@ describe('steering', () => {
 });
 
 describe('the world', () => {
+  it('keeps every promise on the last draw too, when the dice would starve a lane of its wall', () => {
+    // Dice that never vary make the walk return to the same lanes; those draws fail
+    // and would be drawn again. The twelfth draw is kept whatever happens: it must
+    // still wall every lane once, never on a free lane, the next lane, or (on the
+    // wide laps) the lane the row before it used.
+    const dice = { 'all 0': () => 0, 'all 0.5': () => 0.5, 'all 0.99': () => 0.99 };
+    const starved: string[] = [];
+    for (const [name, rng] of Object.entries(dice)) {
+      for (const lap of [1, 2, 3, 9]) {
+        const ordinal = (lap - 1) * SECTORS.length + CITY;
+        if (!layCity({ ordinal, lap, rng, keep: false })) starved.push(`${name} lap ${lap}`);
+        const rows = layCity({ ordinal, lap, rng, keep: true });
+        expect(rows, `${name}, lap ${lap}`).not.toBeNull();
+        const walls = rows.flatMap((row: any) => row.towers.filter((t: any) => t.w === LANE_W).map((t: any) => ({ row, lane: t.lane })));
+        expect(walls.map(wall => wall.lane).sort(), `${name}, lap ${lap}`).toEqual([...Array(LANES).keys()]);
+        rows.forEach((row: any, k: number) => {
+          expect(row.towers.some((t: any) => t.lane === row.corridor || t.lane === row.upcoming), `${name}, lap ${lap}, row ${k}`).toBe(false);
+          if (lap < 3 && k > 0) expect(row.towers.some((t: any) => t.lane === rows[k - 1].corridor)).toBe(false);
+        });
+      }
+    }
+    expect(starved.length).toBeGreaterThan(4); // these dice do reach the last-draw path
+  });
+
   it('moves the free lane every 2 rows on laps 1-2 and every 3 after, with the next lane open all the way', () => {
     expect([1, 2, 3, 5, 9].map(walkStep)).toEqual([2, 2, 3, 3, 3]);
     for (const lap of [1, 2, 3, 9]) {

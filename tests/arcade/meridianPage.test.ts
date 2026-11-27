@@ -31,6 +31,8 @@ class Renderer {
 let page: ReturnType<typeof mount> | undefined;
 /** The shipped page: its real HUD markup and wiring, with only the GPU replaced. */
 function open(best?: number, search = '') {
+  // One page at a time: a mount left behind would keep its loop and listeners.
+  page?.dispose(); page = undefined;
   document.body.innerHTML = read('meridian/index.html').match(/<div class="hud">[\s\S]*?(?=<script)/)![0];
   const values = new Map<string, string>();
   if (best) values.set(BEST_KEY, String(best));
