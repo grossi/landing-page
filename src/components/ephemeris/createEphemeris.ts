@@ -30,6 +30,7 @@ import {
   type Schedule,
   type StorageLike,
   type SurveySeed,
+  withMemory,
 } from 'components/ephemeris/survey';
 import {
   CRUISE_FOV,
@@ -132,7 +133,11 @@ export interface SurveyResult {
 export interface EphemerisOptions {
   /** The system to fly. Default: a new random one per mount. */
   seed?: SurveySeed;
-  /** Where the day's log is kept. Default: nowhere. */
+  /**
+   * Where the day's log is kept. Pass the same store the page reads (a
+   * `withMemory` one), so a log survives the loop even without storage.
+   * Default: this mount's memory.
+   */
   storage?: StorageLike | null;
   /** The BURN zone for the second thumb on a phone (see createFlightInput). */
   burnZone?: HTMLElement | null;
@@ -296,7 +301,7 @@ export function createEphemeris(
   const randomSeed = Math.floor(Math.random() * 2 ** 31);
   const { seed: worldSeed, label: seedLabel } =
     options.seed ?? { seed: randomSeed, label: String(randomSeed) };
-  const storage = options.storage ?? null;
+  const storage = options.storage ?? withMemory(null);
 
   // ---- LOD ladder for planets/stars (screen-space rungs, cross-dissolve) ----
   // surfaceHaze: skimming a body fades its far limb; surfaceShells: skim-band

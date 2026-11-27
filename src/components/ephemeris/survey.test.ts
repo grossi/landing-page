@@ -31,6 +31,7 @@ import {
   TUNE,
   type FindId,
   type LoopState,
+  withMemory,
 } from 'components/ephemeris/survey';
 
 /** Steps `seconds` of a loop in frames of `dt`, with one frame's facts held throughout. */
@@ -438,6 +439,33 @@ describe('the day\'s log', () => {
     });
     expect(readLog(damaged, 'x')).toEqual({ logged: ['bell', 'relay'], loops: 0, best: 0 });
     expect(readCharted(memoryStorage({ [CHARTED_KEY]: 'abc' }))).toBe(0);
+  });
+
+  it('with this visit\'s memory in front, survives the loop where storage is blocked or full', () => {
+    const blocked = withMemory({
+      getItem: () => { throw new Error('blocked'); },
+      setItem: () => { throw new Error('blocked'); },
+    });
+    const full = withMemory({ getItem: () => null, setItem: () => { throw new Error('quota'); } });
+    for (const store of [blocked, full, withMemory(null)]) {
+      beginLoop(store, 'x');
+      for (const id of FIND_IDS.slice(0, 3)) recordFind(store, 'x', id);
+      // the next loop carries them
+      expect(beginLoop(store, 'x')).toEqual({ logged: ['relay', 'wreck', 'bell'], loops: 2, best: 0 });
+      recordFind(store, 'x', 'passenger');
+      expect(recordFind(store, 'x', 'light')).toEqual({ loops: 2, best: 2, newBest: true, charted: 1 });
+      expect(forgetLog(store, 'x')).toEqual({ logged: [], loops: 0, best: 2 });
+      expect(readLog(store, 'x').logged).toEqual([]);
+    }
+  });
+
+  it('with working storage, memory changes nothing: earlier visits are read, writes reach it', () => {
+    const storage = memoryStorage({ [logKeyFor('x')]: JSON.stringify({ logged: ['relay'], loops: 1, best: 0 }) });
+    const store = withMemory(storage);
+    expect(readLog(store, 'x').logged).toEqual(['relay']);
+    beginLoop(store, 'x');
+    recordFind(store, 'x', 'wreck');
+    expect(JSON.parse(storage.data.get(logKeyFor('x'))!)).toEqual({ logged: ['relay', 'wreck'], loops: 2, best: 0 });
   });
 
   it('works without storage and with storage that throws', () => {

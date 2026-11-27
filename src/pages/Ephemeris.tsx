@@ -14,6 +14,7 @@ import {
   FINDS,
   forgetLog,
   readCharted,
+  withMemory,
   readLog,
   resolveSeed,
   type DayLog,
@@ -180,7 +181,9 @@ const Ephemeris = () => {
   );
 
   const seed = useMemo(() => resolveSeed(window.location.search, new Date()), []);
-  const storage = useMemo(safeStorage, []);
+  // one store for the page and the sim, so the log they read is the same
+  // even where the browser keeps nothing (see withMemory)
+  const storage = useMemo(() => withMemory(safeStorage()), []);
   // read again whenever the title or the result comes up
   const log: DayLog = useMemo(() => readLog(storage, seed.label), [storage, seed, phase, forgotten]);
   const daysCharted = useMemo(() => readCharted(storage), [storage, phase]);

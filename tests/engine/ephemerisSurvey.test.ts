@@ -458,13 +458,43 @@ describe('loops', () => {
     expect(hud.scan.style.opacity).toBe('0');
   });
 
-  it('runs without storage', async () => {
-    mount({ storage: null });
-    await fake.advance(2);
-    game.start('survey');
-    park('relay');
-    await fake.advance(seconds(2));
-    expect(state().logged).toEqual(['relay']);
+  it('with storage blocked, the log still survives the loop and charting still charts', async () => {
+    const { withMemory } = await import('components/ephemeris/survey');
+    const blocked = withMemory({
+      getItem: () => { throw new Error('blocked'); },
+      setItem: () => { throw new Error('blocked'); },
+    });
+    for (const store of [null, blocked]) {
+      mount({ storage: store });
+      await fake.advance(2);
+      game.start('survey');
+      for (const id of ['relay', 'wreck'] as const) {
+        park(id);
+        await fake.advance(seconds(2));
+      }
+      // the passenger has to be matched in speed: let the pilot fly it
+      const pilot = createPilot(debug(), pilotControls(container), { mode: 'knows' });
+      for (let i = 0; i < 60 * 30 && !state().logged.includes('passenger'); i++) {
+        pilot.step();
+        await fake.advance(1, 1 / 30);
+      }
+      key('keyup', 'Space');
+      expect(state().logged).toEqual(['relay', 'wreck', 'passenger']);
+      game.start('survey');
+      await fake.advance(1);
+      expect(state()).toMatchObject({ loop: 2, logged: ['relay', 'wreck', 'passenger'] });
+      await until(find('bell').opensAt + 0.1);
+      park('bell');
+      await fake.advance(seconds(2));
+      away();
+      await until(180.5);
+      park('light');
+      await fake.advance(seconds(2));
+      expect(phases.at(-1)![0]).toBe('closed');
+      expect(phases.at(-1)![1]!.charted).toMatchObject({ loops: 2, newBest: true });
+      game.dispose();
+      document.body.replaceChildren();
+    }
   });
 
   it('the same seed places the same finds, another day other ones', async () => {

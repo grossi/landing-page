@@ -383,6 +383,36 @@ export interface StorageLike {
   setItem(key: string, value: string): void;
 }
 
+/**
+ * The page's storage with this visit's memory in front of it. Every write
+ * goes to memory, then to the storage if it takes it; every read prefers
+ * memory. So the log survives the loop even where storage is blocked or
+ * full (private windows, site data off): it is then kept for the visit, not
+ * the day. With working storage nothing changes, and a log from an earlier
+ * visit is still read from it.
+ */
+export function withMemory(storage: StorageLike | null): StorageLike {
+  const memory = new Map<string, string>();
+  return {
+    getItem(key) {
+      if (memory.has(key)) return memory.get(key)!;
+      try {
+        return storage?.getItem(key) ?? null;
+      } catch {
+        return null;
+      }
+    },
+    setItem(key, value) {
+      memory.set(key, value);
+      try {
+        storage?.setItem(key, value);
+      } catch {
+        // kept in memory for this visit
+      }
+    },
+  };
+}
+
 /** What survives the loop, for one system. */
 export interface DayLog {
   /** Finds logged, in the order they were. */
