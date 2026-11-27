@@ -22,6 +22,7 @@
   .flash.hit { animation: hit .35s ease-out; }
   @keyframes hit { 0% { opacity: .55; } 100% { opacity: 0; } }
   .best  { position: absolute; top: 18px; right: 20px; font-size: 15px; letter-spacing: .18em; opacity: .5; }
+  .dial  { position: absolute; top: 42px; right: 20px; font-size: 11px; letter-spacing: .18em; opacity: .5; }
   .sector {
     position: absolute; top: 96px; left: 0; right: 0; text-align: center;
     font-size: 13px; letter-spacing: .5em; opacity: 0;
@@ -50,6 +51,7 @@
 <div class="hud">
   <div class="flash" id="flash"></div>
   <div class="best" id="best"></div>
+  <div class="dial hidden" id="dial"></div>
   <div class="hidden" id="flight">
     <div class="score" id="score"></div>
     <div class="low" id="low"></div>

@@ -30,7 +30,7 @@ class Renderer {
 
 let page: ReturnType<typeof mount> | undefined;
 /** The shipped page: its real HUD markup and wiring, with only the GPU replaced. */
-function open(best?: number) {
+function open(best?: number, search = '') {
   document.body.innerHTML = read('meridian/index.html').match(/<div class="hud">[\s\S]*?(?=<script)/)![0];
   const values = new Map<string, string>();
   if (best) values.set(BEST_KEY, String(best));
@@ -38,7 +38,7 @@ function open(best?: number) {
     getItem: (key: string) => values.get(key) ?? null,
     setItem: (key: string, value: string) => { values.set(key, value); },
   };
-  page = mount({ THREE: { ...THREE, WebGLRenderer: Renderer }, createShipBody, storage, random: mulberry32(3) });
+  page = mount({ THREE: { ...THREE, WebGLRenderer: Renderer }, createShipBody, storage, random: mulberry32(3), search });
   return { ...page, values };
 }
 const ticks = (seconds: number, dt = 1 / 60) => {
@@ -274,8 +274,8 @@ describe('MERIDIAN page', () => {
 
 describe('how the steering feels, in numbers', () => {
   /** A run over flat, empty ground with the opening grace over and the ship at rest. */
-  function calm() {
-    const page = open();
+  function calm(search = '') {
+    const page = open(undefined, search);
     send(window, 'keydown', { code: 'Enter' });
     send(window, 'keyup', { code: 'Enter' });
     const { game } = page;
@@ -299,29 +299,32 @@ describe('how the steering feels, in numbers', () => {
   }
   const x = (game: any) => game.x, y = (game: any) => game.y;
 
-  it('a 100 ms tap sideways is a nudge: 1.5 to 5 units of a 20-unit lane', () => {
+  // Second pass, after the user's second play ("right and left still feel a bit
+  // too fast"): 100 ms tap 2.2 -> 1.6 units, 300 ms hold 11.5 -> 8.6, one lane
+  // 0.55 -> 0.66 s. The first pass took them from 11.0, 33.0 and 0.34 s.
+  it('a 100 ms tap sideways is a nudge: 1.2 to 2 units of a 20-unit lane', () => {
     const right = press('ArrowRight', 0.1, x);
-    expect(right).toBeGreaterThan(1.5);
-    expect(right).toBeLessThan(5);
+    expect(right).toBeGreaterThan(1.2);
+    expect(right).toBeLessThan(2);
     expect(press('KeyA', 0.1, x)).toBeCloseTo(-right, 6);
   });
 
-  it('a 300 ms hold sideways stays inside the next lane: 8 to 16 units', () => {
+  it('a 300 ms hold sideways moves under half a lane: 6.5 to 10 units', () => {
     const right = press('ArrowRight', 0.3, x);
-    expect(right).toBeGreaterThan(8);
-    expect(right).toBeLessThan(16);
+    expect(right).toBeGreaterThan(6.5);
+    expect(right).toBeLessThan(10);
     expect(press('ArrowLeft', 0.3, x)).toBeCloseTo(-right, 6);
   });
 
-  it('crossing one lane takes 0.40 to 0.65 s of holding, and letting go there does not carry into the lane beyond', () => {
+  it('crossing one lane takes 0.60 to 0.80 s of holding, and letting go there does not carry into the lane beyond', () => {
     const { game } = calm();
     send(window, 'keydown', { code: 'ArrowRight' });
     let seconds = 0;
     while (game.x < LANE_W && seconds < 3) { page!.tick(DT); seconds += DT; }
     send(window, 'keyup', { code: 'ArrowRight' });
     for (let i = 0; i < 20; i++) { game.charge = TUNE.CHARGE; ticks(0.1, DT); }
-    expect(seconds).toBeGreaterThan(0.40);
-    expect(seconds).toBeLessThan(0.65);
+    expect(seconds).toBeGreaterThan(0.60);
+    expect(seconds).toBeLessThan(0.80);
     // The lane beyond starts 1.5 lanes from where the ship set off.
     expect(game.x).toBeLessThan(LANE_W * 1.5);
   });
@@ -333,7 +336,7 @@ describe('how the steering feels, in numbers', () => {
     expect(game.vx).toBeGreaterThan(TUNE.VX * 0.97);
     expect(game.vx).toBeLessThanOrEqual(TUNE.VX);
     // Crossing the whole track is a deliberate act, not a twitch.
-    expect(HALF * 2 / TUNE.VX).toBeGreaterThan(2.2);
+    expect(HALF * 2 / TUNE.VX).toBeGreaterThan(3.2);
   });
 
   it('a dive tap is a nudge (0.8 to 3 units for 100 ms); a climb tap bites sooner (2 to 4)', () => {
@@ -367,6 +370,51 @@ describe('how the steering feels, in numbers', () => {
       ticks(0.6, DT);
       expect(game.vx / TUNE.VX).toBeGreaterThan(low);
       expect(game.vx / TUNE.VX).toBeLessThanOrEqual(high);
+    }
+  });
+});
+
+describe('sideways speed dial (?vx=)', () => {
+  /** Top sideways speed reached by a held key, the mouse at the screen edge and a thumb at the rim. */
+  function topSpeeds(search: string) {
+    const speeds: number[] = [];
+    for (const how of ['key', 'mouse', 'thumb']) {
+      const { game } = open(undefined, search);
+      send(window, 'keydown', { code: 'Enter' });
+      send(window, 'keyup', { code: 'Enter' });
+      game.world.surface = () => 0;
+      game.world.rowsNear = (_d: number, _reach: number, out: unknown[] = []) => { out.length = 0; return out; };
+      game.runTime = TUNE.GRACE; game.x = -60; game.y = 25;
+      if (how === 'key') send(window, 'keydown', { code: 'ArrowRight' });
+      if (how === 'mouse') send(window, 'pointermove', { pointerType: 'mouse', clientX: innerWidth, clientY: innerHeight / 2 });
+      if (how === 'thumb') { touch('pointerdown', 4, 100, 600); touch('pointermove', 4, 300, 600); }
+      ticks(1, 1 / 120);
+      speeds.push(+game.vx.toFixed(3));
+      page!.dispose(); page = undefined;
+    }
+    return speeds;
+  }
+
+  it('sets the top sideways speed for keys, mouse and thumb alike, and says so on screen', () => {
+    for (const [search, speed] of [['?vx=36', 36], ['?vx=70', 70]] as const) {
+      for (const top of topSpeeds(search)) {
+        expect(top).toBeGreaterThan(speed * 0.98);
+        expect(top).toBeLessThanOrEqual(speed);
+      }
+      open(undefined, search);
+      expect(hidden('dial')).toBe(false);
+      expect(text('dial')).toBe(`SIDEWAYS ${speed} (?vx=)`);
+    }
+  });
+
+  it('is clamped to 30 to 80, and anything else leaves the tuned speed and no label', () => {
+    expect(Math.max(...topSpeeds('?vx=5'))).toBeLessThanOrEqual(30);
+    expect(Math.min(...topSpeeds('?vx=5'))).toBeGreaterThan(30 * 0.98);
+    expect(Math.max(...topSpeeds('?vx=500'))).toBeLessThanOrEqual(80);
+    for (const search of ['', '?vx=', '?vx=fast', '?seed=3']) {
+      for (const top of topSpeeds(search)) expect(top).toBeGreaterThan(TUNE.VX * 0.98);
+      open(undefined, search);
+      expect(hidden('dial')).toBe(true);
     }
   });
 });

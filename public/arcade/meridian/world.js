@@ -15,6 +15,14 @@ export const SECTORS = ['THE RANGES', 'THE CITY', 'THE SEA', 'THE SHARDS'];
 export const LANES = 9, LANE_W = 20, ROW_D = 40, CITY_IN = 80, CITY_ROWS = 27;
 
 export const laneX = lane => (lane - (LANES - 1) / 2) * LANE_W;
+/**
+ * Rows between two moves of a city's free lane: every second row on the wide
+ * laps (1 and 2), where the free band is three lanes; every third on the narrow,
+ * faster ones. The lane it moves to is open for that whole stretch (see
+ * `upcoming` in cityRows), so a lane change has 120 units of travel, about a
+ * second at top speed: room at any sideways speed the `?vx=` dial allows.
+ */
+export const walkStep = lap => (lap < 3 ? 2 : 3);
 const smooth = t => t * t * (3 - 2 * t);
 
 export function mulberry32(seed) {
@@ -102,9 +110,9 @@ export function createWorld(random = Math.random) {
   /**
    * The towers of the city in sector `ordinal`. One lane walk guarantees a way
    * through: consecutive rows always share a free lane, and the walk moves at
-   * most one lane every second row, so following it never asks for more than
-   * 20 units sideways per 80 of travel. Later laps leave fewer free lanes
-   * beside it. Nothing gets through without steering: every lane is walled
+   * most one lane every `walkStep(lap)` rows, so following it never asks for
+   * more than 20 units sideways per 80 of travel (per 120 from lap 3). Later
+   * laps leave fewer free lanes beside it. Nothing gets through without steering: every lane is walled
    * across its full width in one row, so every straight line meets a tower.
    */
   function cityRows(ordinal) {
@@ -122,10 +130,10 @@ export function createWorld(random = Math.random) {
   function layCity(ordinal, lap, rng, keep) {
     const rows = [];
     const freeChance = Math.max(0.1, 0.35 - 0.08 * (lap - 1));
-    const wide = lap < 3;
+    const wide = lap < 3, every = walkStep(lap);
     let corridor = Math.floor(LANES / 2), partner = corridor + 1;
     for (let k = 0; k < CITY_ROWS; k++) {
-      if (k > 0 && k % 2 === 0) {
+      if (k > 0 && k % every === 0) {
         if (wide) {
           // Always a step, never straight on; at the edge of the city, back inward.
           const step = rng() < 0.5 ? -1 : 1;
@@ -133,7 +141,7 @@ export function createWorld(random = Math.random) {
         } else {
           // Step onto one of the previous row's two free lanes (always, the first
           // time, so no lane is the way through from end to end), then open a neighbour.
-          if (rng() < 0.5 || k === 2) corridor = partner;
+          if (rng() < 0.5 || k === every) corridor = partner;
           partner = corridor + (rng() < 0.5 ? -1 : 1);
           if (partner < 0 || partner >= LANES) partner = corridor - (partner - corridor);
         }
@@ -150,12 +158,23 @@ export function createWorld(random = Math.random) {
       rows.push({ d: world.origin + ordinal * SPAN + CITY_IN + k * ROW_D, k, ordinal, corridor, towers });
     }
 
-    // Wall each lane once. A row never walls its own free lane or the next
-    // row's, which is the lane the two rows share: the way through stays.
+    // Each row knows the free lane the walk moves to next. That lane is already
+    // open in this row (it is the partner, or a neighbour in the wide band), and
+    // the walls keep it open: a player can change lanes anywhere in the stretch
+    // before the move, so slower sideways speeds get the whole stretch.
+    for (const row of rows) row.upcoming = rows[Math.min(rows.length - 1, (Math.floor(row.k / every) + 1) * every)].corridor;
+
+    // Wall each lane once. A row never walls its own free lane or the next one,
+    // which is the lane it shares with the rows ahead: the way through stays.
     const walls = [];
     for (let lane = 0; lane < LANES; lane++) {
-      const allowed = rows.filter((row, k) =>
-        lane !== row.corridor && lane !== rows[Math.min(k + 1, rows.length - 1)].corridor);
+      let allowed = rows.filter(row => lane !== row.corridor && lane !== row.upcoming);
+      if (!allowed.length) {
+        // A walk that keeps coming back to this lane leaves it no row: draw again,
+        // or on the last draw protect only the lane the next row needs.
+        if (!keep) return null;
+        allowed = rows.filter((row, k) => lane !== row.corridor && lane !== rows[Math.min(k + 1, rows.length - 1)].corridor);
+      }
       // Past the open entrance, and off the lane the row before it used: the
       // gates have just marked that lane, and a late turn must not be a crash.
       const inside = allowed.filter(row => row.k >= 2);

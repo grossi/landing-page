@@ -1,7 +1,7 @@
 // Wires the rules and the picture to the page: input in, HUD out.
 import { createInput, startLoop, setText } from '../shared/runtime.js';
 import { CONTROL, createKeyAxis, curve } from './controls.js';
-import { TUNE, createGame, sectorName } from './game.js';
+import { TUNE, createGame, sectorName, sidewaysSpeedFrom } from './game.js';
 import { createView } from './view.js';
 
 const CHARGE_CELLS = 20;
@@ -15,18 +15,23 @@ function safeStorage() {
  * so the page chooses its three.js build.
  * @param {{ THREE: typeof import('three'),
  *   createShipBody: (three: typeof import('three')) => import('three').Group,
- *   storage?: Storage | null, random?: () => number }} options
+ *   storage?: Storage | null, random?: () => number, search?: string }} options
  */
-export function mount({ THREE, createShipBody, storage = safeStorage(), random = Math.random }) {
+export function mount({ THREE, createShipBody, storage = safeStorage(), random = Math.random, search = location.search }) {
   const el = id => document.getElementById(id);
   const hud = {
     score: el('score'), low: el('low'), chain: el('chain'), best: el('best'),
     sector: el('sector'), charge: el('charge'), chargeFill: el('chargeFill'),
     menu: el('menu'), over: el('over'), cause: el('cause'), result: el('result'),
     record: el('record'), facts: el('facts'), flight: el('flight'), flash: el('flash'),
+    dial: el('dial'),
   };
 
-  const game = createGame({ random, storage });
+  // `?vx=40` tries another sideways speed; the page says which one is in use.
+  const dialled = sidewaysSpeedFrom(search);
+  const game = createGame({ random, storage, vx: dialled ?? undefined });
+  hud.dial.classList.toggle('hidden', dialled === null);
+  if (dialled !== null) setText(hud.dial, `SIDEWAYS ${game.vxMax} (?vx=)`);
   const renderer = new THREE.WebGLRenderer({ antialias: true });
   renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
   renderer.setSize(innerWidth, innerHeight);

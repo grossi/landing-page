@@ -2,10 +2,10 @@ import { describe, expect, it } from 'vitest';
 import * as THREE from '../../public/arcade/vendor/three.module.min.js';
 import { createShipBody } from '../../public/arcade/shared/ship.js';
 import { CONTROL, createKeyAxis, curve } from '../../public/arcade/meridian/controls.js';
-import { BEST_KEY, TUNE, createGame } from '../../public/arcade/meridian/game.js';
+import { BEST_KEY, TUNE, VX_DIAL, createGame, sidewaysSpeedFrom } from '../../public/arcade/meridian/game.js';
 import { createView } from '../../public/arcade/meridian/view.js';
 import {
-  BLEND, CITY, HALF, LANES, LANE_W, ROW_D, SEA, SECTORS, SHARDS, SPAN, createWorld, laneX, mulberry32,
+  BLEND, CITY, HALF, LANES, LANE_W, ROW_D, SEA, SECTORS, SHARDS, SPAN, createWorld, laneX, mulberry32, walkStep,
 } from '../../public/arcade/meridian/world.js';
 
 const CENTRE = { x: 0, y: 0 }, UP = { x: 0, y: -1 }, DOWN = { x: 0, y: 1 };
@@ -326,7 +326,7 @@ describe('flight and collision', () => {
     game.x = 0;
     fly(game, 3, { x: 1, y: -1 });
     expect(game).toMatchObject({ x: HALF, y: TUNE.CEILING, vx: 0 });
-    fly(game, 3, { x: -1, y: -1 });
+    fly(game, HALF * 2 / TUNE.VX + 1, { x: -1, y: -1 });
     expect(game.x).toBe(-HALF);
   });
 
@@ -365,15 +365,16 @@ describe('flight and collision', () => {
   });
 
   it('decides a gate where the ship crossed it, even inside one slow frame', () => {
-    // Sliding sideways at full speed, both gates are crossed early in a 100 ms frame.
+    // Sliding sideways at full speed, both gates are crossed early in one slow frame.
+    const FRAME = 0.15;
     const game = flat(running());
     game.x = 0; game.y = 30; game.vx = TUNE.VX; game.speed = TUNE.CAP0;
-    const end = TUNE.VX * 0.1;
+    const end = TUNE.VX * FRAME;
     // Inside this ring at the crossing, outside it by the frame's end.
     const threaded = gateAt(game, 0.5, 0.4, 30);
     // Outside this ring at the crossing, at its centre by the frame's end.
     const missed = gateAt(game, 0.6, end + 0.1, 30);
-    game.step(0.1, { x: 1, y: 0 });
+    game.step(FRAME, { x: 1, y: 0 });
     expect(game.x).toBeCloseTo(end, 5);
     expect(Math.abs(game.x - threaded.x)).toBeGreaterThan(TUNE.PASS_R);
     expect(Math.abs(game.x - missed.x)).toBeLessThan(TUNE.PASS_R);
@@ -383,6 +384,25 @@ describe('flight and collision', () => {
 });
 
 describe('steering', () => {
+  it('reads the sideways speed dial from the URL, clamped, and caps the ship at it', () => {
+    expect(VX_DIAL).toEqual({ min: 30, max: 80 });
+    expect(sidewaysSpeedFrom('?vx=40')).toBe(40);
+    expect(sidewaysSpeedFrom('?seed=2&vx=52.6')).toBe(53);
+    expect(sidewaysSpeedFrom('?vx=12')).toBe(30);
+    expect(sidewaysSpeedFrom('?vx=1e9')).toBe(80);
+    for (const search of ['', '?', '?vx=', '?vx=fast', '?vx=NaN', '?vx=Infinity', '?speed=40'])
+      expect(sidewaysSpeedFrom(search), search).toBeNull();
+    for (const [asked, top] of [[undefined, TUNE.VX], [36, 36], [10, 30], [200, 80]] as const) {
+      const game = flat(createGame({ random: mulberry32(1), vx: asked }));
+      game.press();
+      game.runTime = TUNE.GRACE; game.x = -60;
+      fly(game, 1.5, { x: 1, y: 0 });
+      expect(game.vx).toBeGreaterThan(top * 0.99);
+      expect(game.vx).toBeLessThanOrEqual(top);
+    }
+  });
+
+
   it('ramps a key from a nudge to full stick, lets go quickly, and restarts on a reversal', () => {
     const axis = createKeyAxis({ negative: CONTROL.KEY_CLIMB });
     expect(axis.step(1 / 60, 0)).toBe(0);
@@ -414,13 +434,16 @@ describe('steering', () => {
 
   /**
    * Fly one city on the arrow keys alone, as a person would: they see a free
-   * lane, decide, and their fingers act 150 ms later. `early` players aim at the
-   * lane after the row they are entering; the others aim at the row itself,
-   * which is where the gates stand. Returns the game at the end.
+   * lane, decide, and their fingers act 150 ms later. `late` players aim at the
+   * row they are entering, which is where the gates stand; `early` ones look one
+   * row further when the lane is about to move there; `open` ones move to the
+   * next lane as soon as it is open ahead of them. Returns the game at the end.
    */
-  function flyCity(lap: number, seed: number, early: boolean) {
+  function flyCity(lap: number, seed: number, how: 'late' | 'early' | 'open', vx = TUNE.VX) {
     const REACTION = 9; // frames at 60 Hz
-    const game = running(seed);
+    const game = createGame({ random: mulberry32(seed), vx });
+    game.step(1 / 60, CENTRE);
+    game.press();
     game.gates.length = 0;
     const ordinal = (lap - 1) * SECTORS.length + CITY;
     game.world.restartAt(game.dist - ordinal * SPAN - 10); // the city of that lap starts here
@@ -429,9 +452,10 @@ describe('steering', () => {
     game.runTime = TUNE.GRACE; game.speed = TUNE.CAP_MAX; // capped to the lap's top speed
     const keys = createKeyAxis(), decided: number[] = [];
     while (game.state === 'play' && game.dist < rows[rows.length - 1].d + 20) {
-      const next = rows.find((row: any) => row.d - 12 > game.dist);
-      const aim = !next ? rows[rows.length - 1] : early ? rows[Math.min(rows.length - 1, next.k + next.k % 2)] : next;
-      const gap = laneX(aim.corridor) - (game.x + game.vx * 0.3);
+      const next = rows.find((row: any) => row.d - 12 > game.dist) ?? rows[rows.length - 1];
+      const ahead = how === 'early' && (next.k + 1) % walkStep(lap) === 0 ? rows[Math.min(rows.length - 1, next.k + 1)] : next;
+      const lane = how === 'open' ? next.upcoming : ahead.corridor;
+      const gap = laneX(lane) - (game.x + game.vx * 0.3);
       decided.push(Math.abs(gap) > 3 ? Math.sign(gap) : 0);
       const held = decided.length > REACTION ? decided[decided.length - 1 - REACTION] : 0;
       game.charge = TUNE.CHARGE; // watch the steering, not the clock
@@ -440,27 +464,52 @@ describe('steering', () => {
     return { game, row: rows.find((row: any) => row.d + 12 > game.dist)?.k };
   }
 
-  it.each([[1, 'wide'], [3, 'narrow'], [9, 'narrow, top speed, heaviest drain']])(
+  it.each([[1, 'wide'], [3, 'narrow'], [5, 'narrow, top speed'], [9, 'narrow, top speed, heaviest drain']])(
     'a player on the keys can follow the free lane through the lap %i city (%s)', lap => {
-      for (let seed = 1; seed <= 40; seed++) {
-        const { game, row } = flyCity(lap, seed, true);
+      for (let seed = 1; seed <= 150; seed++) {
+        const { game, row } = flyCity(lap, seed, 'early');
         expect(game.state, `lap ${lap}, seed ${seed}, row ${row}`).toBe('play');
         expect(game.lap).toBe(lap);
         expect(game.low).toBe(true); // between the towers, not over them
       }
     });
 
+  it.each([30, 36, 48, 64])('at any dial speed (%i) a player who moves when the next lane opens clears every city', vx => {
+    for (const lap of [1, 3, 5, 9]) {
+      for (let seed = 1; seed <= 40; seed++) {
+        const { game, row } = flyCity(lap, seed, 'open', vx);
+        expect(game.state, `vx ${vx}, lap ${lap}, seed ${seed}, row ${row}`).toBe('play');
+        expect(game.low).toBe(true);
+      }
+    }
+  });
+
   it.each([1, 2])('on lap %i the city forgives a player who only moves when the gates do', lap => {
     // The first cities are three lanes wide for this: the lane the gates just
     // marked is still open in the next row, so a late turn is not a crash.
     for (let seed = 1; seed <= 300; seed++) {
-      const { game, row } = flyCity(lap, seed, false);
+      const { game, row } = flyCity(lap, seed, 'late');
       expect(game.state, `lap ${lap}, seed ${seed}, row ${row}`).toBe('play');
     }
   });
 });
 
 describe('the world', () => {
+  it('moves the free lane every 2 rows on laps 1-2 and every 3 after, with the next lane open all the way', () => {
+    expect([1, 2, 3, 5, 9].map(walkStep)).toEqual([2, 2, 3, 3, 3]);
+    for (const lap of [1, 2, 3, 9]) {
+      for (let seed = 1; seed <= 60; seed++) {
+        const world = createWorld(mulberry32(seed * 11 + lap));
+        world.reseed();
+        const rows = world.cityRows((lap - 1) * SECTORS.length + CITY);
+        rows.forEach((row: any, k: number) => {
+          if (k % walkStep(lap)) expect(row.corridor).toBe(rows[k - 1].corridor);
+          expect(row.towers.some((t: any) => t.lane === row.upcoming || t.lane === row.corridor)).toBe(false);
+        });
+      }
+    }
+  });
+
   it('keeps a way through every city: consecutive rows share a free lane', () => {
     const freeLanes = (row: { towers: { lane: number }[] }) =>
       Array.from({ length: LANES }, (_, lane) => lane).filter(lane => !row.towers.some(t => t.lane === lane));
@@ -485,11 +534,14 @@ describe('the world', () => {
             expect(freeLanes(row).filter(lane => freeLanes(rows[k - 1]).includes(lane)).length).toBeGreaterThan(0);
             // Precisely: this row's free lane is also open in the row before it, one step away at most.
             expect(freeLanes(rows[k - 1])).toContain(row.corridor);
-            expect(Math.abs(row.corridor - rows[k - 1].corridor)).toBeLessThanOrEqual(k % 2 ? 0 : 1);
+            expect(Math.abs(row.corridor - rows[k - 1].corridor)).toBeLessThanOrEqual(k % walkStep(lap) ? 0 : 1);
             // On the wide laps the lane just left is still open too: a late turn is forgiven.
             if (lap < 3) expect(freeLanes(row)).toContain(rows[k - 1].corridor);
           }
           if (k >= 2) { free += freeLanes(row).length; count++; }
+          // The lane the walk moves to next is open from the last move on.
+          expect(freeLanes(row)).toContain(row.upcoming);
+          expect(row.upcoming).toBe(rows[Math.min(rows.length - 1, (Math.floor(k / walkStep(lap)) + 1) * walkStep(lap))].corridor);
         });
       }
       averages.push(free / count);

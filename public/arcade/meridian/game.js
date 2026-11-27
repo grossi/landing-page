@@ -5,11 +5,12 @@ export const TUNE = {
   /** Forward speed: start, gain per second, cap on lap 1, cap gained per lap, hard cap. */
   SPEED0: 46, ACCEL: 1.1, CAP0: 92, CAP_LAP: 9, CAP_MAX: 128,
   /** Lateral and vertical speed at full stick, and how fast the ship reaches them.
-   *  VX is set by what the track asks, not by what feels fast: the hardest city
-   *  moves its free lane 20 units per 80 of travel (32 a second at top speed),
-   *  and the sea's slalom asks about as much. Twice that leaves room to recover
-   *  and still takes 2.6 s to cross the track. */
-  VX: 64, VY: 42, RESPONSE_X: 10, RESPONSE_Y: 6,
+   *  VX is what felt right to the user's hand (110, then 64, were "too fast"),
+   *  and the track is shaped to fit it: the city moves its free lane at most 20
+   *  units per 80 of travel on the wide laps and per 120 on the narrow ones (21
+   *  a second at top speed), and the sea's slalom asks about as much. Crossing
+   *  the whole track takes 3.5 s. `?vx=` on the page URL overrides it, see VX_DIAL. */
+  VX: 48, VY: 42, RESPONSE_X: 10, RESPONSE_Y: 6,
   CEILING: 60,
   /** Deck assist: within SKIM of the ground the ship cannot be pushed lower,
    *  and its dive rate shrinks with height as ASSIST × (height − SKIM). Below
@@ -41,22 +42,34 @@ export const TUNE = {
 };
 
 export const BEST_KEY = 'meridian.best';
+const clamp = (value, low, high) => Math.max(low, Math.min(high, value));
+
+/** The `?vx=` dial: a sideways top speed to try on the page, kept to this range. */
+export const VX_DIAL = { min: 30, max: 80 };
+
+/** The dial's value in a URL query string, rounded and clamped; null when there is none. */
+export function sidewaysSpeedFrom(search) {
+  const raw = new URLSearchParams(search).get('vx');
+  const value = raw === null || raw.trim() === '' ? NaN : Number(raw);
+  return Number.isFinite(value) ? clamp(Math.round(value), VX_DIAL.min, VX_DIAL.max) : null;
+}
 /** Gates are placed out to GATE_AHEAD, and never closer together than GATE_MIN.
  *  There is no upper limit: their spacing is a time, so it grows with speed. */
 const GATE_AHEAD = 440, GATE_MIN = 80;
 /** How far into the ranges the title glide goes before its origin moves up:
  *  short of the fade into the city by everything placed ahead of the glide. */
 const GLIDE_SPAN = SPAN - BLEND - GATE_AHEAD - TUNE.GLIDE_SPEED * TUNE.GATE_GAP_MAX - 150;
-const clamp = (value, low, high) => Math.max(low, Math.min(high, value));
 
 /**
- * @param {{ random?: () => number,
+ * @param {{ random?: () => number, vx?: number,
  *   storage?: { getItem(key: string): string | null, setItem(key: string, value: string): void } | null }} [options]
  */
-export function createGame({ random = Math.random, storage = null } = {}) {
+export function createGame({ random = Math.random, storage = null, vx = TUNE.VX } = {}) {
+  /** Top sideways speed at full stick: TUNE.VX, or the `?vx=` dial within its range. */
+  const vxMax = clamp(Number.isFinite(vx) ? vx : TUNE.VX, VX_DIAL.min, VX_DIAL.max);
   const world = createWorld(random);
   const game = {
-    world,
+    world, vxMax,
     /** 'menu' glides over the ranges, 'play' is a run, 'over' is frozen at its end. */
     state: 'menu',
     x: 0, y: 0, vx: 0, vy: 0, dist: 0, speed: TUNE.GLIDE_SPEED,
@@ -158,7 +171,7 @@ export function createGame({ random = Math.random, storage = null } = {}) {
     const info = world.sectorAt(d0);
     game.sector = info.index; game.lap = info.lap;
 
-    game.vx += (clamp(stick.x, -1, 1) * TUNE.VX - game.vx) * Math.min(1, h * TUNE.RESPONSE_X);
+    game.vx += (clamp(stick.x, -1, 1) * game.vxMax - game.vx) * Math.min(1, h * TUNE.RESPONSE_X);
     game.vy += (-clamp(stick.y, -1, 1) * TUNE.VY - game.vy) * Math.min(1, h * TUNE.RESPONSE_Y);
     // Deck assist: the nearer the ground, the slower the ship may sink.
     const floor = Math.max(world.surface(x0, d0, game.time),
