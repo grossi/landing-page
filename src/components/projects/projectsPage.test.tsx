@@ -66,7 +66,7 @@ const unmount = () => {
   host = undefined;
 };
 
-describe('the projects page (placeholder)', () => {
+describe('the projects page (mock A, index)', () => {
   it('renders every entry on /projects and on the old /arcade address', async () => {
     for (const path of ['/projects', '/arcade']) {
       const page = await openApp(path);
@@ -107,27 +107,20 @@ describe('the projects page (placeholder)', () => {
     });
   });
 
-  it('shows the name, kind, line, one link and the image of every entry', async () => {
+  // Mock A ("Index"): a row is one link holding the name, kind, line and
+  // link label. No image sits in a row; the screenshot is a hover preview.
+  it('shows the name, kind, line and one link of every entry, with no image in the row', async () => {
     const page = await openApp('/projects');
     for (const project of projects) {
       const el = row(page, project.slug);
-      expect(el.querySelector('h3')?.textContent, project.slug).toBe(project.name);
-      expect(el.textContent, project.slug).toContain(project.kind);
-      expect(el.textContent, project.slug).toContain(project.line);
       const links = [...el.querySelectorAll('a')];
       expect(links.map((a) => a.getAttribute('href')), project.slug).toEqual([project.link.href]);
-      expect(links[0].textContent, project.slug).toContain(project.link.label);
-      expect(links[0].getAttribute('aria-label'), project.slug).toContain(project.name);
-      const img = el.querySelector('img');
-      if (project.image) {
-        expect(img?.getAttribute('src'), project.slug).toBe(project.image.small.src);
-        expect(img?.getAttribute('alt'), project.slug).toBe(project.image.alt);
-        expect(img?.getAttribute('loading'), project.slug).toBe('lazy');
-        expect(img?.getAttribute('width'), project.slug).toBeTruthy();
-        expect(img?.getAttribute('height'), project.slug).toBeTruthy();
-      } else {
-        expect(img, project.slug).toBeNull();
+      const text = links[0].textContent ?? '';
+      expect(links[0].querySelector('[data-name]')?.textContent, project.slug).toBe(project.name);
+      for (const part of [project.name, project.kind, project.line, project.link.label]) {
+        expect(text, project.slug).toContain(part);
       }
+      expect(el.querySelector('img'), project.slug).toBeNull();
     }
   });
 
