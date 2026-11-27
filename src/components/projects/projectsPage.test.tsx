@@ -66,7 +66,7 @@ const unmount = () => {
   host = undefined;
 };
 
-describe('the projects page (placeholder)', () => {
+describe('the projects page (mock C, select screen)', () => {
   it('renders every entry on /projects and on the old /arcade address', async () => {
     for (const path of ['/projects', '/arcade']) {
       const page = await openApp(path);
@@ -107,26 +107,40 @@ describe('the projects page (placeholder)', () => {
     });
   });
 
+  // Mock C ("Select screen"): a row is the entry's name and its one link; the
+  // kind, line and image show in the preview of the selected entry.
   it('shows the name, kind, line, one link and the image of every entry', async () => {
     const page = await openApp('/projects');
+    const preview = () => page.querySelector<HTMLElement>('[data-preview]')!;
+    expect(preview().getAttribute('data-preview')).toBe(projects[0].slug);
     for (const project of projects) {
       const el = row(page, project.slug);
-      expect(el.querySelector('h3')?.textContent, project.slug).toBe(project.name);
-      expect(el.textContent, project.slug).toContain(project.kind);
-      expect(el.textContent, project.slug).toContain(project.line);
       const links = [...el.querySelectorAll('a')];
       expect(links.map((a) => a.getAttribute('href')), project.slug).toEqual([project.link.href]);
-      expect(links[0].textContent, project.slug).toContain(project.link.label);
+      expect(links[0].textContent, project.slug).toContain(project.name);
+      expect(links[0].getAttribute('aria-label'), project.slug).toContain(project.link.label);
       expect(links[0].getAttribute('aria-label'), project.slug).toContain(project.name);
-      const img = el.querySelector('img');
+      expect(el.textContent, project.slug).toContain(project.line);
+
+      act(() => links[0].focus());
+      expect(preview().getAttribute('data-preview'), project.slug).toBe(project.slug);
+      expect(preview().textContent, project.slug).toContain(project.name);
+      expect(preview().textContent, project.slug).toContain(project.kind);
+      expect(preview().textContent, project.slug).toContain(project.line);
+      const go = preview().querySelector('[data-preview-link]')!;
+      expect(go.getAttribute('href'), project.slug).toBe(project.link.href);
+      expect(go.textContent, project.slug).toContain(project.link.label);
       if (project.image) {
-        expect(img?.getAttribute('src'), project.slug).toBe(project.image.small.src);
-        expect(img?.getAttribute('alt'), project.slug).toBe(project.image.alt);
-        expect(img?.getAttribute('loading'), project.slug).toBe('lazy');
-        expect(img?.getAttribute('width'), project.slug).toBeTruthy();
-        expect(img?.getAttribute('height'), project.slug).toBeTruthy();
+        const img = preview().querySelector('img[data-shown]');
+        // happy-dom loads no images, so the frame may still hold the last one.
+        const pic = preview().querySelector(`img[src="${project.image.large.src}"]`);
+        expect(pic, project.slug).not.toBeNull();
+        expect(pic?.getAttribute('width'), project.slug).toBeTruthy();
+        expect(pic?.getAttribute('height'), project.slug).toBeTruthy();
+        expect(img === null || img.getAttribute('alt') !== '', project.slug).toBe(true);
       } else {
-        expect(img, project.slug).toBeNull();
+        expect(preview().querySelector('img[data-shown]'), project.slug).toBeNull();
+        expect(preview().querySelector('[data-blank]')?.textContent, project.slug).toContain(project.name);
       }
     }
   });
