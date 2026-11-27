@@ -1,0 +1,182 @@
+/* Mock A, "Index". Terminal design language: black, mono, 1px borders,
+   square corners, the site's greys. */
+
+.pi {
+  margin-top: 32px;
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.pi ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+/* Groups: a quiet label in the left margin on a wide screen, a divider
+   above the rows on a narrow one. */
+
+.pi-group {
+  display: grid;
+  grid-template-columns: 1fr;
+  scroll-margin-top: 88px;
+  border-top: 1px solid rgba(255, 255, 255, 0.15);
+}
+
+.pi-group:last-of-type {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.15);
+}
+
+.pi-group-title {
+  margin: 0;
+  padding: 12px 12px 4px;
+  font-size: 11px;
+  line-height: 20px;
+  font-weight: normal;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: #71717a;
+}
+
+@media (min-width: 960px) {
+  .pi-group {
+    grid-template-columns: 160px minmax(0, 1fr);
+  }
+
+  .pi-group-title {
+    padding: 8px 0 0 12px;
+  }
+}
+
+/* Rows */
+
+.pi-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas:
+    'name label'
+    'line line';
+  column-gap: 16px;
+  row-gap: 2px;
+  padding: 8px 12px;
+  border: 1px solid transparent;
+  color: #a1a1aa;
+  text-decoration: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.pi-name {
+  grid-area: name;
+  color: #e4e4e7;
+  letter-spacing: 0.04em;
+}
+
+.pi-kind {
+  display: none;
+}
+
+.pi-line {
+  grid-area: line;
+}
+
+.pi-label {
+  grid-area: label;
+  justify-self: end;
+  color: #e4e4e7;
+  font-size: 12px;
+  letter-spacing: 0.16em;
+  white-space: nowrap;
+}
+
+@media (min-width: 768px) {
+  .pi-row {
+    grid-template-columns: 180px 56px minmax(0, 1fr) 96px;
+    grid-template-areas: 'name kind line label';
+    column-gap: 24px;
+    padding: 7px 12px;
+  }
+
+  .pi-kind {
+    display: block;
+    grid-area: kind;
+    color: #71717a;
+  }
+
+  .pi-label {
+    justify-self: start;
+  }
+}
+
+.pi-row:hover,
+.pi-row:focus-visible {
+  background: rgba(255, 255, 255, 0.04);
+  border-color: rgba(255, 255, 255, 0.25);
+}
+
+.pi-row:hover .pi-name,
+.pi-row:focus-visible .pi-name,
+.pi-row:hover .pi-label,
+.pi-row:focus-visible .pi-label {
+  color: #fff;
+}
+
+.pi-row:focus-visible {
+  outline: 1px solid #fff;
+  outline-offset: -1px;
+}
+
+.pi-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* The preview: fixed, beside the row, never under the pointer's clicks. */
+
+.pi-preview {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 1200; /* over the sticky header (1100) when it sits above a top row */
+  width: 288px;
+  aspect-ratio: 16 / 10;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  background: #111;
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 120ms ease-out;
+}
+
+.pi-preview[data-shown] {
+  opacity: 1;
+  visibility: visible;
+}
+
+.pi-preview img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: none;
+}
+
+.pi-preview img[data-shown] {
+  display: block;
+}
+
+@media (max-width: 767px) {
+  .pi-preview {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pi-preview {
+    transition: none;
+  }
+}
