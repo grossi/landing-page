@@ -99,31 +99,19 @@ export const About = () => (
           lineHeight="1.5"
           maxW="760px"
         >
-          I'm a software engineer, and I make games. Hoshi Labs is my one-person studio in Japan,
-          and its first game, Star Survival, is out on Google Play.
+          I'm a software engineer, and I make games.
         </Text>
-        <Flex direction="column" gap="16px" mt="28px" maxW="640px" color={tone.soft} lineHeight="1.7">
-          <Text>
-            Most of what I make starts as a prototype. There are more than twenty browser games in
-            my prototype workspace, and the ones that hold up become studio games.
-          </Text>
-          <Text>
-            Around the games I build the things they need, and some they don't: websites, an
-            Android app, tools for my own workflow.
-          </Text>
-          <Text>
-            The field at the top of this page runs on a small three.js flight engine I wrote for
-            this site. Press PLAY up there to fly it.
-          </Text>
+        {/* Short lines, not paragraphs: one fact each. */}
+        <Flex direction="column" gap="6px" mt="20px" maxW="640px" color={tone.soft} lineHeight="1.7">
+          <Text>Hoshi Labs is my one-person studio in Japan.</Text>
+          <Text>I also build websites and an open-source Android app.</Text>
         </Flex>
       </Reveal>
 
       <Reveal delay={0.1}>
         <Box as="dl" m={0} borderTop={`1px solid ${tone.line}`}>
-          <Fact name="MAKES">Games, tools, websites</Fact>
           <ProjectFact name="STUDIO" project={studio} />
           <ProjectFact name="OUT NOW" project={released} />
-          <Fact name="BASED">Japan</Fact>
         </Box>
       </Reveal>
     </Grid>
@@ -142,7 +130,7 @@ export const SelectedWork = () => (
       ))}
     </SimpleGrid>
     <Box mt="32px">
-      <ArrowLink to="/projects">All projects and demos</ArrowLink>
+      <ArrowLink to="/projects">All projects</ArrowLink>
     </Box>
   </Section>
 );
@@ -178,14 +166,12 @@ export const ExperienceStrip = () => {
           ))}
         </Box>
       </Reveal>
-      <Flex mt="28px" align="baseline" gap="20px" wrap="wrap">
-        <ArrowLink to="/experience">Full timeline</ArrowLink>
-        {earlier > 0 && (
-          <Text fontFamily={monoFont} fontSize="12px" color={tone.soft} letterSpacing=".08em">
-            + {earlier} earlier {earlier === 1 ? 'role' : 'roles'}
-          </Text>
-        )}
-      </Flex>
+      <Box mt="28px">
+        {/* The link says what the full page adds; the number comes from the data. */}
+        <ArrowLink to="/experience">
+          {earlier > 0 ? `+ ${earlier} earlier ${earlier === 1 ? 'role' : 'roles'}` : 'Full timeline'}
+        </ArrowLink>
+      </Box>
     </Section>
   );
 };
@@ -225,11 +211,8 @@ export const Writing = () => (
           >
             {post.title}
           </Text>
-          <Text mt={3} fontSize="sm" lineHeight="1.6" color={tone.soft}>
-            {post.excerpt}
-          </Text>
           <Text mt={6} {...label} fontWeight="bold">
-            Read on the blog <span aria-hidden="true">→</span>
+            Read <span aria-hidden="true">→</span>
           </Text>
         </RouterLink>
       </Box>
@@ -248,13 +231,9 @@ const profiles = [
 export const Contact = () => (
   <Section id="contact" fill>
     <Reveal>
-      <Text color={tone.soft} lineHeight="1.7" maxW="520px">
-        For work, games, or anything else on this page, write to
-      </Text>
       <Box
         asChild
         display="inline-block"
-        mt="14px"
         fontFamily={monoFont}
         fontSize="clamp(20px, 4.4vw, 44px)"
         fontWeight="bold"

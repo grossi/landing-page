@@ -53,7 +53,6 @@ export const post = {
   // the heading without its `# ` marker and leading emoji
   title: postHeading?.replace(/^#\s+[^\p{L}\p{N}]*/u, '').trim() ?? 'Blog',
   date: postMeta.date,
-  excerpt: postBlocks.find((block) => !block.startsWith('#')) ?? '',
   href: '/blog',
 };
 

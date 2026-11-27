@@ -193,11 +193,11 @@ describe('the header on the home page', () => {
       await click(link);
       expect(document.activeElement, item.id).toBe(section(page, item.id).querySelector('h2'));
     }
-    // the hero's actions do the same
-    const action = [...hero(page).querySelectorAll<HTMLAnchorElement>('a')].find((a) => a.textContent === 'WORK')!;
-    action.focus();
-    await click(action);
-    expect(document.activeElement).toBe(section(page, 'work').querySelector('h2'));
+    // the hero's scroll cue does the same, for the first section
+    const cue = hero(page).querySelector<HTMLAnchorElement>('a[href="/#about"]')!;
+    cue.focus();
+    await click(cue);
+    expect(document.activeElement).toBe(section(page, 'about').querySelector('h2'));
   });
 
   it('scrolls again when the same entry is pressed again', async () => {
@@ -451,6 +451,35 @@ describe('the home sections', () => {
     }
   });
 
+  it('keep the about text in one column with reduced motion', async () => {
+    reducedMotion = true;
+    const page = await openApp('/');
+    const about = section(page, 'about');
+    const lead = [...about.querySelectorAll('p')].find((p) => p.textContent?.includes('I make games'))!;
+    const sheet = about.querySelector('dl')!;
+    // the grid that holds both: the nearest ancestor of the fact sheet that also holds the lead
+    let grid: Element = sheet;
+    while (!grid.contains(lead)) grid = grid.parentElement!;
+    // two cells, the text and the fact sheet, in that order; the text lines stay with the lead
+    const cells = [...grid.children];
+    expect(cells.length).toBe(2);
+    expect(cells[0].textContent).toContain('I make games');
+    expect(cells[0].textContent).toContain('Hoshi Labs is my one-person studio');
+    expect(cells[1].contains(sheet)).toBe(true);
+  });
+
+  it('use short lines, not paragraphs, outside the project cards', async () => {
+    // "a bit too much prose, a lot of big paragraphs" (owner, 2026-11-27).
+    // The cards' own text comes from the projects data and has its own limit.
+    const page = await openApp('/');
+    const blocks = [...page.querySelectorAll<HTMLElement>('[data-hero] p, main section p, main section h3, footer p')]
+      .filter((el) => !el.closest('[data-project]'))
+      .map((el) => (el.textContent ?? '').trim())
+      .filter(Boolean);
+    expect(blocks.length).toBeGreaterThan(3);
+    for (const text of blocks) expect(text.split(/\s+/).length, text).toBeLessThanOrEqual(12);
+  });
+
   it('offer every contact address from socialLinks', async () => {
     const page = await openApp('/');
     const hrefs = [...section(page, 'contact').querySelectorAll('a')].map((a) => a.getAttribute('href'));
@@ -478,21 +507,20 @@ describe('the hero', () => {
     expect(hero(page).querySelector('p')?.textContent).toMatch(/SOFTWARE ENGINEER/);
   });
 
-  it('offers work, experience and contact, which scroll to their sections', async () => {
+  it('does not repeat the header: no section links under the name', async () => {
     const page = await openApp('/');
-    const actions = [...hero(page).querySelectorAll<HTMLAnchorElement>('a')].filter((a) =>
-      ['WORK', 'EXPERIENCE', 'CONTACT'].includes(a.textContent ?? ''),
-    );
-    expect(actions.map((a) => [a.textContent, a.getAttribute('href')])).toEqual([
-      ['WORK', '/#work'],
-      ['EXPERIENCE', '/#experience'],
-      ['CONTACT', '/#contact'],
-    ]);
-    for (const action of actions) {
-      await click(action);
-      const id = action.getAttribute('href')!.slice(2);
-      expect(lastScroll(), id).toEqual({ target: section(page, id), behavior: 'smooth' });
+    const inHero = [...hero(page).querySelectorAll<HTMLAnchorElement>('a')];
+    for (const item of navSections) {
+      expect(inHero.map((a) => a.textContent), item.id).not.toContain(item.nav);
+      expect(inHero.map((a) => a.getAttribute('href')), item.id).not.toContain(`/#${item.id}`);
     }
+    // what is left: the profiles, and the cue down to the first section
+    expect(inHero.map((a) => a.getAttribute('href'))).toEqual([
+      socialLinks.linkedin,
+      socialLinks.github,
+      socialLinks.twitter,
+      '/#about',
+    ]);
   });
 
   it('links the profiles from socialLinks, each in a new tab', async () => {
@@ -506,9 +534,12 @@ describe('the hero', () => {
     for (const a of external) expect(a.getAttribute('rel')).toContain('noopener');
   });
 
-  it('keeps PLAY as a button that starts the game from the top of the page', async () => {
+  it('keeps one PLAY button, which starts the game from the top of the page', async () => {
     const page = await openApp('/');
-    const play = [...hero(page).querySelectorAll('button')].find((b) => b.textContent?.includes('PLAY'))!;
+    const plays = [...hero(page).querySelectorAll('button')].filter((b) => b.textContent?.includes('PLAY'));
+    expect(plays.length).toBe(1);
+    const play = plays[0];
+    expect(play.getAttribute('aria-label')).toBeTruthy();
     expect(fields.at(-1)!.play).not.toHaveBeenCalled();
     await click(play);
     expect(fields.at(-1)!.play).toHaveBeenCalledTimes(1);
@@ -558,14 +589,14 @@ describe('the field under the hero', () => {
     const page = await openApp('/');
     const minHeight = () => parseFloat(hero(page).style.minHeight);
     // on the title screen the hero may be taller than a short screen: the page scrolls
-    expect(minHeight()).toBeGreaterThan(400);
+    expect(minHeight()).toBeGreaterThan(300);
     for (const mode of ['engage', 'play', 'disengage'] as const) {
       await setMode(mode);
       // the page is locked now, so the hero must be exactly the screen
       expect(minHeight(), mode).toBe(0);
     }
     await setMode('title');
-    expect(minHeight()).toBeGreaterThan(400);
+    expect(minHeight()).toBeGreaterThan(300);
   });
 
   it('leaves play first when a header entry is pressed, and scrolls once the title screen is back', async () => {

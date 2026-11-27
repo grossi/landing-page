@@ -24,7 +24,7 @@ export interface HomeSection {
 export const homeSections = [
   { id: 'about', label: 'ABOUT' },
   // /arcade is the projects page's old address and still renders it.
-  { id: 'work', label: 'SELECTED WORK', nav: 'WORK', page: '/projects', aliases: ['/arcade'] },
+  { id: 'work', label: 'WORK', nav: 'WORK', page: '/projects', aliases: ['/arcade'] },
   { id: 'experience', label: 'EXPERIENCE', nav: 'EXPERIENCE', page: '/experience' },
   { id: 'writing', label: 'WRITING', nav: 'WRITING', page: '/blog' },
   { id: 'contact', label: 'CONTACT', nav: 'CONTACT' },

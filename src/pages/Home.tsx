@@ -221,7 +221,7 @@ const Home = () => {
             _hover={{ color: 'white' }}
             _focusVisible={focusRing}
           >
-            Back to top ↑
+            Top ↑
           </Box>
         </Flex>
       </Box>

@@ -40,7 +40,9 @@ export const FOOTER_HEIGHT = '76px';
 /** Fades content up the first time it scrolls into view. */
 export const Reveal = ({ children, delay = 0 }: { children: React.ReactNode; delay?: number }) => {
   const reduceMotion = useReducedMotion();
-  if (reduceMotion) return <>{children}</>;
+  // One element either way: a fragment would hand its children to the
+  // parent grid as separate cells and reflow the layout.
+  if (reduceMotion) return <div>{children}</div>;
   return (
     <motion.div
       initial={{ opacity: 0, y: 18 }}
